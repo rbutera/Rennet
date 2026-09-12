@@ -29,11 +29,29 @@ const EXPLAIN_OPENER = "Explain this passage.";
  * durable board highlight.
  */
 function scopeOfRange(range: Range): { target: string; generation: string } | undefined {
-  const node = range.commonAncestorContainer;
-  const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  const el = elementOfRange(range);
   const target = el?.closest("[data-quote-target]")?.getAttribute("data-quote-target") ?? undefined;
   const generation = el?.closest("[data-generation]")?.getAttribute("data-generation") ?? undefined;
   return target === undefined || generation === undefined ? undefined : { target, generation };
+}
+
+function elementOfRange(range: Range): Element | null {
+  const node = range.commonAncestorContainer;
+  return node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+}
+
+/**
+ * Which BOARD the selection was made on (session-thread-briefing 4.3), read off the board
+ * article's own `data-lens` (`board-view.tsx`).
+ *
+ * Separate from {@link scopeOfRange} on purpose: the scope is the DURABLE highlight key a
+ * quote thread is stored under (a protocol shape), while this is only ever spoken — the
+ * labelled line above an Explain's `Code reference`, so the thread knows the span came from
+ * the Flagged board rather than from a bare file. A selection on the diff has no board and
+ * gets none.
+ */
+function lensOfRange(range: Range): string | undefined {
+  return elementOfRange(range)?.closest("[data-lens]")?.getAttribute("data-lens") ?? undefined;
 }
 
 export function codeRefOfRange(range: Range): CodeRef | undefined {
@@ -110,6 +128,8 @@ export function ProseSelectionLayer({
     placement: "above" | "below";
     /** The board-anchor identity of the selection (finding 2), if it landed in a board. */
     scope?: { readonly target: string; readonly generation: string };
+    /** The board the selection was made on, for the Explain's labelled reference line. */
+    lens?: string;
   } | null>(null);
   const [mode, setMode] = useState<Mode>("toolbar");
   const [draft, setDraft] = useState("");
@@ -177,6 +197,7 @@ export function ProseSelectionLayer({
       // tallest panel mode (the comment/revise editor), so nothing clips.
       const placement: "above" | "below" = rect.top < 240 ? "below" : "above";
       const scope = scopeOfRange(range);
+      const lens = lensOfRange(range);
       setMode("toolbar");
       setAnchor({
         top: (placement === "below" ? rect.bottom : rect.top) - wrapRect.top,
@@ -186,6 +207,7 @@ export function ProseSelectionLayer({
         mixedCodeSelection,
         placement,
         ...(scope === undefined ? {} : { scope }),
+        ...(lens === undefined ? {} : { lens }),
       });
     }
 
@@ -212,6 +234,7 @@ export function ProseSelectionLayer({
         excerpt: anchor.quote,
         ...(anchor.codeRef === undefined ? {} : { codeRef: anchor.codeRef }),
         ...(anchor.scope === undefined ? {} : anchor.scope),
+        ...(anchor.lens === undefined ? {} : { lens: anchor.lens }),
       });
     }
     window.getSelection()?.removeAllRanges();

@@ -270,3 +270,79 @@ describe("ReviewAnchoredAskProvider (t3-lens-threads 4.2)", () => {
     expect(text.startsWith("why?")).toBe(true);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// session-thread-briefing 4.3 — AN EXPLAIN NAMES ITS ANCHOR.
+//
+// The turn used to end `Code reference: {"patchsetId":"ps-1","path":…}` and nothing else.
+// A `CodeRef` carries the patchset, the path, the side and the lines; it carries NO board
+// and no lens, so the thread had no way to know the reviewer was looking at a Flagged
+// finding rather than at a file. The session briefing now TELLS the thread that the
+// `Anchor:` line above the reference says where the span came from — these are what make
+// that sentence true rather than a claim.
+//
+// Assertions are on POSITION as well as content: the label has to sit immediately above the
+// reference it labels, and a pair of membership checks would pass with them reversed.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("anchoredAskText labels the code reference", () => {
+  const ref = {
+    patchsetId: "ps-1",
+    path: "packages/server/src/dispatch/chat.ts",
+    side: "new",
+    startLine: 42,
+    endLine: 58,
+  } as const;
+
+  it("names the board, the element, the generation, the path and the lines, above the JSON", () => {
+    const text = anchoredAskText({
+      question: "Why this fix?",
+      excerpt: "",
+      codeRef: ref,
+      lens: "flagged",
+      target: "f3",
+      generation: "gen-2",
+    });
+    const label =
+      "Anchor: the flagged board, element f3, generation gen-2 — packages/server/src/dispatch/chat.ts lines 42–58 (new side).";
+    expect(text).toContain(label);
+    // Immediately above, on its own line: the briefing says "the line above it".
+    expect(text).toContain(`${label}\nCode reference: `);
+    expect(text.indexOf(label)).toBeLessThan(text.indexOf("Code reference:"));
+  });
+
+  it("names what it can when the span came from the diff and not from a board", () => {
+    const text = anchoredAskText({ question: "Why?", excerpt: "", codeRef: ref });
+    expect(text).toContain("Anchor: packages/server/src/dispatch/chat.ts lines 42–58 (new side).");
+    // No invented board: a diff selection has none, and saying one would be a lie the
+    // thread would then repeat back to the reviewer.
+    expect(text).not.toContain("board");
+  });
+
+  it("says `line` for a one-line span, so the label reads as English", () => {
+    const text = anchoredAskText({
+      question: "Why?",
+      excerpt: "",
+      codeRef: { ...ref, endLine: 42 },
+    });
+    expect(text).toContain("line 42 (new side)");
+    expect(text).not.toContain("lines 42");
+  });
+
+  it("renders NO label when there is no reference to label", () => {
+    const text = anchoredAskText({ question: "Why?", excerpt: "a span", lens: "design" });
+    expect(text).not.toContain("Anchor:");
+    expect(text).toBe("Why?\n\nAbout this: a span");
+  });
+
+  it("cuts a pathological path and lens rather than sending them whole", () => {
+    const text = anchoredAskText({
+      question: "Why?",
+      excerpt: "",
+      codeRef: { ...ref, path: `src/${"deep/".repeat(200)}x.ts` },
+      lens: "l".repeat(200),
+    });
+    const label = text.slice(text.indexOf("Anchor:"), text.indexOf("Code reference:"));
+    expect(label.length).toBeLessThan(450);
+    expect(label).toContain("…");
+  });
+});

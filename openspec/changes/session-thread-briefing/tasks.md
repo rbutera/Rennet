@@ -97,7 +97,7 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
   byte-identical briefings apart from the identity line, and that every `app_[a-z_]+` name in the
   briefing file appears in `buildAppTools`' names — the prompts package can only prove the
   renderer is deterministic over equal inputs, not that production hands it equal inputs.
-- [ ] 4.3 `packages/app-ui/src/review/anchored-ask.tsx`: `Code reference:` is preceded by one
+- [x] 4.3 `packages/app-ui/src/review/anchored-ask.tsx`: `Code reference:` is preceded by one
   labelled line (board, lens, path, lines) from the `CodeRef`; bounds unchanged; test updated.
   Cluster gate green. Commit.
 

@@ -18,6 +18,14 @@ export interface AnchoredAskInput {
   readonly excerpt: string;
   readonly target?: string;
   readonly generation?: string;
+  /**
+   * The board the span was highlighted on — `design`, `flagged`, and so on
+   * (session-thread-briefing 4.3). A `CodeRef` carries the patchset, the path, the side and
+   * the lines; it carries NO board and no lens, which is why the reference has to be
+   * labelled by the caller that knows. A selection made outside a board (the diff itself)
+   * has none, and the labelled line then names only what it can.
+   */
+  readonly lens?: string;
 }
 
 export type AnchoredAsk = (input: AnchoredAskInput) => Promise<void>;
@@ -35,9 +43,52 @@ export function useAnchoredAsk(): AnchoredAsk | null {
  *  a long selection is cut with an honest marker rather than sent whole. */
 const EXCERPT_CEILING = 600;
 
-/** The turn text: the question, then the span it was asked about, as one quoted line. */
+/** Byte bounds on the labelled anchor line's own interpolations. A board id, a lens name
+ *  and an element id are short; a path is a path. Each is cut rather than sent whole. */
+const LENS_CEILING = 32;
+const TARGET_CEILING = 96;
+const GENERATION_CEILING = 96;
+const PATH_CEILING = 240;
+
+const cut = (text: string, ceiling: number): string =>
+  text.length > ceiling ? `${text.slice(0, ceiling)}…` : text;
+
+/**
+ * The sentence that says what the reference below it IS (session-thread-briefing 4.3).
+ *
+ * `Code reference: {"patchsetId":…}` on its own is an opaque blob: a `CodeRef`
+ * (`protocol/delta/citations.ts`) carries the patchset, the path, the diff side and the
+ * line range, and NOTHING about where the reviewer was looking when they highlighted it.
+ * The thread's briefing tells it that the line before the reference names where the span
+ * came from — so this is the line that makes that true.
+ *
+ * Rendered only WITH a reference, because that is the thing it labels. What it can name
+ * varies by where the selection was made: a board selection knows its lens, its element and
+ * its generation; a selection on the diff knows only the file and the lines.
+ */
+function anchorLabel(
+  input: Pick<AnchoredAskInput, "codeRef" | "lens" | "target" | "generation">,
+): string {
+  const ref = input.codeRef;
+  if (ref === undefined) return "";
+  const where: string[] = [];
+  if (input.lens) where.push(`the ${cut(input.lens, LENS_CEILING)} board`);
+  if (input.target) where.push(`element ${cut(input.target, TARGET_CEILING)}`);
+  if (input.generation) where.push(`generation ${cut(input.generation, GENERATION_CEILING)}`);
+  const lines =
+    ref.startLine === ref.endLine
+      ? `line ${ref.startLine}`
+      : `lines ${ref.startLine}–${ref.endLine}`;
+  const span = `${cut(ref.path, PATH_CEILING)} ${lines} (${ref.side} side)`;
+  return `Anchor: ${where.length === 0 ? "" : `${where.join(", ")} — `}${span}.`;
+}
+
+/** The turn text: the question, the span it was asked about, then the labelled reference. */
 export function anchoredAskText(
-  input: Pick<AnchoredAskInput, "question" | "excerpt" | "codeRef">,
+  input: Pick<
+    AnchoredAskInput,
+    "question" | "excerpt" | "codeRef" | "lens" | "target" | "generation"
+  >,
 ): string {
   const excerpt =
     input.excerpt.length > EXCERPT_CEILING
@@ -46,7 +97,9 @@ export function anchoredAskText(
   const identity = input.codeRef === undefined ? "" : JSON.stringify(input.codeRef);
   const boundedIdentity =
     identity.length > 2048 ? `${identity.slice(0, 2048)}… (truncated)` : identity;
-  const reference = boundedIdentity ? `\n\nCode reference: ${boundedIdentity}` : "";
+  const reference = boundedIdentity
+    ? `\n\n${anchorLabel(input)}\nCode reference: ${boundedIdentity}`
+    : "";
   return (
     (excerpt === "" ? input.question : `${input.question}\n\nAbout this: ${excerpt}`) + reference
   );
@@ -82,7 +135,7 @@ export function ReviewAnchoredAskProvider({
   const setQuoteAskFailure = useRennetStore((state) => state.reviewActions.setQuoteAskFailure);
 
   const ask = useCallback<AnchoredAsk>(
-    async ({ threadId, question, excerpt, codeRef }) => {
+    async ({ threadId, question, excerpt, codeRef, lens, target, generation }) => {
       // Open the dock FIRST: the answer arrives in T3's view, so a reviewer who asked and
       // saw nothing open would think the ask was dropped.
       setChatOpen(true);
@@ -92,7 +145,7 @@ export function ReviewAnchoredAskProvider({
       try {
         const result = await send.mutate({
           reviewId,
-          text: anchoredAskText({ question, excerpt, codeRef }),
+          text: anchoredAskText({ question, excerpt, codeRef, lens, target, generation }),
         });
         // A SETTLED ABSENCE, not a rejection: the daemon reached a verdict and it was "this
         // did not go out" (#872's shape, extended to the send in #888). The reason is the
