@@ -713,6 +713,11 @@ const MEASURE_THREAD = "measure-thread";
 async function callOverWire(
   server: AppMcpServer,
   name: string,
+  // The request's own JSON-RPC id (round 4, Codex): defaults to `1` for every existing
+  // caller, but a probe that wants to prove the CEILING counts the envelope — not just the
+  // bare result — has to send an id whose own size is part of what gets measured, since
+  // `{jsonrpc, id, result}` is the complete wire body and `id` is the caller's to pick.
+  requestId = 1,
 ): Promise<{ readonly status: number; readonly text: string; readonly wireBytes: number }> {
   const response = await fetch(server.addressFor(MEASURE_THREAD).url, {
     method: "POST",
@@ -724,7 +729,7 @@ async function callOverWire(
     },
     body: JSON.stringify({
       jsonrpc: "2.0",
-      id: 1,
+      id: requestId,
       method: "tools/call",
       params: { name, arguments: {} },
     }),
@@ -877,6 +882,111 @@ describe("what the session thread's app tools cost (session-thread-briefing)", (
     // visible: it fails the moment the constant and the literal disagree, which is the only
     // place in this file the constant is checked against anything but itself.
     expect(APP_TOOL_RESULT_MAX_BYTES).toBe(8_192);
+  });
+
+  // ── Round 4 (Codex): the ceiling has to count the ENVELOPE, not just the result ──────
+  //
+  // All 29 tools above landed at 8,212-8,226 B on the real wire even with the shrink loop
+  // running, because both the initial comparison and every shrink iteration measured the
+  // bare `{content, isError?}` object — never the `{jsonrpc:"2.0", id, result}` `reply()`
+  // actually sends. The `jsonrpc`/`id`/`result` wrapper keys and the request's OWN id (a
+  // client's to pick, and a large numeric one is real bytes) are overhead a bare-`result`
+  // measurement never saw. These three probes are chosen to be right at that edge: each
+  // pairs a payload that inflates hard under JSON escaping with a 7-digit request id, so a
+  // ceiling that is off by even the envelope's own overhead reads as a wire body over the
+  // literal 8,192 — never the exported constant, for the same reason the test above pins
+  // it standalone.
+  const ROUND_4_REQUEST_ID = 9_999_999;
+
+  it("holds a quote-heavy success under the literal 8,192 once the request's own id is counted (round 4)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "app-tool-ceiling-quote-"));
+    const server = await startAppMcpServer({
+      bearer: () => MEASURE_BEARER,
+      // Every double-quote in the raw payload text becomes `\"` once shaped to JSON, and
+      // THAT string is itself a JSON value inside `content[0].text` — so it escapes a
+      // second time. 2,034 quotes is enough to push the complete wire body right up
+      // against the ceiling once the `{jsonrpc, id, result}` wrapper is added.
+      dispatch: () => async () => ({ blob: '"'.repeat(2034) }),
+      stateDir: dir,
+    });
+    try {
+      const tools = buildAppTools(async () => undefined);
+      const tool = tools.find((candidate) => candidate.commandId === "projects.list");
+      if (tool === undefined) throw new Error("projects.list is no longer agent-exposed");
+      const answer = await callOverWire(server, tool.name, ROUND_4_REQUEST_ID);
+      expect(answer.status, `quote-heavy probe returned HTTP ${answer.status}`).toBe(200);
+      console.info(`round 4 quote-heavy success: ${answer.wireBytes} B`);
+      expect(
+        answer.wireBytes,
+        `quote-heavy success's complete wire body is ${answer.wireBytes} B, over the 8,192 B universal ceiling`,
+      ).toBeLessThanOrEqual(8_192);
+    } finally {
+      await server.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("holds a NUL-heavy error under the literal 8,192 once the request's own id is counted (round 4)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "app-tool-ceiling-nul-"));
+    const server = await startAppMcpServer({
+      bearer: () => MEASURE_BEARER,
+      // A NUL character (`\x00`, never a raw NUL byte in this source) escapes to the
+      // six-byte literal `\u0000` once shaped to JSON — this refusal's 1,359-byte raw
+      // message (under `REFUSAL_TEXT_CAP`'s 2,000 B, so `refusalText` passes it through
+      // whole) becomes well over 8 KB once escaped and wrapped.
+      dispatch: () => async () => {
+        throw new Error(`${"\x00".repeat(1353)}aaaaaa`);
+      },
+      stateDir: dir,
+    });
+    try {
+      const tools = buildAppTools(async () => undefined);
+      const tool = tools.find((candidate) => candidate.commandId === "projects.list");
+      if (tool === undefined) throw new Error("projects.list is no longer agent-exposed");
+      const answer = await callOverWire(server, tool.name, ROUND_4_REQUEST_ID);
+      expect(answer.status, `NUL-heavy probe returned HTTP ${answer.status}`).toBe(200);
+      const body = JSON.parse(answer.text) as { result?: { isError?: boolean } };
+      expect(
+        body.result?.isError,
+        "the NUL-heavy dispatch throw should answer as a tool-result refusal, not a JSON-RPC error",
+      ).toBe(true);
+      console.info(`round 4 NUL-heavy error: ${answer.wireBytes} B`);
+      expect(
+        answer.wireBytes,
+        `NUL-heavy error's complete wire body is ${answer.wireBytes} B, over the 8,192 B universal ceiling`,
+      ).toBeLessThanOrEqual(8_192);
+    } finally {
+      await server.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("holds an emoji/CJK success under the literal 8,192 once the request's own id is counted (round 4)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "app-tool-ceiling-emoji-"));
+    const server = await startAppMcpServer({
+      bearer: () => MEASURE_BEARER,
+      // Astral-plane emoji and CJK ideographs are multi-byte in UTF-8 but each still counts
+      // as ONE code point for `headAtCodePointBoundary`'s boundary math — this fixture
+      // exercises the shrink loop's UTF-8-safety on non-ASCII content, not just its byte
+      // counting.
+      dispatch: () => async () => ({ blob: `${"😀漢".repeat(1162)}aaaa` }),
+      stateDir: dir,
+    });
+    try {
+      const tools = buildAppTools(async () => undefined);
+      const tool = tools.find((candidate) => candidate.commandId === "projects.list");
+      if (tool === undefined) throw new Error("projects.list is no longer agent-exposed");
+      const answer = await callOverWire(server, tool.name, ROUND_4_REQUEST_ID);
+      expect(answer.status, `emoji/CJK probe returned HTTP ${answer.status}`).toBe(200);
+      console.info(`round 4 emoji/CJK success: ${answer.wireBytes} B`);
+      expect(
+        answer.wireBytes,
+        `emoji/CJK success's complete wire body is ${answer.wireBytes} B, over the 8,192 B universal ceiling`,
+      ).toBeLessThanOrEqual(8_192);
+    } finally {
+      await server.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("positive control: ask.read's own #871-shaped fixture exceeds the ceiling on its own, unceilinged (item 1)", () => {
