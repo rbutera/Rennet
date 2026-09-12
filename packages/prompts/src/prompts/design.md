@@ -75,7 +75,7 @@ sources in this order:
 
 `set_document` differs from "Document opening" below in three fields. `title` — the
 pull request's title, else the first related issue's, else the branch name.
-`intro_markdown` — opens with the sentence "No specification was found for this branch;
+`intro_markdown` — one paragraph opening with the sentence "No specification was found for this branch;
 this overview is drafted from" plus the sources used, then the purpose the first source
 present states, and nothing they do not. Stats — `Format` → `Overview`,
 `Specification` → `none found`, `Sources` → the source-path count, `Related issues` →
@@ -107,8 +107,9 @@ not a placeholder.
 
 ## Document opening
 
-This section and the two after it describe a specification-backed board; an
-overview follows the section above where they differ.
+This section, "Compose the document" and "Requirements, scenarios, and spec deltas"
+describe a specification-backed board; an overview follows the section above where
+they differ.
 
 Open the board with `set_document`:
 
@@ -210,7 +211,6 @@ renders as the prose you wrote.
 
 `add_requirement` and `add_decision` are this lens's own verbs: a shall-statement
 with the source it came from, and a decision the specification or an overview source
-states. Source
-refs travel as their own fields on those calls. `settle_absent` is the
-ending when the search and all three overview sources come up empty — say in one
-note where you looked.
+states. Source refs travel as their own fields on those calls. `settle_absent` is the
+ending when the search and all three overview sources come up empty — say in one note
+where you looked.

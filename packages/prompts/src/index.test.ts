@@ -305,8 +305,16 @@ describe("lens prompt manifest", () => {
     // /task stats of "Document opening" as instructions for its own board (design D4).
     const opening = text.slice(text.indexOf("## Document opening"));
     expect(opening).toMatch(
-      /^## Document opening\n\nThis section and the two after it describe a specification-backed board; an\noverview follows the section above where they differ\./,
+      /^## Document opening\n\nThis section, "Compose the document" and "Requirements, scenarios, and spec deltas"\ndescribe a specification-backed board; an overview follows the section above where\nthey differ\./,
     );
+    // The sentence names the sections it scopes, so the NEXT two headings must be those
+    // two, in that order — a section inserted between them would be unscoped and green.
+    const headings = [...opening.matchAll(/^## (.+)$/gm)].map((match) => match[1]);
+    expect(headings.slice(0, 3)).toEqual([
+      "Document opening",
+      "Compose the document",
+      "Requirements, scenarios, and spec deltas",
+    ]);
 
     // The absence survives, and it is CONDITIONED on all three sources being empty —
     // an overview arm that could still settle on a branch with a PR body would be the

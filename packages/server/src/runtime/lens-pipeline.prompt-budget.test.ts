@@ -64,7 +64,7 @@ const bigPacket = buildDeltaPacket(synthetic(), []);
 // Full prompts on this fixture, including the task layer but no context directory:
 // design 18,210 B (15,588 B before the overview arm — design-overview-fallback D1/D4 —
 // which added the second ending, its three sources and its document shape); sequence 10,248 B;
-// decisions 9,961 B; noise 10,594 B. Move two splits Flagged into two drafter prompts —
+// decisions 10,032 B; noise 10,594 B. Move two splits Flagged into two drafter prompts —
 // the review leg (`flagged-review.md`) and the compiler (`flagged-compile.md`, which
 // `LENS_PROMPT_FILES.flagged` names) — each much shorter than the old single flagged prompt.
 // Budgets leave 10% headroom. The context-reference layer has its own bounded test.

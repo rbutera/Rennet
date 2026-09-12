@@ -205,6 +205,13 @@ describe("relatedContextRefsFile", () => {
     const kept = [...body.matchAll(/^- owner\/repo-n+#(\d+) /gm)].map((match) => match[1]);
     expect(kept.length).toBeGreaterThan(0);
     expect(kept.length).toBeLessThan(refs.length);
+    // The last retained line is WHOLE — label, url and provenance, newline-terminated —
+    // and the first dropped ref's label is absent, so a line cut mid-way cannot pass.
+    const last = Number(kept[kept.length - 1]);
+    expect(body).toContain(
+      `- owner/repo-${"n".repeat(200)}#${last} — https://github.com/o/r/issues/${last} — found via commit-message\n`,
+    );
+    expect(body).not.toContain(`#${last + 1} `);
     expect(body).toContain(`… truncated, ${refs.length - kept.length} more items not listed.`);
     // Control: the same refs under the default bound keep every line and no marker.
     expect(relatedContextRefsFile(refs)?.body).not.toContain("truncated");
