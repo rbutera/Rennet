@@ -181,6 +181,11 @@ export interface CodexSessionRuntimeOptions {
    * `appServerArgs`, which a caller can choose. Decides
    * `browserToolsAvailable` on every turn's collaboration mode. */
   readonly sidecarMcpServerConfigured?: boolean;
+  /** The THREAD's briefing, appended to every turn's developer instructions.
+   * Codex has no system-prompt append, and it reads its developer instructions
+   * per turn, so the session holds the text and every turn re-states it — the
+   * Claude leg fixes the same fact once, at query construction. */
+  readonly threadInstructions?: string;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -586,6 +591,7 @@ function buildCodexCollaborationMode(input: {
   readonly model?: string;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly browserToolsAvailable?: boolean;
+  readonly threadInstructions?: string;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
   if (input.interactionMode === undefined) {
     return undefined;
@@ -601,6 +607,7 @@ function buildCodexCollaborationMode(input: {
         input.interactionMode,
         { model, reasoningEffort },
         input.browserToolsAvailable ?? true,
+        input.threadInstructions,
       ),
     },
   };
@@ -621,6 +628,8 @@ export function buildTurnStartParams(input: {
   readonly outputSchema?: unknown;
   /** Defaults to true so callers that predate the agent-access gate are unchanged. */
   readonly browserToolsAvailable?: boolean;
+  /** The thread's briefing; see `CodexSessionRuntimeOptions.threadInstructions`. */
+  readonly threadInstructions?: string;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -642,6 +651,9 @@ export function buildTurnStartParams(input: {
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
     browserToolsAvailable: input.browserToolsAvailable ?? true,
+    ...(input.threadInstructions !== undefined
+      ? { threadInstructions: input.threadInstructions }
+      : {}),
   });
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
@@ -2344,6 +2356,12 @@ export const makeCodexSessionRuntime = (
             // attached, never the argument list: a caller-supplied server brings
             // its own tools, not these ones, whatever it is called.
             browserToolsAvailable: options.sidecarMcpServerConfigured === true,
+            // The thread's briefing, which is a session fact: it is fixed when
+            // the session is created and re-stated on every turn, because
+            // Codex reads developer instructions per turn.
+            ...(options.threadInstructions !== undefined
+              ? { threadInstructions: options.threadInstructions }
+              : {}),
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(

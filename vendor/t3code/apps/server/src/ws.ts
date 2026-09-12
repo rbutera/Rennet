@@ -1080,6 +1080,12 @@ const makeWsRpcLayer = (
                 interactionMode: bootstrap.createThread.interactionMode,
                 branch: bootstrap.createThread.branch,
                 worktreePath: bootstrap.createThread.worktreePath,
+                ...(bootstrap.createThread.instructions !== undefined
+                  ? { instructions: bootstrap.createThread.instructions }
+                  : {}),
+                ...(bootstrap.createThread.mcpServers !== undefined
+                  ? { mcpServers: bootstrap.createThread.mcpServers }
+                  : {}),
                 createdAt: bootstrap.createThread.createdAt,
               });
               // The successful create is a fence in the engine command queue:

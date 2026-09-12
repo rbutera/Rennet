@@ -344,6 +344,135 @@ it.effect("refuses a credential variable that is not an environment variable nam
   }),
 );
 
+const threadCreateCommandWith = (extra: Record<string, unknown>) => ({
+  type: "thread.create",
+  commandId: "cmd-thread-create-briefed",
+  threadId: "thread-1",
+  projectId: "project-1",
+  title: "Review of feat/x",
+  modelSelection: { provider: "claude", model: "sonnet-4.6" },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  branch: "feat/x",
+  worktreePath: "/tmp/worktrees/feat-x",
+  createdAt: "2026-01-01T00:00:00.000Z",
+  ...extra,
+});
+
+it.effect("carries a thread's briefing and MCP servers on thread.create", () =>
+  Effect.gen(function* () {
+    // Both are THREAD facts: every turn on the thread runs under them,
+    // including the ones the thread's creator does not author.
+    const command = yield* decodeOrchestrationCommand(
+      threadCreateCommandWith({
+        instructions: "You are the orchestrator of a Rennet review.",
+        mcpServers: {
+          rennet_app: {
+            url: "http://127.0.0.1:7391/app/threads/thread-1",
+            bearerTokenEnvVar: "RENNET_APP_BEARER",
+          },
+        },
+      }),
+    );
+
+    if (command.type !== "thread.create") {
+      assert.fail(`Expected thread.create, received ${command.type}.`);
+    }
+    assert.strictEqual(command.instructions, "You are the orchestrator of a Rennet review.");
+    assert.deepStrictEqual(command.mcpServers, {
+      rennet_app: {
+        url: "http://127.0.0.1:7391/app/threads/thread-1",
+        bearerTokenEnvVar: "RENNET_APP_BEARER",
+      },
+    });
+  }),
+);
+
+it.effect("decodes a thread.create that carries no briefing and no MCP servers", () =>
+  Effect.gen(function* () {
+    const command = yield* decodeOrchestrationCommand(threadCreateCommandWith({}));
+
+    if (command.type !== "thread.create") {
+      assert.fail(`Expected thread.create, received ${command.type}.`);
+    }
+    assert.strictEqual(command.instructions, undefined);
+    assert.strictEqual(command.mcpServers, undefined);
+  }),
+);
+
+it.effect("gives a raw credential nowhere to live on a thread's MCP server", () =>
+  Effect.gen(function* () {
+    // Same reasoning as the turn's set: thread.create is written to the event
+    // store and replayed from it, so a field able to hold a secret would make
+    // that secret a durable database row.
+    const command = yield* decodeOrchestrationCommand(
+      threadCreateCommandWith({
+        mcpServers: {
+          rennet_app: {
+            url: "http://127.0.0.1:7391/app/threads/thread-1",
+            bearerToken: "rennet-sentinel-app-credential",
+          },
+        },
+      }),
+    );
+
+    assert.notInclude(JSON.stringify(command), "rennet-sentinel-app-credential");
+    if (command.type !== "thread.create") {
+      assert.fail(`Expected thread.create, received ${command.type}.`);
+    }
+    assert.deepStrictEqual(command.mcpServers, {
+      rennet_app: { url: "http://127.0.0.1:7391/app/threads/thread-1" },
+    });
+  }),
+);
+
+it.effect("projects a thread's briefing and MCP servers onto the thread and its event", () =>
+  Effect.gen(function* () {
+    const payload = yield* decodeThreadCreatedPayload({
+      threadId: "thread-1",
+      projectId: "project-1",
+      title: "Review of feat/x",
+      modelSelection: { provider: "claude", model: "sonnet-4.6" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: "feat/x",
+      worktreePath: "/tmp/worktrees/feat-x",
+      instructions: "You are the orchestrator of a Rennet review.",
+      mcpServers: { rennet_app: { url: "http://127.0.0.1:7391/app/threads/thread-1" } },
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(payload.instructions, "You are the orchestrator of a Rennet review.");
+
+    const thread = yield* decodeOrchestrationThread({
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Review of feat/x",
+      modelSelection: { provider: "claude", model: "sonnet-4.6" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: "feat/x",
+      worktreePath: "/tmp/worktrees/feat-x",
+      instructions: payload.instructions,
+      mcpServers: payload.mcpServers,
+      latestTurn: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+      session: null,
+      deletedAt: null,
+      messages: [],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+    });
+    assert.strictEqual(thread.instructions, "You are the orchestrator of a Rennet review.");
+    assert.deepStrictEqual(thread.mcpServers, {
+      rennet_app: { url: "http://127.0.0.1:7391/app/threads/thread-1" },
+    });
+  }),
+);
+
 it.effect("accepts inline images, uploaded images, and uploaded files from clients", () =>
   Effect.gen(function* () {
     const command = yield* decodeClientOrchestrationCommand({

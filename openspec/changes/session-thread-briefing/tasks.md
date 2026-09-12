@@ -19,24 +19,24 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
 
 ## 1. Vendored seam — a thread carries `instructions` and `mcpServers`
 
-- [ ] 1.1 `vendor/t3code/packages/contracts/src/orchestration.ts`: `thread.create` (both command
+- [x] 1.1 `vendor/t3code/packages/contracts/src/orchestration.ts`: `thread.create` (both command
   shapes) and the `thread.created` event gain optional `instructions` (TrimmedString) and
   `mcpServers` (`TurnMcpServers`); the thread projection carries both. Contract test: decodes with
   and without; a raw credential still has nowhere to live. Ledger row.
-- [ ] 1.2 `apps/server/src/orchestration/decider.ts` + `Layers/ProviderCommandReactor.ts`: persist
+- [x] 1.2 `apps/server/src/orchestration/decider.ts` + `Layers/ProviderCommandReactor.ts`: persist
   both on the thread; when a provider session starts for a thread, `ProviderSessionStartInput`
   carries the thread's `instructions` and the union of the thread's and the turn's `mcpServers`.
   `ProviderService.ts` recovery reads the thread's pair the way it reads the persisted turn's
   schema and servers. Test: a stale session recovered for a briefed thread starts with the
   briefing and the thread's servers. Ledger rows.
-- [ ] 1.3 `Layers/ClaudeAdapter.ts`: `systemPrompt: { type: "preset", preset: "claude_code", ...(instructions ? { append: instructions } : {}) }`.
+- [x] 1.3 `Layers/ClaudeAdapter.ts`: `systemPrompt: { type: "preset", preset: "claude_code", ...(instructions ? { append: instructions } : {}) }`.
   Nothing else in the option set changes. Test: append set from the thread, absent without;
   **positive control** — remove the spread and the assertion reddens. The turn-vs-session MCP
   comparison uses (thread ∪ turn). Ledger row.
-- [ ] 1.4 `Layers/CodexAdapter.ts` + `provider/CodexDeveloperInstructions.ts`: the thread's
+- [x] 1.4 `Layers/CodexAdapter.ts` + `provider/CodexDeveloperInstructions.ts`: the thread's
   instructions are appended after T3's own blocks. Test on the scripted app-server: the
   developer instructions carry the append. Ledger rows.
-- [ ] 1.5 `packages/server/src/t3/client.ts`: `CreateThreadInput` gains `instructions?` and
+- [x] 1.5 `packages/server/src/t3/client.ts`: `CreateThreadInput` gains `instructions?` and
   `mcpServers?`; `createThread` passes both. Boot contract probe unchanged (no new method).
   Cluster gate green. Commit.
 
