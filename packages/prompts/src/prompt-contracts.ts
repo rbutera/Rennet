@@ -742,3 +742,133 @@ export function renderBoardRepairTurn(verdict: readonly BoardVerdictPointer[] | 
     `\`finish\` did not settle your board. Fix these on the board you already have, then call \`finish\` again:\n${issues}`,
   );
 }
+
+// ── The session thread's briefing (session-thread-briefing 2.2) ──
+
+/**
+ * The ceiling on the WHOLE briefing — the fixed text plus the review's own lines.
+ *
+ * It is the original orchestrator primer's bound, and it is tight for a reason the other
+ * bounds in this file do not share: the briefing is a system-prompt APPEND, so it is a
+ * prefix re-read on every round trip of every turn for the life of the thread, including
+ * the turns the reviewer's own composer starts.
+ */
+export const SESSION_BRIEFING_MAX_BYTES = 4_096;
+
+/**
+ * The budget for the fixed half (`SESSION_BRIEFING_FILE`), pinned by the manifest test.
+ * The dynamic lines get what is left, so a fixed text that grows past this eats the
+ * patchset line's room rather than the ceiling's.
+ */
+export const SESSION_BRIEFING_FIXED_MAX_BYTES = 2_560;
+
+/** Byte bound on ONE interpolated ref — a branch name or a pull-request label. */
+export const SESSION_BRIEFING_REF_MAX_BYTES = 120;
+
+/** Byte bound on ONE interpolated object id. A full sha is 40; a pathological one is cut. */
+export const SESSION_BRIEFING_OID_MAX_BYTES = 64;
+
+/** Byte bound on the interpolated diff command. Two oids, a verb and flags. */
+export const SESSION_BRIEFING_DIFF_COMMAND_MAX_BYTES = 200;
+
+/** Byte bound on the interpolated context-directory path. */
+export const SESSION_BRIEFING_CONTEXT_DIR_MAX_BYTES = 200;
+
+/** Byte bound on ONE interpolated tool name. */
+export const SESSION_BRIEFING_TOOL_NAME_MAX_BYTES = 60;
+
+/** How many tool names the briefing lists before the honest "…and N more" marker. */
+export const SESSION_BRIEFING_TOOL_NAME_CAP = 40;
+
+/** The heading the review's own lines sit under, so the append is attributable in a log. */
+const SESSION_BRIEFING_HEADER = "## This review";
+
+/** Which capture the review is of, and the identity a reviewer would recognise it by. */
+export interface SessionBriefingPatchset {
+  readonly kind: "branch" | "pr";
+  /** The branch under review. Present on a branch capture; the head branch of a PR when known. */
+  readonly branch?: string;
+  /** The pull-request number, on a `pr` capture. */
+  readonly prNumber?: number;
+  readonly baseOid: string;
+  readonly headOid: string;
+  /**
+   * The ONE command that reads this change from the checkout. The caller passes what
+   * `reviewedDiffCommand` (in `@rennet/core`) produced for this capture rather than this
+   * package re-deriving it: a working-tree capture and a range capture take different
+   * commands, and two derivations of one command drift.
+   */
+  readonly diffCommand: string;
+}
+
+export interface SessionBriefingInput {
+  /**
+   * The fixed briefing text — `SESSION_BRIEFING_FILE` read by the caller, with its
+   * partials already expanded (this package is node-free and resolves no file). The
+   * manifest test pins the shipped file at `SESSION_BRIEFING_FIXED_MAX_BYTES`; a caller
+   * that hands over a larger text spends the dynamic lines' budget, which is why the
+   * truncation marker below lands on those lines and never on this one.
+   */
+  readonly briefing: string;
+  readonly patchset: SessionBriefingPatchset;
+  /** The session's `.rennet/context/<sessionId>` directory, when one has been written. */
+  readonly contextDir?: string;
+  /** The tool names actually attached to this thread, in the order they are exposed. */
+  readonly toolNames: readonly string[];
+}
+
+/**
+ * Render the session thread's briefing: the fixed map, then this review's own lines.
+ *
+ * What travels is an IDENTITY and paths — the capture's kind, its branch or pull-request
+ * number, its base and head oids, the one diff command, the context directory, the tool
+ * names. No diff, no hunk, no board, no inventory, no file body: the thread stands in the
+ * checkout and holds Rennet's tools, so it reads what it decides it needs. The rendering
+ * therefore does not grow with the change — a ninety-five-file review and a one-file
+ * review on the same oids render the same bytes, which is what the briefing test pins.
+ *
+ * Every interpolation is capped at its call site, and the lines are then joined under the
+ * budget the fixed text leaves, with `boundedJoin`'s honest marker. The patchset line is
+ * first because it is the line the thread cannot work without.
+ */
+export function renderSessionBriefing(input: SessionBriefingInput): string {
+  const { patchset } = input;
+  const branch =
+    patchset.branch === undefined
+      ? undefined
+      : capBytes(patchset.branch, SESSION_BRIEFING_REF_MAX_BYTES);
+  const subject =
+    patchset.kind === "pr"
+      ? `pull request ${capBytes(`#${patchset.prNumber ?? "?"}`, SESSION_BRIEFING_REF_MAX_BYTES)}${
+          branch === undefined ? "" : ` on \`${branch}\``
+        }`
+      : `branch \`${branch ?? "(unnamed)"}\``;
+  const lines = [
+    `- Patchset: ${subject} — base ${capBytes(patchset.baseOid, SESSION_BRIEFING_OID_MAX_BYTES)} → head ${capBytes(patchset.headOid, SESSION_BRIEFING_OID_MAX_BYTES)}. Read the change with \`${capBytes(patchset.diffCommand, SESSION_BRIEFING_DIFF_COMMAND_MAX_BYTES)}\`.`,
+    ...(input.contextDir === undefined
+      ? []
+      : [
+          // The same sentence the lens seats get (`renderContextReference`): the directory
+          // is indexed by its own README and nothing in it is sent inline.
+          `- Your session's context directory is \`${capBytes(input.contextDir.replace(/\/$/, ""), SESSION_BRIEFING_CONTEXT_DIR_MAX_BYTES)}/\`; its \`README.md\` indexes every file there — what each holds and when to read it. Nothing is sent to you inline: read a file with your own tools.`,
+        ]),
+    renderSessionBriefingTools(input.toolNames),
+  ];
+  const head = `${input.briefing.trimEnd()}\n\n${SESSION_BRIEFING_HEADER}\n`;
+  const budget = Math.max(0, SESSION_BRIEFING_MAX_BYTES - utf8Bytes(head));
+  return `${head}${boundedJoin(lines, budget, "review lines")}`;
+}
+
+/** The attached tool names, capped per name and in count, with an honest remainder. */
+function renderSessionBriefingTools(toolNames: readonly string[]): string {
+  if (toolNames.length === 0) {
+    return "- Rennet tools on this thread: none attached.";
+  }
+  const shown = toolNames
+    .slice(0, SESSION_BRIEFING_TOOL_NAME_CAP)
+    .map((name) => `\`${capBytes(name, SESSION_BRIEFING_TOOL_NAME_MAX_BYTES)}\``);
+  const omitted = toolNames.length - shown.length;
+  return `- Rennet tools on this thread: ${shown.join(", ")}${
+    omitted > 0 ? `, …and ${omitted} more attached but not listed here` : ""
+  }.`;
+}

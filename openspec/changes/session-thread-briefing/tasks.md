@@ -47,7 +47,7 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
   and reading a review, `{{reader-voice}}`). A test asserts the file contains no "never", "do not
   commit", "do not push" or "must not" sentence (**positive control:** add one, it reddens). Exported as
   `SESSION_BRIEFING_FILE`; the manifest test covers the file and its marker.
-- [ ] 2.2 `prompt-contracts.ts`: `renderSessionBriefing(input: SessionBriefingInput): string` —
+- [x] 2.2 `prompt-contracts.ts`: `renderSessionBriefing(input: SessionBriefingInput): string` —
   splices patchset (kind, branch or PR number, base and head oids, the exact `git diff` command),
   the context directory path when present, and the attached tool names; `SESSION_BRIEFING_MAX_BYTES = 4096`
   enforced with an honest marker on the dynamic lines; every interpolation bounded at its call site.

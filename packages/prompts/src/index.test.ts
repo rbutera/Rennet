@@ -14,6 +14,7 @@ import {
   REVIEW_DRAFT_VOICE_FILE,
   ROUND_REPORT_FILE,
   SESSION_BRIEFING_FILE,
+  SESSION_BRIEFING_FIXED_MAX_BYTES,
   WRITE_WITH_TOOLS_MARKER,
   WRITE_WITH_TOOLS_PARTIAL_FILE,
 } from "./index.js";
@@ -464,7 +465,7 @@ describe("lens prompt manifest", () => {
     // The fixed half's budget. `SESSION_BRIEFING_MAX_BYTES` (4,096) covers fixed + dynamic,
     // so pinning the file here is what leaves the patchset, context and tool lines room.
     expect(new TextEncoder().encode(text).length, "fixed briefing bytes").toBeLessThanOrEqual(
-      2_560,
+      SESSION_BRIEFING_FIXED_MAX_BYTES,
     );
     expect(text).toMatch(/^# /);
 
