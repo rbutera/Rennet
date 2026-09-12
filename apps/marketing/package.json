@@ -15,6 +15,7 @@
     "@rennet/theme": "workspace:*",
     "astro": "7.1.6",
     "cookie": "2.0.1",
+    "sharp": "0.35.3",
     "typescript": "npm:@typescript/typescript6@6.0.2"
   }
 }

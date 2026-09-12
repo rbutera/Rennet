@@ -19,7 +19,12 @@
       "command": "pnpm --dir apps/marketing exec astro preview"
     },
     "lint": {
-      "command": "pnpm exec biome check apps/marketing/astro.config.mjs apps/marketing/project.json apps/marketing/package.json apps/marketing/src/styles"
+      "command": "pnpm exec biome check apps/marketing/astro.config.mjs apps/marketing/project.json apps/marketing/package.json apps/marketing/src/styles apps/marketing/scripts"
+    },
+    "screenshots": {
+      "cache": false,
+      "dependsOn": [{ "projects": ["rennet-desktop"], "target": "build" }],
+      "command": "pnpm exec playwright test -c apps/desktop/playwright.screenshots.config.ts && node apps/marketing/scripts/optimize-screenshots.mjs apps/marketing/.screenshots-raw apps/marketing/public/product"
     },
     "typecheck": {
       "command": "pnpm --dir apps/marketing exec astro check"
