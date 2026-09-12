@@ -488,3 +488,125 @@ describe("bindThread carries the session's bound workspace", () => {
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// session-thread-briefing 4.2 — WHAT A THREAD IS CREATED WITH, PER KIND.
+//
+// Three kinds share this one seam and only ONE of them is the reviewer's conversation. The
+// briefing is a system-prompt append billed on every turn for the life of the thread, and
+// Rennet's app tools include `ask.stage` and `round.dispatch`; a seat drafting a board and a
+// round's coding agent get neither. The assertions below are on the exact `thread.create`
+// input, because that input IS the thread's whole life — instructions and MCP servers are
+// fixed at create and no later turn can change them.
+//
+// WHAT THIS CANNOT CATCH: that the vendored adapter actually appends the instructions
+// (cluster 1's `ClaudeAdapter` test, with its own positive control) or that production hands
+// this seam a real briefing (`chat-briefing.test.ts`, over `bindReviewThread`).
+// ─────────────────────────────────────────────────────────────────────────────
+describe("a thread is created with the briefing only when it is the session's", () => {
+  let dataDir: string;
+  let inputs: CreateThreadInput[];
+  let client: T3Client;
+
+  const APP_SERVER = {
+    rennet_app: { url: "http://127.0.0.1:9/threads/t-1", bearerTokenEnvVar: "RENNET_APP_BEARER" },
+  };
+
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "rennet-briefed-"));
+    inputs = [];
+    client = {
+      ensureProject: async (workspaceRoot: string) => `project:${workspaceRoot}`,
+      createThread: async (input: CreateThreadInput) => {
+        inputs.push(input);
+        return input.threadId ?? `thread-${inputs.length}`;
+      },
+    } as unknown as T3Client;
+  });
+
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("passes the caller's thread id, the briefing and the app server on a session bind", async () => {
+    const binding = await bindThread({
+      dataDir,
+      client,
+      repositoryRoot: REPO_A,
+      key: { kind: "session", sessionId: "review-a" },
+      title: "t",
+      modelSelection: SELECTION,
+      threadId: "t-1",
+      instructions: "## This review\n- Patchset: branch `main`",
+      mcpServers: APP_SERVER,
+    });
+    // The id the CALLER minted, because the app-tools url above already names it: a create
+    // that minted its own would hand the thread an address pointing at another thread.
+    expect(binding.threadId).toBe("t-1");
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]?.threadId).toBe("t-1");
+    expect(inputs[0]?.instructions).toBe("## This review\n- Patchset: branch `main`");
+    expect(inputs[0]?.mcpServers).toEqual(APP_SERVER);
+  });
+
+  it("creates a seat thread with NO instructions and NO servers of its own", async () => {
+    await bindThread({
+      dataDir,
+      client,
+      repositoryRoot: REPO_A,
+      key: { kind: "seat", generationId: "gen-a", seat: "design" },
+      title: "t",
+      modelSelection: SELECTION,
+      sessionId: "session-a",
+    });
+    expect(inputs[0]?.instructions).toBeUndefined();
+    expect(inputs[0]?.mcpServers).toBeUndefined();
+    // Not vacuous: the same seam DID carry them one test up, for the session key.
+    expect(inputs[0]?.modelSelection).toBe(SELECTION);
+  });
+
+  it("creates a round thread with NO instructions and NO servers of its own", async () => {
+    await bindThread({
+      dataDir,
+      client,
+      repositoryRoot: REPO_A,
+      key: { kind: "round", sessionId: "session-a", operationId: "op-1" },
+      title: "t",
+      modelSelection: SELECTION,
+    });
+    expect(inputs[0]?.instructions).toBeUndefined();
+    expect(inputs[0]?.mcpServers).toBeUndefined();
+  });
+
+  it("refuses by name when a seat or round bind is handed the session's pair", async () => {
+    for (const key of [
+      { kind: "seat", generationId: "gen-a", seat: "design" },
+      { kind: "round", sessionId: "session-a", operationId: "op-1" },
+    ] as const) {
+      await expect(
+        bindThread({
+          dataDir,
+          client,
+          repositoryRoot: REPO_A,
+          key,
+          title: "t",
+          modelSelection: SELECTION,
+          instructions: "you are this review's conversation",
+        }),
+      ).rejects.toThrow(/carries no session briefing/);
+      await expect(
+        bindThread({
+          dataDir,
+          client,
+          repositoryRoot: REPO_A,
+          key,
+          title: "t",
+          modelSelection: SELECTION,
+          mcpServers: APP_SERVER,
+        }),
+      ).rejects.toThrow(/no thread-level MCP servers/);
+    }
+    // Nothing was created for either refusal.
+    expect(inputs).toEqual([]);
+  });
+});

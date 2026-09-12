@@ -90,7 +90,7 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
   Also point `lens-pipeline.ts`'s `renderContextReference` at `@rennet/prompts`'
   `renderContextDirectorySentence`, so the seat and the chat cannot drift on the one sentence
   that tells an agent what its context directory is.
-- [ ] 4.2 `threads.test.ts` / `chat.test.ts`: a session bind passes all three to `createThread`;
+- [x] 4.2 `threads.test.ts` / `chat.test.ts`: a session bind passes all three to `createThread`;
   a seat bind passes no instructions and no app server; the council-less case falls to the default
   and logs. **Positive control:** drop the `instructions` pass-through and the bind assertion
   reddens. Also assert at `bindReviewThread`'s mapping that a 95-file and a 1-file review render

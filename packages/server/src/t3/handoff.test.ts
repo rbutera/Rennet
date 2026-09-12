@@ -428,3 +428,45 @@ describe("readRoundTurnCheckpoint", () => {
     await expect(read(stubs)).rejects.toThrow("sidecar socket closed");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// session-thread-briefing 4.1 — THE HANDOFF RUNS ON THE BRIEFED THREAD.
+//
+// The handoff is not a thread of its own: `runHandoffTurn` binds `{ kind: "session" }`, the
+// same key the chat dock binds, so from cluster 4 onward its turn lands on a thread that was
+// created with `instructions` and with the `rennet_app` server. Both providers FIX their MCP
+// configuration when the session process is created and refuse a later turn that asks for a
+// DIFFERENT set — by name — so a handoff that brought its own servers would have to agree
+// with the thread's, and one that brings NONE rides whatever the session holds.
+//
+// It brings none, and this is the assertion that keeps it that way: the exact `startTurn`
+// input, with no `mcpServers` key at all. Add one here and the vendored reactor compares it
+// against (thread ∪ turn) — the union rule cluster 1 landed — which is a comparison this
+// turn currently never has to pass.
+//
+// WHAT THIS CANNOT CATCH: the union rule itself. That is the vendored
+// `ProviderCommandReactor` / `ClaudeAdapter` suite's, with its own positive control; from
+// here the only visible fact is what Rennet sends.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("a handoff turn on a briefed session thread", () => {
+  it("starts with no mcpServers of its own, so the thread's set is the only one in play", async () => {
+    const { client, startTurn, threadFor } = stubs({
+      turnId: "turn-1",
+      state: "completed",
+      thread: thread("completed", [
+        { role: "assistant", text: "Done." },
+      ] as unknown as OrchestrationThread["messages"]),
+    });
+    const outcome = await runHandoffTurn(
+      { repoRoot: "/repos/a", prompt: "WORK ORDER", reviewId: "rv-1" },
+      { client: async () => client, threadFor },
+    );
+    // The turn went out and settled — the refusal this guards against would have been a
+    // failed start, not a quiet omission.
+    expect(outcome.status).toBe("completed");
+    const sent = startTurn.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(sent).toBeDefined();
+    expect(Object.keys(sent ?? {}).sort()).toEqual(["text", "threadId"]);
+    expect(sent?.mcpServers).toBeUndefined();
+  });
+});
