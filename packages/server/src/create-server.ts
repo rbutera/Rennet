@@ -272,6 +272,7 @@ import {
 import { composeGitHubTransport } from "./github-fetch";
 import { createGitHubTokenStore } from "./github-token-store";
 import { createLiveComposeBundle } from "./handoff-compose-live";
+import { memoiseOnlyAvailable } from "./harness-memo";
 import { InFlightReviews } from "./in-flight-reviews";
 import { landWorkBranch } from "./land-work-branch";
 import { sweepLegacyWorktrees } from "./legacy-worktrees";
@@ -1738,11 +1739,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const key = locus.kind === "wsl" ? `wsl:${locus.distro}:${distroCwd ?? ""}` : "host";
     let harness = claudeHarnesses.get(key);
     if (!harness) {
-      harness = createClaudeHarness({
-        env,
-        locus,
-        ...(distroCwd === undefined ? {} : { wslCwd: distroCwd }),
-      });
+      harness = memoiseOnlyAvailable(
+        claudeHarnesses,
+        key,
+        createClaudeHarness({
+          env,
+          locus,
+          ...(distroCwd === undefined ? {} : { wslCwd: distroCwd }),
+        }),
+        (result) => result.adapter !== null,
+      );
       claudeHarnesses.set(key, harness);
     }
     return harness;
@@ -1866,7 +1872,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           adapter: result.adapter,
         };
       })();
-      codexResolutions.set(key, resolution);
+      codexResolutions.set(
+        key,
+        memoiseOnlyAvailable(
+          codexResolutions,
+          key,
+          resolution,
+          (value) => value.availability.available,
+        ),
+      );
+      return codexResolutions.get(key) as Promise<CodexResolution>;
     }
     return resolution;
   }
