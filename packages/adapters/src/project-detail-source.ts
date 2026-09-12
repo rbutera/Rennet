@@ -12,6 +12,7 @@ import type {
 import { forgeRepositorySlug } from "@rennet/protocol";
 import { type GitExec, parseCounts } from "./git-range-diff";
 import { isGitHubNetworkError } from "./github-fetch";
+import { resolvePrimaryBase } from "./primary-base";
 import { defaultProjectDiscoveryDeps, discoverProject } from "./project-discovery";
 import { type ProjectPrSource, ProjectPrSourceUnavailable } from "./project-pr-source";
 import {
@@ -154,17 +155,23 @@ async function readBranchActivity(git: GitExec, root: string): Promise<BranchAct
 
 /**
  * Commits behind/ahead of `primary` for `branch` (`rev-list --left-right --count`).
- * Returns `null/null` when the count could NOT be computed — the base ref is
- * unresolvable in this repo (a missing/foreign primary) — which is distinct from a
- * genuinely even `0/0`. Collapsing the two would make an unknown base read as
- * "fully merged" (a lying gauge, Rule 81ap).
+ * `primary` is the resolved primary ref's TIP OID (fresh-base-patchset, D3), not the bare
+ * project name and not the winning ref's short name, so the row's numbers describe the
+ * range the row's click captures — and a tag literally named `origin/main` cannot shadow
+ * the ref the resolver picked, because git never re-resolves a name here.
+ *
+ * Returns `null/null` when the count could NOT be computed — no ref in this repo
+ * names the primary branch, or `rev-list` failed — which is distinct from a genuinely
+ * even `0/0`. Collapsing the two would make an unknown base read as "fully merged" (a
+ * lying gauge, Rule 81ap).
  */
 async function aheadBehind(
   git: GitExec,
   root: string,
-  primary: string,
+  primary: string | null,
   branch: string,
 ): Promise<{ ahead: number | null; behind: number | null }> {
+  if (primary === null) return { ahead: null, behind: null };
   const out = await git(root, ["rev-list", "--left-right", "--count", `${primary}...${branch}`], {
     reject: false,
   });
@@ -193,10 +200,11 @@ function isoFromUnix(unix: number): string {
 type BranchDiffstat = Pick<LocalWork, "additions" | "deletions" | "changedFiles" | "createdAt">;
 
 /**
- * The branch's committed diff against `primary` (`primary...branch`, so only the
- * branch's own commits count) and the author time of its first commit past the
- * base. Only called for a branch that is ahead: a branch with nothing to review has
- * nothing to measure, and an unresolvable base already reads as `ahead: null`.
+ * The branch's committed diff against `primary` — the resolved primary ref's TIP OID, the
+ * same commit `aheadBehind` measured against (`primary...branch`, so only the branch's own
+ * commits count) — and the author time of its first commit past the base. Only called for
+ * a branch that is ahead: a branch with nothing to review has nothing to measure, and an
+ * unresolvable base already reads as `ahead: null`.
  * Binary files count towards `changedFiles` and contribute no lines.
  */
 async function branchDiffstat(
@@ -242,6 +250,16 @@ async function loadRepoLocalWork(
 ): Promise<LocalWork[]> {
   const identity = await repositoryIdentity(git, root);
   const { repository, forgeRepository } = identity;
+  // One resolution per repository, shared by every row: the newest ref naming the
+  // primary branch (fresh-base-patchset, D3). `null` means no spelling of it exists
+  // here, and the rows then say `null/null` rather than reading as even.
+  //
+  // The rows measure against the winner's TIP OID rather than its short name. `origin/main`
+  // as a name is ambiguous — `refs/tags/origin/main` outranks `refs/remotes/origin/main` in
+  // git's disambiguation order — so re-resolving it per row could measure a branch against a
+  // ref this resolver never picked, silently, and the row would disagree with the capture.
+  const { baseTipOid } = await resolvePrimaryBase(git, root, { primaryBranch });
+  const primaryTip = baseTipOid ?? null;
   const activity = await readBranchActivity(git, root);
   const worktreesRaw = await git(root, ["worktree", "list", "--porcelain", "-z"], {
     reject: false,
@@ -281,12 +299,14 @@ async function loadRepoLocalWork(
     MAX_CONCURRENT_BRANCH_READS,
     async ({ branch, worktreePath }): Promise<LocalWork> => {
       const [{ ahead, behind }, dirty, lastActivityAt] = await Promise.all([
-        aheadBehind(git, root, primaryBranch, branch),
+        aheadBehind(git, root, primaryTip, branch),
         worktreePath === undefined ? false : isDirty(git, worktreePath),
         activityAt(branch),
       ]);
       const diffstat =
-        ahead !== null && ahead > 0 ? await branchDiffstat(git, root, primaryBranch, branch) : {};
+        primaryTip !== null && ahead !== null && ahead > 0
+          ? await branchDiffstat(git, root, primaryTip, branch)
+          : {};
       return {
         // A worktree's id is its path (the clean-up target: `git worktree remove <path>`);
         // a bare branch has no path on disk, so its id is a branch-delete target.

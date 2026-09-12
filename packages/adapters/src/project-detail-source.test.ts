@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   ForgeRepoIdentity,
   Project,
@@ -5,8 +9,8 @@ import type {
   PullRequest,
 } from "@rennet/protocol";
 import { forgeRepositorySlug, projectDetailSchema } from "@rennet/protocol";
-import { describe, expect, it, vi } from "vitest";
-import type { GitExec } from "./git-range-diff";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { execaGit, type GitExec } from "./git-range-diff";
 import { createGitHubOctokit } from "./github-octokit";
 import {
   defaultProjectDetailSourceDeps,
@@ -80,6 +84,10 @@ interface RepoFixture {
   diffstat?: Record<string, { numstat: [string, string, string][]; authorTimes: number[] }>;
 }
 
+/** A stable stand-in OID, so a ref lookup in the mock answers the way git does. */
+const fakeOid = (name: string): string =>
+  `${name.replace(/\W/g, "0")}`.padEnd(40, "0").slice(0, 40);
+
 /** Build an injected GitExec over a set of repo roots + their worktrees' dirtiness. */
 function makeGit(repos: Record<string, RepoFixture>): GitExec {
   const dirty = new Set<string>();
@@ -95,10 +103,21 @@ function makeGit(repos: Record<string, RepoFixture>): GitExec {
       case "config":
         return args[1] === "user.name" ? (repo.userName ?? "") : (repo.userEmail ?? "");
       case "remote":
-        return repo.remoteUrl ?? "";
+        // `remote get-url origin` (identity) vs the bare `remote` list the base
+        // resolver walks. These fixtures declare ONE spelling of the primary branch —
+        // the local head — so the resolver has a single candidate and never compares
+        // ancestry; the stale-`origin/main` case is exercised against real git below.
+        return args[1] === "get-url" ? (repo.remoteUrl ?? "") : "";
       case "rev-parse":
+        if (args[1] === "--verify") {
+          const ref = (args[3] ?? "").replace("^{commit}", "");
+          const branch = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : "";
+          return branch.length > 0 && branch in repo.branches ? fakeOid(branch) : "";
+        }
         // `rev-parse --path-format=absolute --git-common-dir`
         return repo.commonDir ?? "";
+      case "merge-base":
+        throw new Error("these fixtures declare one primary ref, so nothing is compared");
       case "for-each-ref":
         return `${Object.entries(repo.branches)
           .map(([name, unix]) => `${name}\t${unix}`)
@@ -767,6 +786,143 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
     const detail = await loadProjectDetail(depsWith(git, ["/repo"]), repoProject("/repo"));
     expect(detail.prs).toEqual([]);
     expect(detail.truncated).toBe(false);
+  });
+});
+
+describe("loadProjectDetail — the row measures against the resolved primary ref", () => {
+  // Real git on a cold disk under a busy gate exceeds vitest's 5 s default (the full
+  // `pnpm check` timed these out at 5000 ms while other suites were running); the same
+  // room `git-capture.test.ts` and `primary-base.test.ts` give themselves.
+  vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+  const scratch: string[] = [];
+  const runGit = (cwd: string, ...args: string[]): string =>
+    execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  const scratchDirectory = (prefix: string): string => {
+    const directory = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+    scratch.push(directory);
+    return directory;
+  };
+
+  afterEach(() => {
+    for (const directory of scratch.splice(0))
+      rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
+
+  it("counts a branch cut from a fetched origin/main as one commit ahead of it", async () => {
+    // Real git, because the answer is an ancestry question the fixtures above cannot
+    // pose: local `main` is a commit behind `origin/main`, and the branch was cut from
+    // the fetched tip. Measured against the bare name, the sibling's commit counts as
+    // the branch's own, and the row disagrees with the review it opens.
+    const origin = scratchDirectory("rennet-row-origin-");
+    const repo = scratchDirectory("rennet-row-");
+    const sibling = scratchDirectory("rennet-row-sibling-");
+    runGit(origin, "init", "-q", "--bare", "-b", "main");
+    runGit(repo, "init", "-q", "-b", "main");
+    runGit(repo, "config", "user.email", "rennet@example.test");
+    runGit(repo, "config", "user.name", "Rai");
+    runGit(repo, "remote", "add", "origin", origin);
+    writeFileSync(join(repo, "base.txt"), "base\n");
+    runGit(repo, "add", "base.txt");
+    runGit(repo, "commit", "-qm", "base");
+    runGit(repo, "push", "-q", "origin", "main");
+
+    runGit(sibling, "clone", "-q", origin, sibling);
+    runGit(sibling, "config", "user.email", "sibling@example.test");
+    runGit(sibling, "config", "user.name", "Sibling");
+    writeFileSync(join(sibling, "sibling.txt"), "sibling\n");
+    runGit(sibling, "add", "sibling.txt");
+    runGit(sibling, "commit", "-qm", "a sibling lane landed");
+    runGit(sibling, "push", "-q", "origin", "main");
+    runGit(repo, "fetch", "-q", "origin");
+
+    runGit(repo, "checkout", "-q", "-b", "feat/cut-from-origin", "origin/main");
+    writeFileSync(join(repo, "own.txt"), "own\n");
+    runGit(repo, "add", "own.txt");
+    runGit(repo, "commit", "-qm", "the branch's own work");
+    runGit(repo, "checkout", "-q", "main");
+
+    const detail = await loadProjectDetail(depsWith(execaGit, [repo]), repoProject(repo));
+    const row = detail.locals.find((local) => local.branch === "feat/cut-from-origin");
+
+    expect(row).toBeDefined();
+    expect(row?.ahead).toBe(1);
+    expect(row?.behind).toBe(0);
+    expect(row?.changedFiles).toBe(1);
+    expect(row?.additions).toBe(1);
+  });
+
+  it("measures against the winning ref's tip, not a tag that shares its name", async () => {
+    // `origin/main` as a SHORT NAME is ambiguous: git checks `refs/tags/<name>` before
+    // `refs/remotes/<name>`, so a tag literally called `origin/main` answers for it. The
+    // resolver reads `refs/remotes/origin/main` fully qualified and hands back its tip
+    // OID; a row that re-resolved the short name would measure against the stale tag and
+    // count the sibling's commit as this branch's own.
+    const origin = scratchDirectory("rennet-row-tag-origin-");
+    const repo = scratchDirectory("rennet-row-tag-");
+    const sibling = scratchDirectory("rennet-row-tag-sibling-");
+    runGit(origin, "init", "-q", "--bare", "-b", "main");
+    runGit(repo, "init", "-q", "-b", "main");
+    runGit(repo, "config", "user.email", "rennet@example.test");
+    runGit(repo, "config", "user.name", "Rai");
+    runGit(repo, "remote", "add", "origin", origin);
+    writeFileSync(join(repo, "base.txt"), "base\n");
+    runGit(repo, "add", "base.txt");
+    runGit(repo, "commit", "-qm", "base");
+    runGit(repo, "push", "-q", "origin", "main");
+    const staleTip = runGit(repo, "rev-parse", "HEAD");
+
+    runGit(sibling, "clone", "-q", origin, sibling);
+    runGit(sibling, "config", "user.email", "sibling@example.test");
+    runGit(sibling, "config", "user.name", "Sibling");
+    writeFileSync(join(sibling, "sibling.txt"), "sibling\n");
+    runGit(sibling, "add", "sibling.txt");
+    runGit(sibling, "commit", "-qm", "a sibling lane landed");
+    runGit(sibling, "push", "-q", "origin", "main");
+    runGit(repo, "fetch", "-q", "origin");
+
+    // The branch is cut from the remote-tracking ref, named in full so the tag created
+    // next cannot have decided this too.
+    runGit(repo, "checkout", "-q", "-b", "feat/cut-from-origin", "refs/remotes/origin/main");
+    writeFileSync(join(repo, "own.txt"), "own\n");
+    runGit(repo, "add", "own.txt");
+    runGit(repo, "commit", "-qm", "the branch's own work");
+    runGit(repo, "checkout", "-q", "main");
+    runGit(repo, "tag", "origin/main", staleTip);
+    // The fixture contains the shape: the short name now answers with the OLD commit.
+    expect(runGit(repo, "rev-parse", "origin/main")).toBe(staleTip);
+    expect(runGit(repo, "rev-parse", "refs/remotes/origin/main")).not.toBe(staleTip);
+
+    const detail = await loadProjectDetail(depsWith(execaGit, [repo]), repoProject(repo));
+    const row = detail.locals.find((local) => local.branch === "feat/cut-from-origin");
+
+    expect(row).toBeDefined();
+    expect(row?.ahead).toBe(1);
+    expect(row?.behind).toBe(0);
+    expect(row?.changedFiles).toBe(1);
+  });
+
+  it("keeps null/null for a repository with no ref naming the primary branch", async () => {
+    const repo = scratchDirectory("rennet-row-no-primary-");
+    runGit(repo, "init", "-q", "-b", "trunk");
+    runGit(repo, "config", "user.email", "rennet@example.test");
+    runGit(repo, "config", "user.name", "Rai");
+    writeFileSync(join(repo, "base.txt"), "base\n");
+    runGit(repo, "add", "base.txt");
+    runGit(repo, "commit", "-qm", "base");
+    runGit(repo, "checkout", "-q", "-b", "feat/orphaned");
+    writeFileSync(join(repo, "own.txt"), "own\n");
+    runGit(repo, "add", "own.txt");
+    runGit(repo, "commit", "-qm", "own");
+
+    // The project says `main`; nothing in this clone spells it. An unmeasurable base
+    // reads as unknown, never as an even 0/0.
+    const detail = await loadProjectDetail(depsWith(execaGit, [repo]), repoProject(repo));
+    const row = detail.locals.find((local) => local.branch === "feat/orphaned");
+
+    expect(row).toBeDefined();
+    expect(row?.ahead).toBeNull();
+    expect(row?.behind).toBeNull();
+    expect(row?.changedFiles).toBeUndefined();
   });
 });
 

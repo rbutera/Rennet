@@ -74,6 +74,7 @@ const DEFAULT_PR_TARGET = {
 } satisfies ForgePrSubmissionTarget;
 const DEFAULT_PR_DESTINATION = {
   remoteName: "origin",
+  remotes: ["origin"],
   target: DEFAULT_PR_TARGET,
 };
 const GITLAB_PR_TARGET = {
@@ -81,6 +82,7 @@ const GITLAB_PR_TARGET = {
 } satisfies ForgePrSubmissionTarget;
 const GITLAB_PR_DESTINATION = {
   remoteName: "origin",
+  remotes: ["origin"],
   target: GITLAB_PR_TARGET,
 };
 
@@ -2074,6 +2076,98 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
       submission: composed.submission,
       destination: GITLAB_PR_DESTINATION,
     });
+  });
+
+  it("opens the pull request against the branch name when the capture recorded origin/main", async () => {
+    // A working-tree capture records the spelling it MEASURED against, and the newest
+    // spelling of the primary branch is usually the remote-tracking one. A forge knows
+    // only its own branches: GitHub answers 422 for `base: "origin/main"`. The one seam
+    // that knows this repository's remotes strips the prefix here.
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>(async () => ({
+      url: "https://github.com/acme/widget/pull/11",
+      number: 11,
+      reused: false,
+    }));
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        capturePort: {
+          capture: () =>
+            Promise.resolve({
+              ...patchset(),
+              repository: {
+                ...patchset().repository,
+                headRef: "feat/reviewed",
+                baseRef: "origin/main",
+              },
+            }),
+        },
+        resolvePullRequestDestination: () =>
+          Promise.resolve({ ...DEFAULT_PR_DESTINATION, remotes: ["origin", "upstream"] }),
+        submitPullRequest,
+      },
+    );
+    const review = await capturedReview(dispatch);
+
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "pr",
+    })) as {
+      submission: { base: string; head: string };
+      target: ForgePrSubmissionTarget;
+      payload: string;
+      destination: string;
+      compositionId: string;
+    };
+
+    expect(composed.submission.base).toBe("main");
+    // The preview names what the forge will be asked for, not the local spelling.
+    expect(composed.destination).toBe("github:acme/widget · feat/reviewed → main");
+
+    await dispatch("publish.submitPr", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      target: composed.target,
+      submission: composed.submission as never,
+      payload: composed.payload,
+      compositionId: composed.compositionId,
+    });
+    expect(submitPullRequest.mock.calls[0]?.[0]?.submission.base).toBe("main");
+  });
+
+  it("keeps a branch whose own name starts with a segment that is not a remote", async () => {
+    // `origin/thing` is a perfectly good branch name in a clone with no remote called
+    // `origin`. Stripping on the slash alone would open the PR against `thing`.
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        capturePort: {
+          capture: () =>
+            Promise.resolve({
+              ...patchset(),
+              repository: {
+                ...patchset().repository,
+                headRef: "feat/reviewed",
+                baseRef: "origin/thing",
+              },
+            }),
+        },
+        resolvePullRequestDestination: () =>
+          Promise.resolve({ ...DEFAULT_PR_DESTINATION, remotes: ["upstream"] }),
+      },
+    );
+    const review = await capturedReview(dispatch);
+
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "pr",
+    })) as { submission: { base: string } };
+
+    expect(composed.submission.base).toBe("origin/thing");
   });
 
   it("server-owns zero-ask PR readiness and refuses a preview made stale by a remote ask", async () => {

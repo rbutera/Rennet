@@ -52,18 +52,64 @@ tie to the change this way is not this branch's specification.
 
 Generated stamps such as `.openspec.yaml` are not specification documents.
 
-## When there is no specification
+## When there is no specification: draft an overview
 
-Repositories without a spec workflow are ordinary. If you have looked and this
-branch has none, call `settle_absent` and say in its note where you looked.
+Repositories without a spec workflow are ordinary. An unfinished search is not an
+absence: read the commit messages and the pull request body before you conclude there
+is nothing. Sparseness is not absence either; a thin ADR that describes this change is
+still the Design document.
 
-Call it instead of writing a board — not an empty board, not a placeholder, and
-not the nearest document you could find. An unfinished search is not an absence:
-read the commit messages and the pull request body before you conclude there is
-nothing. Sparseness is not absence either; a thin ADR that describes this change
-is still the Design document.
+When you have looked and this branch has none, draft an overview from three
+sources in this order:
+
+1. The pull request's title and description in `pr.md`, when your context directory
+   lists it.
+2. Documentation this branch adds or modifies, when the change has one: every `.md`,
+   `.mdx`, `.rst` or `.txt` file and every file under a `docs/` directory that
+   `change-index.md` lists as added or modified, read at the reviewed tree. If that
+   index is cut short, run the task layer's diff command with
+   `--name-status -- '*.md' '*.mdx' 'docs/'`.
+3. The related issues in `related-context.md`, when your context directory lists it.
+   Where it says retrieval had not finished, read a listed GitHub ref yourself with
+   `gh issue view <n>`.
+
+`set_document` differs from "Document opening" below in three fields. `title` — the
+pull request's title, else the first related issue's, else the branch name.
+`intro_markdown` — one paragraph opening with the sentence "No specification was found for this branch;
+this overview is drafted from" plus the sources used, then the purpose the first source
+present states, and nothing they do not. Stats — `Format` → `Overview`,
+`Specification` → `none found`, `Sources` → the source-path count, `Related issues` →
+the item count when that file exists. No capability, requirement or task stats: they
+count a specification, and there is none.
+
+Three sections, `sources` naming the file each came from. Nest that file's headings as
+sections in source order, render its paragraphs as `prose`, and leave a code fence out,
+stating its place.
+
+- **What the author says** — `pr.md`. A decision it states is a `decision`,
+  `inferred: false`, sourced to that path under the label "PR description".
+- **Documentation on this branch** — one nested section per file. A decision a document
+  states is a `decision` too, sourced to that file.
+- **Related issues** — one nested section per item titled `<tracker>#<id> <title>`, its
+  state and provenance the first prose line, the body's paragraphs after. An acceptance
+  criterion is a `requirement`: `shall` verbatim, `capability` the item id, sourced to
+  the `related-context.md` path under the item id as its label, `trace` only for code
+  you read.
+
+A one-line pull request body makes a one-section overview, and that is the honest
+board.
+
+Only when all three sources are empty — no `pr.md` listed, no documentation file in
+the change, and `related-context.md` absent or naming no item — call `settle_absent`,
+and say in its note that you looked for all three. Never draft an overview while this
+branch has a specification, and never write a board in its place: not an empty board,
+not a placeholder.
 
 ## Document opening
+
+This section, "Compose the document" and "Requirements, scenarios, and spec deltas"
+describe a specification-backed board; an overview follows the section above where
+they differ.
 
 Open the board with `set_document`:
 
@@ -164,7 +210,7 @@ renders as the prose you wrote.
 {{write-with-tools}}
 
 `add_requirement` and `add_decision` are this lens's own verbs: a shall-statement
-with the source it came from, and a decision the specification states. Source
-refs travel as their own fields on those calls. `settle_absent` is the other
-ending — call it when you have looked and this branch has no specification, and
-say in one note where you looked.
+with the source it came from, and a decision the specification or an overview source
+states. Source refs travel as their own fields on those calls. `settle_absent` is the
+ending when the search and all three overview sources come up empty — say in one note
+where you looked.

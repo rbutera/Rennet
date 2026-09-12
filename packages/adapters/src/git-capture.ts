@@ -27,6 +27,7 @@ import {
   visible,
 } from "./git-range-diff";
 import { snapshotSpec, specPathsOf } from "./patchset-intent-capture";
+import { resolvePrimaryBase } from "./primary-base";
 
 const SUPERPOWERS_PROGRESS_PATHSPEC = ":(glob).superpowers/sdd/*/progress.md";
 const SUPERPOWERS_PROGRESS_PATH = /^\.superpowers\/sdd\/[^/]+\/progress\.md$/;
@@ -46,22 +47,6 @@ async function git(
   reject = true,
 ): Promise<string> {
   return run(repositoryPath, arguments_, { reject });
-}
-
-async function succeeds(
-  run: GitExec,
-  repositoryPath: string,
-  arguments_: string[],
-): Promise<boolean> {
-  // `GitExec` surfaces failure as a throw (reject:true) or, with reject:false, a
-  // resolved empty stdout — but we need the exit code. A non-zero exit under
-  // reject:false does not throw, so a throw here means the command genuinely failed.
-  try {
-    await run(repositoryPath, arguments_, { reject: true });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function augmentationIndexPath(locus: Locus): string {
@@ -144,29 +129,29 @@ async function includeIgnoredSuperpowersProgress(options: {
   }
 }
 
+/**
+ * The commit this working tree is reviewed against.
+ *
+ * The choice between the clone's several spellings of the primary branch lives in
+ * `resolvePrimaryBase` (fresh-base-patchset, D1), so this path and the branch-row
+ * capture measure the same range: whichever of `origin/main` and `main` is the newer
+ * is the one a branch cut from today's remote is based on. This path used to take the
+ * first spelling that resolved, `origin/*` first, which trusted a week-old fetch over
+ * a freshly pulled local branch.
+ */
 async function resolveBase(
   run: GitExec,
   repositoryRoot: string,
+  headOid: string,
 ): Promise<{ baseRef: string; baseOid: string }> {
-  const originHead = (
-    await git(
-      run,
-      repositoryRoot,
-      ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
-      false,
-    )
-  ).trim();
-  const candidates = [originHead, "origin/main", "origin/master", "main", "master"].filter(Boolean);
-  let baseRef: string | undefined;
-  for (const candidate of candidates) {
-    if (await succeeds(run, repositoryRoot, ["rev-parse", "--verify", `${candidate}^{commit}`])) {
-      baseRef = candidate;
-      break;
-    }
+  const resolved = await resolvePrimaryBase(run, repositoryRoot, { head: headOid });
+  if (resolved.baseRef !== null && resolved.baseOid !== undefined) {
+    return { baseRef: resolved.baseRef, baseOid: resolved.baseOid };
   }
-  if (!baseRef) baseRef = "HEAD";
-  const baseOid = (await git(run, repositoryRoot, ["merge-base", baseRef, "HEAD"])).trim();
-  return { baseRef, baseOid };
+  // No ref in this clone names a primary branch at all (a repository whose only
+  // branch is the one checked out). Capture against HEAD, which is what this path
+  // has always done, so `baseRef`/`baseOid` keep their shape.
+  return { baseRef: "HEAD", baseOid: headOid };
 }
 
 export class GitCaptureAdapter implements PatchsetCapturePort {
@@ -213,7 +198,7 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
     const headRef =
       (await git(run, gitRoot, ["symbolic-ref", "--short", "-q", "HEAD"], false)).trim() ||
       undefined;
-    const { baseRef, baseOid } = await resolveBase(run, gitRoot);
+    const { baseRef, baseOid } = await resolveBase(run, gitRoot, headOid);
     const baseReviewedTreeOid = await (
       this.effects.captureReviewedTree ?? captureReviewedWorkingTree
     )(gitRoot, locus);

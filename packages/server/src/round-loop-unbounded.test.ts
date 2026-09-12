@@ -67,7 +67,7 @@ const BASE_REF = "main";
 const TARGET = {
   repo: { forge: "github", owner: "acme", name: "widget" },
 } satisfies ForgePrSubmissionTarget;
-const DESTINATION = { remoteName: "origin", target: TARGET };
+const DESTINATION = { remoteName: "origin", remotes: ["origin"], target: TARGET };
 
 /** Prefix marking a trace step the FIXTURE authored rather than production. */
 const FIXTURE = "fixture:";

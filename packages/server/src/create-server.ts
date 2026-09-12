@@ -61,6 +61,7 @@ import {
   ensurePrWorktree,
   execaGitFor,
   executeExternalCommand,
+  extractRelatedRefs,
   FileProjectStore,
   type ForgeDetectionDeps,
   GenerationStore,
@@ -83,6 +84,7 @@ import {
   listWorkspaces,
   loadConventionCatalogue,
   loadProjectDetail,
+  loadRelatedContextDossier,
   mapCouncilModel,
   matchWorktree,
   migrateLegacyGlobalConfig,
@@ -113,6 +115,7 @@ import {
   repositoryIdentity,
   resolveForgeRemote,
   resolveGitHubAuth,
+  resolvePrimaryBase,
   resolveTrackerConfig,
   detectForges as runForgeDetection,
   runGitHubDeviceFlow,
@@ -191,6 +194,7 @@ import type {
   CouncilHarnessId,
   DetectedForge,
   DetectedHarness,
+  DossierItem,
   DraftBoard,
   FlaggedReview,
   ForgeRepoIdentity,
@@ -648,12 +652,27 @@ export async function captureBranchPatchset(input: {
   const headOid = (
     await input.git(root, ["rev-parse", "--verify", `${input.head}^{commit}`])
   ).trim();
-  const baseOid = (await input.git(root, ["merge-base", input.base, headOid])).trim();
+  // `input.base` is the project's primary branch NAME, and local `main` only moves
+  // when the reviewer pulls. Resolve the newest spelling of it instead
+  // (fresh-base-patchset, D1) so a branch cut from a fetched `origin/main` is not
+  // reviewed against wherever local `main` stopped, carrying every sibling's work.
+  const primary = await resolvePrimaryBase(input.git, root, {
+    primaryBranch: input.base,
+    head: headOid,
+  });
+  // No ref in this clone names `input.base` — a caller that passed an OID or `HEAD`,
+  // which git can still merge-base directly. Take it verbatim, as this path always did.
+  const baseOid =
+    primary.baseOid ?? (await input.git(root, ["merge-base", input.base, headOid])).trim();
   return captureRangePatchset(input.git, {
     root,
     locus: input.locus,
     baseOid,
     headOid,
+    // Only the resolved COMMIT is taken from the resolver. `baseRef` stays the name the
+    // caller passed, because this patchset's `baseRef` is what the own-branch pull request
+    // opens against, and a forge has no idea what `origin/main` means — GitHub answers 422
+    // for a `base` that is not one of its branches (fresh-base-patchset D4).
     baseRef: input.base,
     headRef: input.head,
     source: "local-branch",
@@ -3386,7 +3405,29 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const round = roundWorkspaceRoots.get(sessionId);
     return [bound, round].filter((root): root is string => root !== undefined);
   });
-  const purgeContextForSession = (sessionId: string): void => void contextPurger.purge(sessionId);
+  /**
+   * The review-open related-context retrieval, held by REVIEW id so the Design lane can
+   * join the run already in flight (design-overview-fallback D3) instead of starting a
+   * second one.
+   *
+   * Process-local and deliberately small: one settled promise per open review, holding the
+   * dossier the store already has on disk. A daemon that restarted between the open and
+   * the drafting finds nothing here and reads the store directly, which is the same answer
+   * a settled promise would have given.
+   *
+   * The entry is dropped when the review's session is archived, below — the same boundary
+   * its context files go on, and for the same reason: after an archive nothing will read
+   * it again.
+   */
+  const relatedContextHolds = new Map<string, Promise<readonly DossierItem[] | undefined>>();
+  const purgeContextForSession = (sessionId: string): void => {
+    // Archive is the boundary for the held retrieval as much as for the files. Resolved by
+    // SESSION, because that is what the archive names, and a session holds at most one
+    // review — the reverse map `sessionIdForReview` builds.
+    const reviewId = sessionStore.load(sessionId)?.reviewId;
+    if (reviewId !== undefined) relatedContextHolds.delete(reviewId);
+    void contextPurger.purge(sessionId);
+  };
   /**
    * Every workspace a context directory could be UNDER, for the context sweep: every recorded
    * bound root — archived sessions included, since theirs is exactly what that sweep collects —
@@ -4164,10 +4205,46 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           designSources === null
             ? undefined
             : designSources.map(({ format, role, path }) => ({ format, role, path }));
+        // The related issues the host already fetched (design-overview-fallback D3). The
+        // DESIGN lane joins them — bounded — only when it is about to open its seat with
+        // no located specification; every other lane and both deterministic Design paths
+        // never call either of these.
+        //
+        // The held promise is the ONE retrieval this review ever runs. When the map has
+        // none — the daemon restarted, or the review was opened by a build before this
+        // one — the store is read directly under the SAME key the kick writes
+        // (`relatedContextDossierKey`), which is the answer a settled promise would have
+        // given; it is a synchronous file read, so it resolves before the ceiling can
+        // start mattering.
+        const liveReview = reviewNow();
+        const relatedContext = () =>
+          relatedContextHolds.get(liveReview.id) ??
+          Promise.resolve(loadRelatedContextDossier(liveReview, snapshotStore));
+        // Zero-cost and no egress: the refs the extractor finds in the branch name, the
+        // commit subjects and the PR paper, for the file the lane writes past its ceiling.
+        // Fail-safe like every other read on this path — `repoKeyOf` realpaths, and a
+        // tracker config that cannot be resolved is a file with no URLs, never a lane that
+        // cannot open.
+        const relatedRefs = () => {
+          try {
+            return extractRelatedRefs(
+              liveReview,
+              resolveTrackerConfig(
+                snapshotStore,
+                repoKeyOf(liveReview),
+                daemonSettingsStore.readState().config,
+              ),
+            );
+          } catch {
+            return [];
+          }
+        };
         return await roundsRuntime.runRound({
           ...input,
           ...(prPaper === undefined ? {} : { prPaper }),
           ...(designSourcePaths === undefined ? {} : { designSources: designSourcePaths }),
+          relatedContext,
+          relatedRefs,
           ...(assembleDesignBoardFor === undefined
             ? {}
             : { assembleDesignBoard: assembleDesignBoardFor }),
@@ -5559,11 +5636,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         const written: { discard(): void }[] = [];
         // The retrieval seat reads the dossier file this writes, so the lease is held for
         // the whole kick — an archive landing mid-retrieval defers its purge (finding 2).
-        // The `catch` on the voided promise is what the `try` below cannot do: it only sees a
-        // synchronous throw, and the lease now BINDS the workspace first, which rejects when
-        // the workspace cannot be made. Without it a failed kick is an unhandled rejection
+        // The `.catch` is what the `try` below cannot do: it only sees a synchronous
+        // throw, and the lease now BINDS the workspace first, which rejects when the
+        // workspace cannot be made. Without it a failed kick is an unhandled rejection
         // rather than the garnish the comment below promises.
-        void holdingReviewContext(review, () =>
+        //
+        // The settled promise is HELD by review id (D3) so the Design lane joins this
+        // exact run rather than starting a second retrieval, and a lane that joins after
+        // it settled resolves immediately. Held AFTER the `.catch`, which is what makes it
+        // safe to await a second time: the rejection is already handled, so the lane sees
+        // an honest `undefined` instead of a throw it would have to absorb.
+        const retrieval = holdingReviewContext(review, () =>
           runRelatedContextRetrieval(review, {
             councilOverrides,
             store: snapshotStore,
@@ -5591,6 +5674,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             for (const file of written) file.discard();
           }),
         ).catch(() => undefined);
+        relatedContextHolds.set(review.id, retrieval);
       } catch {
         // Retrieval is garnish on the open — a failed kick never surfaces here.
       }

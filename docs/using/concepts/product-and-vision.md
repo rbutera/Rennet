@@ -85,7 +85,7 @@ the highest-risk line.
 
 | Lens | Question |
 |---|---|
-| Design | What was this change supposed to do, according to its own specification? |
+| Design | What was this change supposed to do, according to its specification or its author? |
 | Sequence | In what order should I read the implementation? |
 | Decisions | Which implementation choices need explanation? |
 | Flagged | Where did automated analysis find a problem or disagreement? |

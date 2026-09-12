@@ -17,7 +17,10 @@ import {
   buildReviewContextManifest,
   createLiveCanvasOpsBackend,
   ensureReviewContextAssembly,
+  extractRelatedRefs,
+  loadRelatedContextDossier,
   projectHypothesisRepoContext,
+  relatedContextDossierKey,
   repoRecordOf,
   runRelatedContextRetrieval,
 } from "./live-review-backend";
@@ -488,5 +491,124 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
     // Second kick on the same patchset: the stored record gates the refire.
     await runRelatedContextRetrieval(review, { store, gh });
     expect(ghCalls).toEqual([]);
+  });
+
+  // design-overview-fallback 2.1: the kick RESOLVES with what it stored or found, so the
+  // Design lane can join the run already in flight instead of opening a second one.
+  it("resolves with the items it saved, and with the STORED dossier on the early return", async () => {
+    const repo = workspaceRepo();
+    git(repo.root, "reset", "--hard", repo.oid1);
+    const store = freshStore();
+    const { review } = await reviewAt(repo.root, repo.commonDir, repo.oid1);
+    const gh = async (): Promise<string> => {
+      throw new Error("no refs — the runner must not be reached");
+    };
+
+    // First kick: nothing stored, so retrieval runs and the SAVED items come back. The
+    // fixture branch carries no refs, so the honest answer is an empty dossier — not
+    // `undefined`, which is what a failure returns and what makes the lane write the refs
+    // file instead.
+    const saved = await runRelatedContextRetrieval(review, { store, gh });
+    expect(saved).toEqual([]);
+
+    // Second kick: the early return on a stored record hands back THAT record, not
+    // `undefined`. A `void` return here was the whole reason nothing on the board path
+    // could read the dossier.
+    const { repoKey } = repoRecordOf(review);
+    const key = relatedContextDossierKey(review);
+    expect(key).toEqual({ target: "local", patchsetRef: review.activePatchsetId });
+    new DossierStore(store).save(
+      repoKey,
+      key,
+      [
+        {
+          id: "gh:owner/name#7",
+          tracker: "github",
+          title: "The stored one",
+          state: "open",
+          body: "body",
+          url: "https://github.com/owner/name/issues/7",
+          provenance: "branch-name",
+          fetchedAt: "2026-09-12T00:00:00.000Z",
+        },
+      ],
+      [],
+    );
+    const loaded = await runRelatedContextRetrieval(review, { store, gh });
+    expect(loaded?.map((item) => item.id)).toEqual(["gh:owner/name#7"]);
+    // The same record, read under the same key by the lane's restart fallback.
+    expect(loadRelatedContextDossier(review, store)?.map((item) => item.id)).toEqual([
+      "gh:owner/name#7",
+    ]);
+
+    // An error inside the kick answers `undefined` — distinct from the empty array above,
+    // because the two make the Design lane write different files.
+    let reported: unknown;
+    const broken = await runRelatedContextRetrieval(
+      { ...review, patchsets: [] },
+      { store, gh, onError: (error) => (reported = error) },
+    );
+    expect(broken).toBeUndefined();
+    expect(reported).toBeInstanceOf(Error);
+  });
+
+  it("extracts the branch's refs deterministically, with URLs resolved off the POST TARGET", async () => {
+    // The zero-cost half of retrieval — no `gh`, no endpoint, no turn. A bare `#12`
+    // resolves against the repository the review posts to, never the project's open path:
+    // a workspace maps many repos to one identity.
+    const repo = workspaceRepo();
+    git(repo.root, "reset", "--hard", repo.oid1);
+    const { review } = await reviewAt(repo.root, repo.commonDir, repo.oid1);
+    const patchset = review.patchsets[0] as Patchset;
+    const withIntent: Review = {
+      ...review,
+      postTarget: { repo: { owner: "rbutera", name: "rennet" }, number: 943 },
+      patchsets: [
+        {
+          ...patchset,
+          repository: { ...patchset.repository, headRef: "feat/PROJ-12-overview" },
+          intent: {
+            surface: "github-pr",
+            prTitle: "Design overview fallback",
+            prBody: "Closes #461 and owner/other#7.",
+            commitSubjects: ["feat: start"],
+          },
+        },
+      ],
+    } as Review;
+
+    const refs = extractRelatedRefs(withIntent, {
+      jira: { baseUrl: "https://acme.atlassian.net/", tokenEnvVar: "X", projectPrefixes: ["PROJ"] },
+    });
+    expect(refs).toContainEqual({
+      label: "#461",
+      url: "https://github.com/rbutera/rennet/issues/461",
+      provenance: "pr-body",
+    });
+    expect(refs).toContainEqual({
+      label: "owner/other#7",
+      url: "https://github.com/owner/other/issues/7",
+      provenance: "pr-body",
+    });
+    expect(refs).toContainEqual({
+      label: "PROJ-12",
+      url: "https://acme.atlassian.net/browse/PROJ-12",
+      provenance: "branch-name",
+    });
+
+    // No post target ⇒ a bare `#461` gets NO url rather than one pointing at whichever
+    // repository the workspace happened to name first.
+    const noTarget = extractRelatedRefs({ ...withIntent, postTarget: undefined } as Review);
+    expect(noTarget.find((ref) => ref.label === "#461")).toEqual({
+      label: "#461",
+      provenance: "pr-body",
+    });
+    // …and with no tracker config the key is still SEEN (a prefix in the branch name is
+    // high-signal, per `extractRefs`) but carries no URL: an endpoint that was never
+    // configured does not get to claim it, and a link Rennet cannot resolve is not faked.
+    expect(noTarget.find((ref) => ref.label === "PROJ-12")).toEqual({
+      label: "PROJ-12",
+      provenance: "branch-name",
+    });
   });
 });

@@ -180,14 +180,17 @@ Every row carries the same columns, whether it is a pull request or a local
 branch: the author with their forge avatar (your local branches wear your own),
 CI as a green check, red cross, or copper dashed ring, lines added and removed,
 files touched, and when the change was created. A pull request's numbers come
-from the forge. A local branch's are measured on your machine: its committed
-diff against the project's primary branch, and the date of its first commit past
-it. A branch that is not ahead of the primary branch has nothing to review yet,
-so those cells read "—" rather than zero. A local branch also shows how many
-commits it is ahead of and behind the primary branch. A checked-out worktree
-says **clean** or **dirty** beside its name; a bare branch with no checkout says
-nothing about it, because there is nothing to measure. Uncommitted edits are not
-counted in the lines; **dirty** is how the list says they exist. GitLab does not
+from the forge. A local branch's are measured on your machine, against the
+newest commit your clone holds for the project's primary branch — `origin/main`
+or `main`, whichever is ahead: its committed diff against that commit, and the
+date of its first commit past it. Rennet reads the refs your clone already
+holds, so a fetch is what moves those numbers on. A branch that is not ahead of
+the primary branch has nothing to review yet, so those cells read "—" rather
+than zero. A local branch also shows how many commits it is ahead of and behind
+that same commit. A checked-out worktree says **clean** or **dirty** beside its
+name; a bare branch with no checkout says nothing about it, because there is
+nothing to measure. Uncommitted edits are not counted in the lines; **dirty** is
+how the list says they exist. GitLab does not
 report line counts in its merge-request list, so GitLab rows show "—" there.
 **Review requested** and **Your PR** sit beside a pull request's title rather than
 in a column of their own. As the canvas narrows the list folds from the right:
@@ -266,9 +269,9 @@ remains in the orchestrator chat beside it.
 
 What gets captured depends on the row. A pull-request row opens that pull
 request's diff. A local branch row captures that branch's own
-commits — everything since it left the project's primary branch — **without
-checking it out**. Nothing on disk moves, and you can review a branch you are not
-standing on.
+commits — everything since it left the newest commit your clone holds for the
+project's primary branch — **without checking it out**. Nothing on disk moves,
+and you can review a branch you are not standing on.
 
 That difference matters once you are reading. A working-tree capture is watched:
 edit the repository and the review says it went stale, and offers to regenerate.
@@ -330,7 +333,7 @@ returns to its board. Reloading the URL opens the same selection.
 
 | Board | Question |
 |---|---|
-| Design | What was this change supposed to do, according to its own specification? |
+| Design | What was this change supposed to do, according to its specification or its author? |
 | Sequence | In what order should I read the implementation? |
 | Decisions | Which implementation choices need explanation? |
 | Flagged | Where did automated analysis find a problem or a disagreement? |
@@ -342,17 +345,19 @@ words, or the reason it failed — rather than leaving a gap where a tab used to
 be. Reviewing a proposal before any code exists gives you a Design board and four
 lenses that say they found nothing to draft.
 
-Design reads the specification the branch was written against. When the branch
+Design reads the specification the branch was written against, when it has one. When the branch
 itself touches one in a format Rennet parses — an OpenSpec change, a Kiro
 feature, BMAD documents, a superpowers spec or plan, an ADR or a grill-me
 `CONTEXT.md` — Rennet renders that specification's own text straight onto the
 board, with no model turn and nothing sent to a provider. Otherwise a model
 reader looks through the checkout where specifications live, using the branch's
 own commit messages and pull request body as the clue, and it cites the line
-that ties the document to the branch so you can check the link. Repositories
-without a spec workflow are ordinary, and Rennet says so plainly: the Design
-board reads "No spec found for this branch.", which is a result rather than a
-gap.
+that ties the document to the branch so you can check the link. When there is no
+specification at all, the Design board is an overview drafted from the pull request
+description, the documentation the branch adds or changes, and the issues it links. The
+board labels itself an overview rather than a specification, and every part of it names
+the file it was read from. Only a branch with none of those three reads "No spec found
+for this branch.", which is a result rather than a gap.
 
 The board drafter writes each title and short intro. Design uses a wider
 structured measure for specification content. Sequence, Decisions, Flagged, and Noise use a
