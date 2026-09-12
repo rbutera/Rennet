@@ -205,7 +205,7 @@ export default defineConfig({
                     link: "/developing/reference/codex-app-server/",
                   },
                   {
-                    label: "Command menu exposure",
+                    label: "Command exposure",
                     link: "/developing/reference/command-menu-exposure/",
                   },
                   {

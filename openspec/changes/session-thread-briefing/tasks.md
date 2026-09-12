@@ -58,7 +58,7 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
 
 ## 3. The app-tools server — `rennet_app`
 
-- [ ] 3.1 `packages/protocol/src/commands/index.ts`: the read and act rows named in design join
+- [x] 3.1 `packages/protocol/src/commands/index.ts`: the read and act rows named in design join
   `AGENT_EXPOSED` (`board.read`, `session.list`, `review.load`, `patchset.readEvidence`,
   `patchset.readSpan`, `ask.read`, `session.rounds`, `session.transcript`, `review.deltaDigest`,
   `review.symbolLookup`, `ask.unstage`, `ask.edit`, `ask.quoteReply`, `review.handoff.compose`,
