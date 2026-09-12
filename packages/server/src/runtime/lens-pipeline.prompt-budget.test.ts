@@ -62,14 +62,15 @@ function synthetic(): Patchset {
 const bigPacket = buildDeltaPacket(synthetic(), []);
 
 // Full prompts on this fixture, including the task layer but no context directory:
-// design 15,588 B (the located-specification section, this change); sequence 10,248 B;
+// design 18,210 B (15,588 B before the overview arm — design-overview-fallback D1/D4 —
+// which added the second ending, its three sources and its document shape); sequence 10,248 B;
 // decisions 9,961 B; noise 10,594 B. Move two splits Flagged into two drafter prompts —
 // the review leg (`flagged-review.md`) and the compiler (`flagged-compile.md`, which
 // `LENS_PROMPT_FILES.flagged` names) — each much shorter than the old single flagged prompt.
 // Budgets leave 10% headroom. The context-reference layer has its own bounded test.
 // These are bytes sent, not measured provider tokens or total conversation cost.
 const BUDGET: Record<(typeof LENS_KINDS)[number], number> = {
-  design: 17_147,
+  design: 20_100,
   sequence: 11_273,
   decisions: 10_958,
   flagged: 4_698,

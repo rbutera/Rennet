@@ -29,9 +29,10 @@ export const RELATED_CONTEXT_FILE = "related-context.md";
 /**
  * The most items the file renders, declared at the one call site that renders it.
  *
- * The dossier is already bounded (20 items is what retrieval keeps), so this is the
- * file's own restatement of that bound rather than a second, tighter one: past it the
- * file says how many items it dropped instead of trailing off.
+ * The dossier bounds only its serialized TOTAL (`serializeDossier` drops whole items
+ * until the JSON fits `DOSSIER_TOTAL_MAX_CHARS`); retrieval caps no count, so a branch
+ * whose refs are all one-liners can store far more than twenty items. This is the file's
+ * own bound, and past it the file says how many items it dropped instead of trailing off.
  */
 export const RELATED_CONTEXT_MAX_ITEMS = 20;
 
@@ -138,6 +139,8 @@ export function relatedContextFile(
     "",
   ];
 
+  // The header is outside the bound, as `changeIndexContextFile`'s is: the file says what
+  // it is even when nothing else fits. Items are what the bound governs.
   const prefix = `${header.join("\n")}\n`;
   let body = prefix;
   let used = utf8Bytes(prefix);
@@ -146,9 +149,12 @@ export function relatedContextFile(
   for (const [index, item] of shown.entries()) {
     const text = region(item);
     // The marker has to fit beside the region that would displace it, so the file can
-    // always account for what it dropped rather than ending mid-change.
-    const marker = truncationLine(items.length - index);
-    if (used + utf8Bytes(text) + utf8Bytes(marker) > maxBytes) break;
+    // always account for what it dropped rather than ending mid-change — but only while
+    // something is still waiting behind this candidate. The last item displaces nothing
+    // and prints no marker, so charging it for one drops an item that fits exactly.
+    const behind = items.length - index - 1;
+    const reserved = behind > 0 ? utf8Bytes(truncationLine(behind)) : 0;
+    if (used + utf8Bytes(text) + reserved > maxBytes) break;
     body += text;
     used += utf8Bytes(text);
     kept += 1;
@@ -177,15 +183,19 @@ export function relatedContextFile(
  * answer.
  *
  * `undefined` when no ref was extracted.
+ *
+ * Bounded by count AND by bytes, exactly as `relatedContextFile` is: an item cap alone
+ * bounds nothing when the labels are long, and a ref list is the one part of this file
+ * that grows with the branch.
  */
 export function relatedContextRefsFile(
   refs: readonly RelatedRef[],
   maxItems: number = RELATED_CONTEXT_MAX_ITEMS,
+  maxBytes: number = RELATED_CONTEXT_MAX_BYTES,
 ): SessionContextFile | undefined {
   if (refs.length === 0) return undefined;
-  const shown = refs.slice(0, maxItems);
-  const dropped = refs.length - shown.length;
-  const lines = [
+  const capped = refs.slice(0, maxItems);
+  const header = [
     "# Related issues and pull requests",
     "",
     "Related-context retrieval had NOT finished when this seat opened, so what follows is",
@@ -196,15 +206,30 @@ export function relatedContextRefsFile(
     "`--repo <owner>/<name>` when the ref names a repository other than this one). A tracker",
     "key with no URL below is not reachable from here; say so rather than guessing at it.",
     "",
-    ...shown.map(
-      (ref) => `- ${ref.label} — ${ref.url ?? "no URL resolved"} — found via ${ref.provenance}`,
-    ),
-    ...(dropped > 0 ? [truncationLine(dropped).trimEnd()] : []),
-    "",
   ];
+
+  // Same bound, same shape as above: whole lines only, and the marker is reserved while
+  // a ref is still waiting behind the candidate. The header is outside the bound.
+  const prefix = `${header.join("\n")}\n`;
+  let body = prefix;
+  let used = utf8Bytes(prefix);
+  let kept = 0;
+  for (const [index, ref] of capped.entries()) {
+    const line = `- ${ref.label} — ${ref.url ?? "no URL resolved"} — found via ${ref.provenance}\n`;
+    const behind = refs.length - index - 1;
+    const reserved = behind > 0 ? utf8Bytes(truncationLine(behind)) : 0;
+    if (used + utf8Bytes(line) + reserved > maxBytes) break;
+    body += line;
+    used += utf8Bytes(line);
+    kept += 1;
+  }
+
+  const dropped = refs.length - kept;
+  if (dropped > 0) body += truncationLine(dropped);
+
   return {
     name: RELATED_CONTEXT_FILE,
-    body: `${lines.join("\n")}\n`,
+    body,
     holds:
       "The issue and pull request references the host extracted from this branch; retrieval had not finished, so there are no titles or bodies.",
     readWhen:

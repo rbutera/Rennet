@@ -264,11 +264,17 @@ describe("lens prompt manifest", () => {
     expect(docsAt).toBeGreaterThan(prAt);
     expect(issuesAt).toBeGreaterThan(docsAt);
 
-    // The documentation rule names the extensions, the reviewed tree, and the command
-    // the seat runs when the index did not list every file.
+    // The documentation rule names the extensions, the reviewed tree, and the diff the
+    // seat runs when the index did not list every file. The diff COMMAND is the task
+    // layer's — `investigate-before-you-draft` says so, because a working-tree review
+    // diffs the pinned reviewed tree and not `base..head` — so the arm supplies only the
+    // pathspec, and the `<range>` template it used to carry is gone.
     expect(arm).toContain("every `.md`, `.mdx`, `.rst` or `.txt` file");
     expect(arm).toContain("read at the reviewed tree");
-    expect(arm).toContain("git diff --name-status <range> -- '*.md' '*.mdx' 'docs/'");
+    expect(arm).toContain(
+      "run the task layer's diff command with `--name-status -- '*.md' '*.mdx' 'docs/'`",
+    );
+    expect(arm, "the arm still templates its own range").not.toContain("<range>");
     // A GitHub ref the host could not body out is the seat's own fetch, not a second
     // host retrieval.
     expect(arm).toContain("gh issue view <n>");
@@ -284,11 +290,23 @@ describe("lens prompt manifest", () => {
       '"No specification was found for this branch; this overview is drafted from"',
     );
 
-    // Provenance: a stated decision is not an inferred one, and an acceptance criterion
-    // carries the tracker item as its source label.
+    // Provenance: a stated decision is not an inferred one, wherever it was stated — a
+    // document on the branch states decisions too (design D4) — and an acceptance
+    // criterion carries the tracker item as its source label.
     expect(arm).toContain("`inferred: false`");
-    expect(arm).toContain('label: "PR description"');
-    expect(arm).toContain("`{ path: <the related-context.md path>, label: <the item id> }`");
+    expect(arm).toContain('sourced to that path under the label "PR description"');
+    expect(arm).toContain("A decision a document states is a `decision` too, sourced to that file");
+    expect(arm).toContain(
+      "sourced to the `related-context.md` path under the item id as its label",
+    );
+
+    // The spec-backed sections that follow are SCOPED, so the seat drafting an overview
+    // does not read "the specification's exact change name" or the capability/requirement
+    // /task stats of "Document opening" as instructions for its own board (design D4).
+    const opening = text.slice(text.indexOf("## Document opening"));
+    expect(opening).toMatch(
+      /^## Document opening\n\nThis section and the two after it describe a specification-backed board; an\noverview follows the section above where they differ\./,
+    );
 
     // The absence survives, and it is CONDITIONED on all three sources being empty —
     // an overview arm that could still settle on a branch with a PR body would be the
@@ -307,6 +325,8 @@ describe("lens prompt manifest", () => {
       "`settle_absent` is the ending when the search and all three overview sources come up empty",
     );
     expect(closing).not.toContain("`settle_absent` is the other ending");
+    // ...and `add_decision` is described for both endings, not the spec-backed one alone.
+    expect(closing).toContain("a decision the specification or an overview source states");
   });
 
   it("keeps the lens lane vocabulary honest about what Design now owns", () => {

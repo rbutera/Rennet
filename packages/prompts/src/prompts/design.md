@@ -59,51 +59,56 @@ absence: read the commit messages and the pull request body before you conclude 
 is nothing. Sparseness is not absence either; a thin ADR that describes this change is
 still the Design document.
 
-When you have looked and this branch has none, draft an overview instead, from three
-sources in this order, each when your context directory lists its file:
+When you have looked and this branch has none, draft an overview from three
+sources in this order:
 
-1. The pull request's title and description in `pr.md`.
-2. Documentation this branch adds or modifies: every `.md`, `.mdx`, `.rst` or `.txt`
-   file and every file under a `docs/` directory that `change-index.md` lists as added
-   or modified, read at the reviewed tree. If that index did not list every file, run
-   `git diff --name-status <range> -- '*.md' '*.mdx' 'docs/'` yourself.
-3. The related issues in `related-context.md`. Where it says retrieval had not finished
-   and names a GitHub ref with no body, read that ref with `gh issue view <n>`.
+1. The pull request's title and description in `pr.md`, when your context directory
+   lists it.
+2. Documentation this branch adds or modifies, when the change has one: every `.md`,
+   `.mdx`, `.rst` or `.txt` file and every file under a `docs/` directory that
+   `change-index.md` lists as added or modified, read at the reviewed tree. If that
+   index is cut short, run the task layer's diff command with
+   `--name-status -- '*.md' '*.mdx' 'docs/'`.
+3. The related issues in `related-context.md`, when your context directory lists it.
+   Where it says retrieval had not finished, read a listed GitHub ref yourself with
+   `gh issue view <n>`.
 
-`set_document`: `title` — the pull request's title, else the first related issue's,
-else the branch name. `intro_markdown` — one paragraph opening with the sentence "No
-specification was found for this branch; this overview is drafted from" plus the
-sources used, then the purpose the first source present states, and nothing they do
-not. `source_paths` — the `pr.md` path, each documentation file, the
-`related-context.md` path, in reading order, once each. Stats — `Format` →
-`Overview`, `Specification` → `none found`, `Sources` → the source-path count,
-`Related issues` → the items read when that file exists. No capability, requirement or
-task stats: those count a specification, and there is none.
+`set_document` differs from "Document opening" below in three fields. `title` — the
+pull request's title, else the first related issue's, else the branch name.
+`intro_markdown` — opens with the sentence "No specification was found for this branch;
+this overview is drafted from" plus the sources used, then the purpose the first source
+present states, and nothing they do not. Stats — `Format` → `Overview`,
+`Specification` → `none found`, `Sources` → the source-path count, `Related issues` →
+the item count when that file exists. No capability, requirement or task stats: they
+count a specification, and there is none.
 
-Three sections, each with `sources` naming the file it came from:
+Three sections, `sources` naming the file each came from. Nest that file's headings as
+sections in source order, render its paragraphs as `prose`, and leave a code fence out,
+stating its place.
 
-- **What the author says** — `pr.md`: its headings nested in its own order, paragraphs
-  as `prose`; a decision it states is a `decision`, `inferred: false`, `source`
-  `{ path: <the pr.md path>, label: "PR description" }`.
-- **Documentation on this branch** — one nested section per file, its headings nested
-  in source order, prose as `prose`; leave a code fence out and state its place, as you
-  would for a proposal's fence.
+- **What the author says** — `pr.md`. A decision it states is a `decision`,
+  `inferred: false`, sourced to that path under the label "PR description".
+- **Documentation on this branch** — one nested section per file. A decision a document
+  states is a `decision` too, sourced to that file.
 - **Related issues** — one nested section per item titled `<tracker>#<id> <title>`, its
   state and provenance the first prose line, the body's paragraphs after. An acceptance
-  criterion is a `requirement`: `shall` verbatim, `capability` the item id, `source`
-  `{ path: <the related-context.md path>, label: <the item id> }`, `trace` only for
-  code you read.
+  criterion is a `requirement`: `shall` verbatim, `capability` the item id, sourced to
+  the `related-context.md` path under the item id as its label, `trace` only for code
+  you read.
 
-"What not to do" below holds for an overview unchanged. A one-line pull request body
-makes a one-section overview, and that is the honest board.
+A one-line pull request body makes a one-section overview, and that is the honest
+board.
 
 Only when all three sources are empty — no `pr.md` listed, no documentation file in
 the change, and `related-context.md` absent or naming no item — call `settle_absent`,
 and say in its note that you looked for all three. Never draft an overview while this
 branch has a specification, and never write a board in its place: not an empty board,
-not a placeholder, and not the nearest document you could find.
+not a placeholder.
 
 ## Document opening
+
+This section and the two after it describe a specification-backed board; an
+overview follows the section above where they differ.
 
 Open the board with `set_document`:
 
@@ -204,7 +209,8 @@ renders as the prose you wrote.
 {{write-with-tools}}
 
 `add_requirement` and `add_decision` are this lens's own verbs: a shall-statement
-with the source it came from, and a decision the specification states. Source
+with the source it came from, and a decision the specification or an overview source
+states. Source
 refs travel as their own fields on those calls. `settle_absent` is the
 ending when the search and all three overview sources come up empty — say in one
 note where you looked.
