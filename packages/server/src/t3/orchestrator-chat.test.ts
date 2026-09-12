@@ -6,7 +6,11 @@ import {
 } from "@rennet/core";
 import type { CouncilHarnessId, CouncilPick, ReviewRoleScenario } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
-import { orchestratorChatSelection } from "./orchestrator-chat";
+import {
+  orchestratorChatSelection,
+  resolveSessionThreadModel,
+  type SessionThreadRoutingProbes,
+} from "./orchestrator-chat";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // session-thread-briefing 4.4 — THE WELCOME'S ORCHESTRATOR CHOICE, END TO END.
@@ -99,5 +103,93 @@ describe("the welcome's orchestrator choice reaches the session thread", () => {
 
   it("answers nothing when no council harness is installed at all", () => {
     expect(orchestratorChatSelection({ installed: [] })).toBeUndefined();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// session-thread-briefing 4.1 (review) — WHAT "INSTALLED" MEANS FOR THIS THREAD.
+//
+// The first version asked `resolveProviderBinaries` directly and cached the answer for the
+// daemon's life. Two things were wrong with that and both are silent:
+//
+//  • that probe catches each harness INDEPENDENTLY, so a transient Codex failure returns a
+//    partial `{ claude }` rather than rejecting — and the cache-resetting `catch` never
+//    fired, because nothing had rejected. A reviewer's stored Codex choice then routed to
+//    Claude for the rest of the daemon's life, with no line anywhere;
+//  • it ignored the enable choice entirely: a reviewer who turned Codex OFF in Settings
+//    could still be handed a Codex conversation, which is the surface lying about its own
+//    switch.
+//
+// So availability is now three vetoes over fresh probes. These drive the resolver directly;
+// `create-server` supplies the real ones (the per-repo locus probes, the daemon settings,
+// the sidecar's seeded binaries).
+// ─────────────────────────────────────────────────────────────────────────────
+describe("what counts as installed for the session thread", () => {
+  const BOTH_SEEDED = { claude: "/bin/claude", codex: "/bin/codex" };
+  const probes = (over: Partial<SessionThreadRoutingProbes> = {}): SessionThreadRoutingProbes => ({
+    claudeAvailable: async () => true,
+    codexAvailable: async () => true,
+    disabledHarnesses: () => [],
+    sidecarBinaries: () => BOTH_SEEDED,
+    ...over,
+  });
+
+  it("does not pin a transient probe failure: the next bind sees the recovered host", async () => {
+    let attempt = 0;
+    const codexAvailable = async () => {
+      attempt += 1;
+      if (attempt === 1) throw new Error("codex app-server handshake timed out");
+      return true;
+    };
+    const chosen = storedAs("dual", welcomeAssignment("codex"));
+    // First bind: the probe rejects, so NOTHING is claimed — the thread opens on the
+    // sidecar's default and the daemon logs it.
+    expect(
+      await resolveSessionThreadModel("/repo", probes({ codexAvailable, overrides: chosen })),
+    ).toBeUndefined();
+    // Second bind: the host is fine, and the reviewer's own choice is honoured. Under the
+    // cache this stayed Claude forever.
+    const recovered = await resolveSessionThreadModel(
+      "/repo",
+      probes({ codexAvailable, overrides: chosen }),
+    );
+    expect(recovered?.instanceId).toBe("codex");
+  });
+
+  it("honours the reviewer's enable choice even with both binaries present", async () => {
+    const chosen = storedAs("dual", welcomeAssignment("codex"));
+    const selection = await resolveSessionThreadModel(
+      "/repo",
+      probes({ disabledHarnesses: () => ["codex"], overrides: chosen }),
+    );
+    // Codex is installed, seeded and CHOSEN — and switched off. Claude-only availability
+    // resolves the job to Claude rather than running a provider they disabled.
+    expect(selection?.instanceId).toBe("claudeAgent");
+    // Control: the same call with the switch on gives Codex, so the assertion above is
+    // about the switch and not about the override never arriving.
+    expect(
+      (await resolveSessionThreadModel("/repo", probes({ overrides: chosen })))?.instanceId,
+    ).toBe("codex");
+  });
+
+  it("answers nothing when the running sidecar has no binary for the routed provider", async () => {
+    // An ADOPTED sidecar was seeded by a daemon this process never was. The council can
+    // route the chat to Codex all it likes; that sidecar cannot start a Codex session.
+    const selection = await resolveSessionThreadModel(
+      "/repo",
+      probes({
+        sidecarBinaries: () => ({}),
+        overrides: storedAs("dual", welcomeAssignment("codex")),
+      }),
+    );
+    expect(selection).toBeUndefined();
+  });
+
+  it("falls to the harness the host actually has when the other is absent", async () => {
+    const selection = await resolveSessionThreadModel(
+      "/repo",
+      probes({ codexAvailable: async () => false }),
+    );
+    expect(selection?.instanceId).toBe("claudeAgent");
   });
 });

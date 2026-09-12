@@ -272,6 +272,44 @@ export function seedProviderSettings(baseDir: string, binaries: ProviderBinaries
   writeAtomic(path, `${JSON.stringify({ ...current, providers }, null, 2)}\n`);
 }
 
+/**
+ * Which providers the sidecar at this base dir actually HAS a binary for, read back off the
+ * settings {@link seedProviderSettings} wrote (session-thread-briefing 4.1).
+ *
+ * A read and not a remembered value, because the sidecar a daemon is talking to may be one
+ * it ADOPTED from a previous daemon: this process never resolved that sidecar's binaries
+ * and has no other way to know what it can run. It is the honest floor under the council's
+ * routing for the session thread — the council may route the conversation to Codex, but a
+ * sidecar with no `codex` path cannot start a Codex session whatever the tables say.
+ *
+ * Missing or unreadable answers `{}` — nothing claimed, which the caller reads as "no
+ * provider this sidecar can run" and falls back on.
+ */
+export function readSeededProviderBinaries(baseDir: string): ProviderBinaries {
+  try {
+    const parsed: unknown = JSON.parse(
+      readFileSync(join(baseDir, "userdata", "settings.json"), "utf8"),
+    );
+    if (!parsed || typeof parsed !== "object") return {};
+    const providers = (parsed as Record<string, unknown>).providers;
+    if (!providers || typeof providers !== "object") return {};
+    const pathOf = (key: string): string | undefined => {
+      const entry = (providers as Record<string, unknown>)[key];
+      if (!entry || typeof entry !== "object") return undefined;
+      const binaryPath = (entry as Record<string, unknown>).binaryPath;
+      return typeof binaryPath === "string" && binaryPath.length > 0 ? binaryPath : undefined;
+    };
+    const claude = pathOf("claudeAgent");
+    const codex = pathOf("codex");
+    return {
+      ...(claude === undefined ? {} : { claude }),
+      ...(codex === undefined ? {} : { codex }),
+    };
+  } catch {
+    return {};
+  }
+}
+
 /** The last lines of the sidecar log, for an error that would otherwise point at a file nobody can open. */
 function logTail(path: string, bytes = 2_000): string {
   try {

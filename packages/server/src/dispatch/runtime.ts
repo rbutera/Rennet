@@ -151,10 +151,15 @@ export interface DispatchDeps {
      */
     readonly appServerFor: (threadId: string) => Promise<AppThreadServer>;
     /**
-     * The council's `orchestrator-chat` selection, or `undefined` when no installed
-     * provider answers the job — the one case the bind logs and falls to the default.
+     * The council's `orchestrator-chat` selection for the tree this thread runs in, or
+     * `undefined` when no installed provider answers the job — the one case the bind logs
+     * and falls to the default.
+     *
+     * It takes the ROOT because availability is a property of the checkout, not of the
+     * daemon: a WSL-locus review is answered by the distro's harnesses, and the reviewer's
+     * enable choice is per host. Every other council site resolves the same way.
      */
-    readonly modelSelection: () => Promise<ModelSelection | undefined>;
+    readonly modelSelection: (repoRoot: string) => Promise<ModelSelection | undefined>;
   };
   /**
    * Where a background failure this layer cannot report to a caller goes (#872): today the

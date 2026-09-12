@@ -358,10 +358,10 @@ import {
   type T3HandoffTurnOutcome,
   type T3TurnCheckpointRead,
 } from "./t3/handoff";
-import { orchestratorChatSelection } from "./t3/orchestrator-chat";
+import { resolveSessionThreadModel } from "./t3/orchestrator-chat";
 import { resolveProviderBinaries } from "./t3/resolve-provider-binaries";
 import { type SeatThreadWatch, watchSeatThread } from "./t3/seat-progress";
-import { type ProviderBinaries, sidecarBaseDir } from "./t3/sidecar";
+import { readSeededProviderBinaries, sidecarBaseDir } from "./t3/sidecar";
 import { createT3SidecarSupervisor } from "./t3/supervisor";
 import {
   readBindings,
@@ -1470,17 +1470,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    */
   let liveBoardMcpServer: BoardMcpServer | undefined;
 
-  /**
-   * The host's own `claude`/`codex`, absolute — the SAME probe `harness.detect` discloses,
-   * not a review's locus-threaded harness. Named once because two readers want it: every
-   * sidecar spawn (fresh, so a respawn re-probes) and the session thread's council routing
-   * below (memoized; see there).
-   */
-  const discoverProviderBinaries = (): Promise<ProviderBinaries> =>
-    resolveProviderBinaries({
-      claude: () => discoverClaude(defaultDiscoveryDeps(), CLAUDE_TESTED_RANGE),
-      codex: () => discoverCodex(defaultCodexDiscoveryDeps(), {}),
-    });
   // The owned T3 Code sidecar (t3code-sidecar-chat): composed here, started EAGERLY a few
   // lines below, adopted from a previous daemon when it still answers, stopped with the
   // daemon. Its provider binaries are the SAME absolute paths Rennet's discovery resolved,
@@ -1506,31 +1495,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // #890: name every harness discovery could not resolve. Both probes still run and
     // neither harness becomes opt-in — the failure is merely legible now. See
     // `t3/resolve-provider-binaries.ts` for the two silences this replaced.
-    resolveBinaries: discoverProviderBinaries,
+    resolveBinaries: () =>
+      resolveProviderBinaries({
+        claude: () => discoverClaude(defaultDiscoveryDeps(), CLAUDE_TESTED_RANGE),
+        codex: () => discoverCodex(defaultCodexDiscoveryDeps(), {}),
+      }),
   });
-  /**
-   * The same discovery, memoized, for the ONE reader that is not a spawn: which providers
-   * the council may route the session thread to (session-thread-briefing 4.1).
-   *
-   * `bindReviewThread` runs on every `chat.t3Send`, and discovery spawns a login shell and
-   * a Codex app-server handshake — seconds, not milliseconds — so it is read once per
-   * daemon. That is also the honest answer rather than merely the cheap one: the sidecar
-   * is seeded with the binaries resolved when IT started, so a harness installed after
-   * launch is not one the sidecar can run either, and re-probing would route a thread to a
-   * provider the running sidecar has no path for.
-   */
-  let sessionThreadBinaries: Promise<ProviderBinaries> | null = null;
-  const sessionThreadHarnesses = async (): Promise<CouncilHarnessId[]> => {
-    sessionThreadBinaries ??= discoverProviderBinaries().catch((error: unknown) => {
-      sessionThreadBinaries = null;
-      throw error;
-    });
-    const binaries = await sessionThreadBinaries;
-    const installed: CouncilHarnessId[] = [];
-    if (binaries.claude !== undefined) installed.push("claude-code");
-    if (binaries.codex !== undefined) installed.push("codex");
-    return installed;
-  };
   // Start it NOW, not at the first `chat.t3Session` (#849). Rai, 2026-09-05: "t3 sidecar
   // should start up immediately on daemon launch, no?" — and more generally, "almost
   // nothing should be lazy in rennet -> this is an electron app we run locally.
@@ -5497,21 +5467,40 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // the prompt files ship beside the daemon, so this reads the file once per daemon.
       briefingText: () => readPrompt(SESSION_BRIEFING_FILE),
       appServerFor: async (threadId) => (await ensureAppMcpServer()).addressFor(threadId),
-      // The council's own routing for the job that has always named this thread. The
-      // installed set is the SIDECAR's — the thread runs on the sidecar's provider
-      // binaries, not on Rennet's own Claude adapter, so those paths are what "installed"
-      // honestly means here. Discovery that fails answers nothing, and the bind falls to
-      // the sidecar's default model with a line in the log.
-      modelSelection: async () => {
-        try {
-          return orchestratorChatSelection({
-            installed: await sessionThreadHarnesses(),
-            overrides: councilOverrides,
-          });
-        } catch {
-          return undefined;
-        }
-      },
+      // The council's own routing for the job that has always named this thread, over an
+      // installed set that has to satisfy THREE things at once, because each of them vetoes
+      // a provider on its own:
+      //
+      //  1. the review's own locus-threaded probes — the SAME `adapter` / `codex.available`
+      //     pair every other council site resolves against. A WSL-locus review is answered
+      //     by the distro's harnesses, never the Windows host's;
+      //  2. the reviewer's enable choice for that host. Turning Codex off in Settings and
+      //     still getting a Codex conversation is the surface lying about its own switch;
+      //  3. what the RUNNING sidecar has a path for, read back off the settings it was
+      //     seeded with. The council may route the chat to Codex all it likes — a sidecar
+      //     with no `codex` binary cannot start a Codex session, and an ADOPTED sidecar's
+      //     binaries were resolved by a daemon this one never was.
+      //
+      // Nothing here is cached. It was, over a raw `resolveProviderBinaries` of its own, and
+      // that probe answers PARTIALLY on a transient failure — each harness is caught
+      // independently, so one bad moment for Codex discovery froze `{ claude }` for the
+      // daemon's whole life and quietly routed a stored Codex choice to Claude, with the
+      // cache-resetting `catch` never firing because nothing ever rejected. The per-repo
+      // probes underneath memoise where memoising is correct, and the bind resolves this
+      // once per THREAD (`creation` is a thunk), so there is nothing left to save.
+      modelSelection: (repoRoot) =>
+        resolveSessionThreadModel(repoRoot, {
+          claudeAvailable: async (root) => (await claudeAdapterForRepo(root)) !== null,
+          codexAvailable: async (root) =>
+            (await getCodexResolution(locusContextForRepo(root).locus)).availability.available,
+          disabledHarnesses: (root) => {
+            const { locus } = locusContextForRepo(root);
+            const source = locus.kind === "wsl" ? `wsl:${locus.distro}` : "local";
+            return daemonSettingsStore.readState().config.hosts?.[source]?.disabledHarnesses ?? [];
+          },
+          sidecarBinaries: () => readSeededProviderBinaries(sidecarBaseDir(dataDir)),
+          overrides: councilOverrides,
+        }),
     },
     // The ONE key a review's context files live under — the same id `purgeSessionContext`
     // is called with, so the handoff work order the dispatch writes is the one the archive

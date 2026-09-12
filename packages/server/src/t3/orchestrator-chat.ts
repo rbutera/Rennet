@@ -62,3 +62,68 @@ export function orchestratorChatSelection(input: {
     { effort: resolution.effort },
   );
 }
+
+/**
+ * What the session thread's routing is allowed to see, injected so the resolution is one
+ * readable function rather than a lambda buried in the composition root.
+ *
+ * Each probe is asked FRESH on every call, which is the whole point: the first version of
+ * this cached a raw `resolveProviderBinaries` result, and that probe catches each harness
+ * independently and therefore answers PARTIALLY on a transient failure. One bad moment for
+ * Codex discovery froze `{ claude }` for the daemon's life and routed a reviewer's stored
+ * Codex choice to Claude — silently, with the cache-resetting `catch` never firing, because
+ * nothing had rejected. The probes underneath memoise where memoising is correct, and the
+ * bind resolves this once per THREAD, so there is nothing worth caching here.
+ */
+export interface SessionThreadRoutingProbes {
+  /** The review's own locus-threaded Claude port, or `null`. Rejects if discovery fails. */
+  readonly claudeAvailable: (repoRoot: string) => Promise<boolean>;
+  /** The review's own locus-threaded Codex availability. Rejects if discovery fails. */
+  readonly codexAvailable: (repoRoot: string) => Promise<boolean>;
+  /** The reviewer's enable choice for the host this checkout lives on (`"claude"`/`"codex"`). */
+  readonly disabledHarnesses: (repoRoot: string) => readonly string[];
+  /** What the RUNNING sidecar has a binary path for — an adopted one included. */
+  readonly sidecarBinaries: () => { readonly claude?: string; readonly codex?: string };
+  readonly overrides?: CouncilOverrideReader;
+}
+
+/**
+ * The model selection the session thread for this checkout is created with.
+ *
+ * A provider counts as installed only when all THREE agree, because each vetoes on its own:
+ * the review's own locus-threaded probe (a WSL review is answered by the distro's
+ * harnesses), the reviewer's enable choice for that host (a Codex thread on a host where
+ * they turned Codex off is the surface lying about its own switch), and the running
+ * sidecar's seeded binary path (the council may route the chat to Codex; a sidecar with no
+ * `codex` path cannot start a Codex session).
+ *
+ * A probe that REJECTS answers `undefined` — the bind then falls to the sidecar's default
+ * and logs it — rather than half an availability set, which is how a wrong provider gets
+ * chosen confidently.
+ */
+export async function resolveSessionThreadModel(
+  repoRoot: string,
+  probes: SessionThreadRoutingProbes,
+): Promise<ModelSelection | undefined> {
+  let claude: boolean;
+  let codex: boolean;
+  try {
+    [claude, codex] = await Promise.all([
+      probes.claudeAvailable(repoRoot),
+      probes.codexAvailable(repoRoot),
+    ]);
+  } catch {
+    return undefined;
+  }
+  const disabled = new Set(probes.disabledHarnesses(repoRoot));
+  const seeded = probes.sidecarBinaries();
+  const installed: CouncilHarnessId[] = [];
+  if (claude && !disabled.has("claude") && seeded.claude !== undefined) {
+    installed.push("claude-code");
+  }
+  if (codex && !disabled.has("codex") && seeded.codex !== undefined) installed.push("codex");
+  return orchestratorChatSelection({
+    installed,
+    ...(probes.overrides === undefined ? {} : { overrides: probes.overrides }),
+  });
+}

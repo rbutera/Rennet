@@ -136,7 +136,7 @@ async function sessionThreadCreation(
       `rennet: review ${review.id}'s thread gets no Rennet app tools: ${describeThreadError(error)}`,
     );
   }
-  const selection = await seam.modelSelection();
+  const selection = await seam.modelSelection(worktreePath ?? review.repositoryRoot);
   if (selection === undefined) {
     warn(
       `rennet: no installed provider answers the council's orchestrator-chat job; review ${review.id}'s thread opens on the sidecar's default model`,
