@@ -48,8 +48,15 @@ describe("GitCaptureAdapter", () => {
       if (command === "symbolic-ref --quiet --short refs/remotes/origin/HEAD") {
         return "origin/main\n";
       }
-      if (command === "rev-parse --verify origin/main^{commit}") return "base\n";
-      if (command === "merge-base origin/main HEAD") return "base\n";
+      // The base resolver (fresh-base-patchset) asks this clone for every spelling of
+      // the primary branch: the remote list, then each candidate ref. Here only
+      // `origin/main` resolves, so it wins with no ancestry comparison to make.
+      if (command === "remote") return "origin\n";
+      if (command === "rev-parse --verify --quiet refs/remotes/origin/main^{commit}") {
+        return "base\n";
+      }
+      if (command === "rev-parse --verify --quiet refs/heads/main^{commit}") return "";
+      if (command === "merge-base base head") return "base\n";
       if (
         command ===
         "ls-files --others --ignored --exclude-standard -z -- :(glob).superpowers/sdd/*/progress.md"
@@ -531,6 +538,46 @@ describe("GitCaptureAdapter", () => {
     const patchset = await new GitCaptureAdapter().capture(root);
     expect(patchset.files.map((file) => file.path)).toEqual(["tracked.txt"]);
     expect(patchset.rawDiff).not.toContain("old.jsonl");
+  });
+
+  it("bases the capture on origin/main when local main is the stale spelling", async () => {
+    // The reported shape (fresh-base-patchset): a sibling lane merged on the forge, this
+    // clone fetched but never pulled, and the branch under review was cut from the
+    // fetched tip. Against local `main` the review would carry the sibling's file.
+    const origin = mkdtempSync(join(tmpdir(), "rennet-git-origin-"));
+    directories.push(origin);
+    git(origin, "init", "-q", "--bare", "-b", "main");
+    const root = repository();
+    git(root, "remote", "add", "origin", origin);
+    git(root, "push", "-q", "origin", "main");
+    const localMain = git(root, "rev-parse", "main").trim();
+
+    const sibling = mkdtempSync(join(tmpdir(), "rennet-git-sibling-"));
+    directories.push(sibling);
+    git(sibling, "clone", "-q", origin, sibling);
+    git(sibling, "config", "user.email", "sibling@example.test");
+    git(sibling, "config", "user.name", "Sibling");
+    writeFileSync(join(sibling, "sibling.txt"), "a sibling lane landed this\n");
+    git(sibling, "add", "sibling.txt");
+    git(sibling, "commit", "-qm", "sibling landed");
+    git(sibling, "push", "-q", "origin", "main");
+    git(root, "fetch", "-q", "origin");
+    const remoteMain = git(root, "rev-parse", "origin/main").trim();
+    expect(remoteMain).not.toBe(localMain);
+
+    git(root, "checkout", "-qb", "feature", "origin/main");
+    writeFileSync(join(root, "branch.txt"), "the branch's own work\n");
+    git(root, "add", "branch.txt");
+    git(root, "commit", "-qm", "branch change");
+
+    const patchset = await new GitCaptureAdapter().capture(root);
+
+    expect(patchset.repository.baseRef).toBe("origin/main");
+    expect(patchset.repository.baseOid).toBe(remoteMain);
+    const paths = patchset.files.map((file) => file.path);
+    expect(paths).toEqual(["branch.txt"]);
+    expect(paths).not.toContain("sibling.txt");
+    expect(patchset.rawDiff).not.toContain("a sibling lane landed this");
   });
 
   it("marks a visible diff as truncated without changing its content identity", async () => {

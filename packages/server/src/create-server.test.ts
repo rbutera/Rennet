@@ -679,6 +679,70 @@ describe("selected-branch patchset recapture", () => {
       rmSync(repo, { recursive: true, force: true });
     }
   });
+
+  it("bases a branch row on origin/main when local main is the stale spelling", async () => {
+    // The reported shape (fresh-base-patchset): a sibling lane merged on the forge and
+    // this clone fetched without pulling, so `project.primaryBranch` — the bare name
+    // `main` — points a week behind. Passing that name straight to `merge-base` made the
+    // row's review carry the sibling's file under this branch's name.
+    const origin = realpathSync(mkdtempSync(join(tmpdir(), "rennet-branch-stale-origin-")));
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-branch-stale-")));
+    const sibling = realpathSync(mkdtempSync(join(tmpdir(), "rennet-branch-stale-sibling-")));
+    const runIn =
+      (cwd: string) =>
+      (...args: string[]): string =>
+        execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    const runGit = runIn(repo);
+    const runSibling = runIn(sibling);
+    const git: GitExec = async (root, arguments_) =>
+      execFileSync("git", arguments_, { cwd: root, encoding: "utf8" });
+
+    try {
+      runIn(origin)("init", "--bare", "-b", "main");
+      runGit("init", "-b", "main");
+      runGit("config", "user.email", "rennet@example.test");
+      runGit("config", "user.name", "Rennet Test");
+      runGit("remote", "add", "origin", origin);
+      writeFileSync(join(repo, "base.ts"), "export const base = true;\n");
+      runGit("add", "base.ts");
+      runGit("commit", "-m", "base");
+      runGit("push", "-q", "origin", "main");
+      const localMain = runGit("rev-parse", "main");
+
+      runSibling("clone", "-q", origin, sibling);
+      runSibling("config", "user.email", "sibling@example.test");
+      runSibling("config", "user.name", "Sibling");
+      writeFileSync(join(sibling, "sibling.ts"), "export const sibling = true;\n");
+      runSibling("add", "sibling.ts");
+      runSibling("commit", "-m", "a sibling lane landed");
+      runSibling("push", "-q", "origin", "main");
+      runGit("fetch", "-q", "origin");
+      const remoteMain = runGit("rev-parse", "origin/main");
+      expect(remoteMain).not.toBe(localMain);
+
+      runGit("checkout", "-q", "-b", "feat/cut-from-origin", "origin/main");
+      writeFileSync(join(repo, "own.ts"), "export const own = true;\n");
+      runGit("add", "own.ts");
+      runGit("commit", "-m", "the branch's own work");
+
+      const patchset = await captureBranchPatchset({
+        git,
+        locus: { kind: "host" },
+        repoPath: repo,
+        head: "feat/cut-from-origin",
+        base: "main",
+        resolveProjectSnapshotId: async () => "snapshot-stale",
+      });
+
+      expect(patchset.repository.baseRef).toBe("origin/main");
+      expect(patchset.repository.baseOid).toBe(remoteMain);
+      expect(patchset.files.map((file) => file.path)).toEqual(["own.ts"]);
+      expect(patchset.rawDiff).not.toContain("export const sibling = true;");
+    } finally {
+      for (const directory of [origin, repo, sibling])
+        rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("the round runs in the session's bound root", () => {
