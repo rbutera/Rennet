@@ -193,9 +193,12 @@ importing `@rennet/core`, and `@rennet/server` importing Electron.
 One review moves through the system as follows:
 
 1. A client asks the server to create or open a review.
-2. For a local review, the Git adapter captures the merge-base-to-HEAD diff plus
-   staged, unstaged, and untracked changes. The capture records complete byte
-   counts even when the visible payload must be truncated.
+2. For a local review, the Git adapter resolves the primary base — the
+   merge-base of the reviewed head with the newest ref in the clone naming the
+   primary branch, `origin/main` or `main` — and captures the diff from that
+   base to HEAD plus staged, unstaged, and untracked changes. The capture
+   records complete byte counts even when the visible payload must be
+   truncated.
 3. The server records an immutable patchset and derives review artifacts against
    that identity.
 4. Deterministic analysis and drafting agents produce the Design, Sequence,

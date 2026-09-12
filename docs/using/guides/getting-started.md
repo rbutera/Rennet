@@ -176,14 +176,17 @@ Every row carries the same columns, whether it is a pull request or a local
 branch: the author with their forge avatar (your local branches wear your own),
 CI as a green check, red cross, or copper dashed ring, lines added and removed,
 files touched, and when the change was created. A pull request's numbers come
-from the forge. A local branch's are measured on your machine: its committed
-diff against the project's primary branch, and the date of its first commit past
-it. A branch that is not ahead of the primary branch has nothing to review yet,
-so those cells read "—" rather than zero. A local branch also shows how many
-commits it is ahead of and behind the primary branch. A checked-out worktree
-says **clean** or **dirty** beside its name; a bare branch with no checkout says
-nothing about it, because there is nothing to measure. Uncommitted edits are not
-counted in the lines; **dirty** is how the list says they exist. GitLab does not
+from the forge. A local branch's are measured on your machine, against the
+newest commit your clone holds for the project's primary branch — `origin/main`
+or `main`, whichever is ahead: its committed diff against that commit, and the
+date of its first commit past it. Rennet reads the refs your clone already
+holds, so a fetch is what moves those numbers on. A branch that is not ahead of
+the primary branch has nothing to review yet, so those cells read "—" rather
+than zero. A local branch also shows how many commits it is ahead of and behind
+that same commit. A checked-out worktree says **clean** or **dirty** beside its
+name; a bare branch with no checkout says nothing about it, because there is
+nothing to measure. Uncommitted edits are not counted in the lines; **dirty** is
+how the list says they exist. GitLab does not
 report line counts in its merge-request list, so GitLab rows show "—" there.
 **Review requested** and **Your PR** sit beside a pull request's title rather than
 in a column of their own. As the canvas narrows the list folds from the right:
@@ -262,9 +265,9 @@ remains in the orchestrator chat beside it.
 
 What gets captured depends on the row. A pull-request row opens that pull
 request's diff. A local branch row captures that branch's own
-commits — everything since it left the project's primary branch — **without
-checking it out**. Nothing on disk moves, and you can review a branch you are not
-standing on.
+commits — everything since it left the newest commit your clone holds for the
+project's primary branch — **without checking it out**. Nothing on disk moves,
+and you can review a branch you are not standing on.
 
 That difference matters once you are reading. A working-tree capture is watched:
 edit the repository and the review says it went stale, and offers to regenerate.

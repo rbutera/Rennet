@@ -594,8 +594,22 @@ describe("selected-branch patchset recapture", () => {
     const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-branch-recapture-")));
     const runGit = (...args: string[]): string =>
       execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
-    const git: GitExec = async (root, arguments_) =>
-      execFileSync("git", arguments_, { cwd: root, encoding: "utf8" });
+    // A real `GitExec`, which means honouring `reject: false`: the base resolver probes
+    // refs that are ABSENT and reads the empty stdout of a failed `rev-parse --verify
+    // --quiet`. A runner that threw there would make this fixture answer a question
+    // production never asks.
+    const git: GitExec = async (root, arguments_, options) => {
+      try {
+        return execFileSync("git", arguments_, {
+          cwd: root,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch (error) {
+        if (options?.reject === false) return "";
+        throw error;
+      }
+    };
 
     try {
       runGit("init", "-b", "main");
@@ -677,6 +691,156 @@ describe("selected-branch patchset recapture", () => {
       );
     } finally {
       rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("bases a branch row on origin/main when local main is the stale spelling", async () => {
+    // The reported shape (fresh-base-patchset): a sibling lane merged on the forge and
+    // this clone fetched without pulling, so `project.primaryBranch` — the bare name
+    // `main` — points a week behind. Passing that name straight to `merge-base` made the
+    // row's review carry the sibling's file under this branch's name.
+    const origin = realpathSync(mkdtempSync(join(tmpdir(), "rennet-branch-stale-origin-")));
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-branch-stale-")));
+    const sibling = realpathSync(mkdtempSync(join(tmpdir(), "rennet-branch-stale-sibling-")));
+    const runIn =
+      (cwd: string) =>
+      (...args: string[]): string =>
+        execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    const runGit = runIn(repo);
+    const runSibling = runIn(sibling);
+    // A real `GitExec`, which means honouring `reject: false`: the base resolver probes
+    // refs that are ABSENT and reads the empty stdout of a failed `rev-parse --verify
+    // --quiet`. A runner that threw there would make this fixture answer a question
+    // production never asks.
+    const git: GitExec = async (root, arguments_, options) => {
+      try {
+        return execFileSync("git", arguments_, {
+          cwd: root,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch (error) {
+        if (options?.reject === false) return "";
+        throw error;
+      }
+    };
+
+    try {
+      runIn(origin)("init", "--bare", "-b", "main");
+      runGit("init", "-b", "main");
+      runGit("config", "user.email", "rennet@example.test");
+      runGit("config", "user.name", "Rennet Test");
+      runGit("remote", "add", "origin", origin);
+      writeFileSync(join(repo, "base.ts"), "export const base = true;\n");
+      runGit("add", "base.ts");
+      runGit("commit", "-m", "base");
+      runGit("push", "-q", "origin", "main");
+      const localMain = runGit("rev-parse", "main");
+
+      runSibling("clone", "-q", origin, sibling);
+      runSibling("config", "user.email", "sibling@example.test");
+      runSibling("config", "user.name", "Sibling");
+      writeFileSync(join(sibling, "sibling.ts"), "export const sibling = true;\n");
+      runSibling("add", "sibling.ts");
+      runSibling("commit", "-m", "a sibling lane landed");
+      runSibling("push", "-q", "origin", "main");
+      runGit("fetch", "-q", "origin");
+      const remoteMain = runGit("rev-parse", "origin/main");
+      expect(remoteMain).not.toBe(localMain);
+
+      runGit("checkout", "-q", "-b", "feat/cut-from-origin", "origin/main");
+      writeFileSync(join(repo, "own.ts"), "export const own = true;\n");
+      runGit("add", "own.ts");
+      runGit("commit", "-m", "the branch's own work");
+
+      const patchset = await captureBranchPatchset({
+        git,
+        locus: { kind: "host" },
+        repoPath: repo,
+        head: "feat/cut-from-origin",
+        base: "main",
+        resolveProjectSnapshotId: async () => "snapshot-stale",
+      });
+
+      // The resolved COMMIT is the fetched tip; the recorded `baseRef` stays the branch
+      // NAME the caller passed. This patchset's `baseRef` is what an own-branch pull
+      // request opens against, and a forge only knows its own branches — `origin/main`
+      // is a 422 there. The remote proves `main` is one of them.
+      expect(patchset.repository.baseRef).toBe("main");
+      expect(runGit("ls-remote", "--heads", "origin", "main")).toContain("refs/heads/main");
+      expect(patchset.repository.baseOid).toBe(remoteMain);
+      expect(patchset.files.map((file) => file.path)).toEqual(["own.ts"]);
+      expect(patchset.rawDiff).not.toContain("export const sibling = true;");
+    } finally {
+      for (const directory of [origin, repo, sibling])
+        rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("takes base HEAD verbatim rather than reading origin's default branch", async () => {
+    // The live caller passes `project?.primaryBranch ?? "HEAD"`. `HEAD` names no branch —
+    // git refuses to create one called that — so it must reach the verbatim `merge-base`
+    // fallback. Resolved as a NAME it would build `refs/remotes/origin/HEAD`, which every
+    // ordinary clone has, and the base would silently become origin's default tip: this
+    // repository's branch would be reviewed against a commit it never left.
+    const origin = realpathSync(mkdtempSync(join(tmpdir(), "rennet-branch-head-origin-")));
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-branch-head-")));
+    const runGit = (...args: string[]): string =>
+      execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+    // A real `GitExec`, which means honouring `reject: false`: the base resolver probes
+    // refs that are ABSENT and reads the empty stdout of a failed `rev-parse --verify
+    // --quiet`. A runner that threw there would make this fixture answer a question
+    // production never asks.
+    const git: GitExec = async (root, arguments_, options) => {
+      try {
+        return execFileSync("git", arguments_, {
+          cwd: root,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch (error) {
+        if (options?.reject === false) return "";
+        throw error;
+      }
+    };
+
+    try {
+      execFileSync("git", ["init", "--bare", "-b", "main"], { cwd: origin, encoding: "utf8" });
+      runGit("init", "-b", "main");
+      runGit("config", "user.email", "rennet@example.test");
+      runGit("config", "user.name", "Rennet Test");
+      runGit("remote", "add", "origin", origin);
+      writeFileSync(join(repo, "base.ts"), "export const base = true;\n");
+      runGit("add", "base.ts");
+      runGit("commit", "-m", "base");
+      runGit("push", "-q", "origin", "main");
+      runGit("remote", "set-head", "origin", "-a");
+      // The trap is armed: `origin/HEAD` resolves here, and names a DIFFERENT commit.
+      expect(runGit("rev-parse", "--verify", "refs/remotes/origin/HEAD")).toHaveLength(40);
+
+      runGit("checkout", "-q", "-b", "feat/no-primary");
+      writeFileSync(join(repo, "own.ts"), "export const own = true;\n");
+      runGit("add", "own.ts");
+      runGit("commit", "-m", "the branch's own work");
+      const headOid = runGit("rev-parse", "feat/no-primary");
+      expect(headOid).not.toBe(runGit("rev-parse", "refs/remotes/origin/HEAD"));
+
+      const patchset = await captureBranchPatchset({
+        git,
+        locus: { kind: "host" },
+        repoPath: repo,
+        head: "feat/no-primary",
+        base: "HEAD",
+        resolveProjectSnapshotId: async () => "snapshot-head",
+      });
+
+      // `merge-base HEAD feat/no-primary` with that branch checked out is the branch
+      // itself: an empty range, which is the honest answer for "no primary branch".
+      expect(patchset.repository.baseOid).toBe(headOid);
+      expect(patchset.repository.baseRef).toBe("HEAD");
+      expect(patchset.files).toEqual([]);
+    } finally {
+      for (const directory of [origin, repo]) rmSync(directory, { recursive: true, force: true });
     }
   });
 });
@@ -1711,10 +1875,15 @@ describe("createRennetServer — GitLab submission composition", () => {
 
     expect(detectionDepsForLocus).toHaveBeenCalledWith({ kind: "host" });
     expect(forgeSubmissionGitForLocus).toHaveBeenCalledWith({ kind: "host" });
+    // Each destination resolution reads the URL table (which remote, and its forge) and
+    // then the bare name list (which leading segment of a recorded `baseRef` is a remote).
     expect(submissionGit.mock.calls).toEqual([
       [repo, ["remote", "-v"]],
+      [repo, ["remote"], { reject: false }],
       [repo, ["remote", "-v"]],
+      [repo, ["remote"], { reject: false }],
       [repo, ["remote", "-v"]],
+      [repo, ["remote"], { reject: false }],
       [repo, ["push", "origin", "refs/heads/feat/reviewed:refs/heads/feat/reviewed"]],
     ]);
     expect(commands).toHaveLength(3);

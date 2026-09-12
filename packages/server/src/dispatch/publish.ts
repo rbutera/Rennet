@@ -18,6 +18,7 @@ import {
   type Review,
   sameForgeRepository,
 } from "@rennet/protocol";
+import { forgeBaseBranch } from "../forge-submission";
 import {
   assertCompositionFresh,
   type CommandHandler,
@@ -592,7 +593,6 @@ export function publishHandlers(rt: DispatchRuntime) {
           reason: "HEAD is detached — there is no branch to open a pull request from.",
         });
       }
-      const base = patchset.repository.baseRef;
       if (!deps.resolvePullRequestDestination) {
         return parseCommandOutput(name, {
           status: "unavailable",
@@ -609,6 +609,13 @@ export function publishHandlers(rt: DispatchRuntime) {
             "No supported forge destination is configured for this repository, so there is nowhere to open a pull request.",
         });
       }
+      // The BASE the forge is asked for is a branch name on the forge. The patchset records
+      // the spelling the capture measured against, and a local capture measures against a
+      // remote-tracking ref whenever that is the newer one — `origin/main`, which GitHub
+      // 422s and GitLab rejects as a `target_branch`. Normalised here, at the one seam that
+      // knows this repository's remotes, so the recorded provenance keeps saying what was
+      // reviewed while the submission says what the forge can act on.
+      const base = forgeBaseBranch(patchset.repository.baseRef, resolvedDestination.remotes);
       // Draft the PR body (daemon-composed) when a drafter is wired; else a deterministic
       // title/body. Either way the payload is derived from the SAME submission returned, so
       // publish.submitPr round-trips it exactly (self-consistent, R33-honest).

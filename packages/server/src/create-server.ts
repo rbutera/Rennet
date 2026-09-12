@@ -113,6 +113,7 @@ import {
   repositoryIdentity,
   resolveForgeRemote,
   resolveGitHubAuth,
+  resolvePrimaryBase,
   resolveTrackerConfig,
   detectForges as runForgeDetection,
   runGitHubDeviceFlow,
@@ -633,12 +634,27 @@ export async function captureBranchPatchset(input: {
   const headOid = (
     await input.git(root, ["rev-parse", "--verify", `${input.head}^{commit}`])
   ).trim();
-  const baseOid = (await input.git(root, ["merge-base", input.base, headOid])).trim();
+  // `input.base` is the project's primary branch NAME, and local `main` only moves
+  // when the reviewer pulls. Resolve the newest spelling of it instead
+  // (fresh-base-patchset, D1) so a branch cut from a fetched `origin/main` is not
+  // reviewed against wherever local `main` stopped, carrying every sibling's work.
+  const primary = await resolvePrimaryBase(input.git, root, {
+    primaryBranch: input.base,
+    head: headOid,
+  });
+  // No ref in this clone names `input.base` — a caller that passed an OID or `HEAD`,
+  // which git can still merge-base directly. Take it verbatim, as this path always did.
+  const baseOid =
+    primary.baseOid ?? (await input.git(root, ["merge-base", input.base, headOid])).trim();
   return captureRangePatchset(input.git, {
     root,
     locus: input.locus,
     baseOid,
     headOid,
+    // Only the resolved COMMIT is taken from the resolver. `baseRef` stays the name the
+    // caller passed, because this patchset's `baseRef` is what the own-branch pull request
+    // opens against, and a forge has no idea what `origin/main` means — GitHub answers 422
+    // for a `base` that is not one of its branches (fresh-base-patchset D4).
     baseRef: input.base,
     headRef: input.head,
     source: "local-branch",
