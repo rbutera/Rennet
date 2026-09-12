@@ -60,12 +60,19 @@ describe("state 3 — the floating chip layer (C20 §5)", () => {
     expect(slot.className).toContain("backdrop-blur-md");
     // THE ORB (state 3): the app's working state, floating over the full-bleed view —
     // with no sidebar and no chat header, this pill is the only chrome left, so it is
-    // where the mark lives. 24px centred in the 32px pill: the row centres its items,
-    // which is the only thing happy-dom can be asked (it computes no layout).
+    // where the mark lives. Rai's option B: the orb at 32px in a pill grown to 36px, so
+    // the mark reads at the size it does everywhere else instead of shrinking to fit
+    // chrome. 2px of pill above and below it; the row centres its items, which is the
+    // only thing happy-dom can be asked (it computes no layout).
     const sphere = slot.querySelector("[data-liquid-sphere]");
     if (!sphere) throw new Error("the floating pill has no sphere");
-    expect((sphere as HTMLElement).style.height).toBe("24px");
-    expect(slot.className).toContain("h-8");
+    expect((sphere as HTMLElement).style.height).toBe("32px");
+    expect((sphere as HTMLElement).style.width).toBe("32px");
+    expect(slot.className).toContain("h-9");
+    expect(slot.className).not.toContain("h-8");
+    // The 4px inset and the mac reserve are unchanged by the growth.
+    expect(slot.className).toContain("top-1");
+    expect(slot.className).toContain("left-1");
     expect(slot.className).toContain("items-center");
     expect(sphere.getAttribute("aria-label")).toBe("Rennet");
     // It belongs to the LAYOUT: it is NOT inside the session top bar, so a takeover

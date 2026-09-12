@@ -52,13 +52,17 @@ describe("corner slot in the chat header (C20 state 2)", () => {
     // `self-start` keeps the macOS light inset at its real y in a 56px row.
     expect(slot.className).toContain("self-start");
 
-    // THE ORB (state 2): the sidebar's lockup is gone, so the sphere stands alone in the
-    // slot — after the light reserve, before the toggle, named "Rennet" because with no
-    // lockup on screen the orb is the only thing carrying the name.
+    // THE ORB (state 2): the sidebar's lockup row is gone, so the sphere stands alone in
+    // the slot — after the light reserve, before the toggle, named "Rennet" because with
+    // no lockup on screen the orb is the only thing carrying the name. 32px, the same
+    // orb as the floating pill's: the slot is h-10 here, so it centres with 4px either
+    // side, and the mark does not shrink just because the chat owns the corner.
     const sphere = slot.querySelector("[data-liquid-sphere]");
     if (!sphere) throw new Error("the chat's corner slot has no sphere");
     expect(sphere.getAttribute("aria-label")).toBe("Rennet");
     expect(sphere.getAttribute("data-state")).toBe("resting");
+    expect((sphere as HTMLElement).style.height).toBe("32px");
+    expect(slot.className).toContain("h-10");
     const toggle = slot.querySelector('[aria-label="Expand sidebar"]');
     if (!toggle) throw new Error("the chat's corner slot has no sidebar toggle");
     // Node.DOCUMENT_POSITION_FOLLOWING (4).

@@ -543,24 +543,26 @@ describe("sidebar tree (C03 §3)", () => {
 // desktop window is `titleBarStyle: "hiddenInset"` on darwin, so the native
 // close/minimise/zoom buttons paint OVER the renderer's top-left — on top of the
 // lockup, which made the wordmark unreadable on a real packaged build. With the
-// sidebar expanded the sidebar owns the slot, and the row reads
-// lights → sphere → wordmark → toggle. No other host pays for it.
+// sidebar expanded the sidebar owns the slot, and the row now reads
+// lights → toggle: the identity has LEFT this strip for its own row beneath it.
 //
-// The lockup is ASSEMBLED from its two halves now: the live sphere component beside the
-// wordmark artwork. So the width budget has three terms where it had one, and — the
-// point of re-deriving it rather than loosening the bound — it fits at 24px on darwin,
-// which is why the old 14px shrink is gone rather than merely bigger.
+// So the budget this describes has collapsed from seven terms to three. What it still
+// proves is the thing #557 was about: the reserve is declared, the strip is the drag
+// surface, and nothing interactive sits under the lights. The lockup row is measured
+// separately below — it is not titlebar and answers to the panel width, not the lights.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The WORDMARK half's authored aspect ratio (`lockup.tsx`): width = height × this. */
 const WORDMARK_RATIO = 480.168 / 112;
-/** Every term of the state-1 row, in px, as the component declares them. */
+/** Every term of the state-1 corner row, in px, as the component declares them. */
 const LIGHT_RESERVE = 81; // pl-[81px]
-const LOCKUP_HEIGHT = 24; // the sphere and the wordmark, same height
-const MARK_GAP = 4; // gap-1 between the two halves ≈ the authored 24/126 of the mark
-const SLOT_GAP = 8; // the slot's own gap-2, between the lockup and the toggle
 const TRAILING_PAD = 12; // pr-3
 const TOGGLE = 24; // size-6
+/** The lockup row (`sidebar.tsx`), which is a row of the PANEL, not of the titlebar. */
+const LOCKUP_ROW_PAD_LEFT = 16; // pl-4, the actions' icon column
+const MARK = 44; // the live sphere
+const WORDMARK = 22; // HALF the mark — the stacked-header prototype's 2:1
+const LOCKUP_GAP = 8; // gap-2 ≈ the authored 24/126 of a 44px mark (8.38)
 
 function cornerSlot(container: Element): Element {
   const slot = container.querySelector('[data-slot="corner-slot"]');
@@ -568,11 +570,17 @@ function cornerSlot(container: Element): Element {
   return slot;
 }
 
+function lockupRow(container: Element): Element {
+  const row = container.querySelector('[data-slot="sidebar-lockup"]');
+  if (!row) throw new Error("sidebar has no lockup row");
+  return row;
+}
+
 /** The sphere — live canvas in a real window, the static colour mark under happy-dom.
  *  Either way the ROOT carries `data-liquid-sphere`, which is what the chrome asserts. */
-function slotSphere(slot: Element): Element {
-  const sphere = slot.querySelector("[data-liquid-sphere]");
-  if (!sphere) throw new Error("corner slot has no sphere");
+function slotSphere(root: Element): Element {
+  const sphere = root.querySelector("[data-liquid-sphere]");
+  if (!sphere) throw new Error("no sphere");
   return sphere;
 }
 
@@ -580,16 +588,16 @@ function slotSphere(slot: Element): Element {
  *  static fallback draws an SVG of its own, and it comes FIRST in document order, so the
  *  old helper would silently have measured the sphere and passed. The wordmark is the
  *  non-lucide svg that is not inside the sphere. */
-function slotWordmark(slot: Element): Element {
-  const svg = [...slot.querySelectorAll("svg:not(.lucide)")].find(
+function slotWordmark(root: Element): Element {
+  const svg = [...root.querySelectorAll("svg:not(.lucide)")].find(
     (el) => el.closest("[data-liquid-sphere]") === null,
   );
-  if (!svg) throw new Error("corner slot has no wordmark");
+  if (!svg) throw new Error("no wordmark");
   return svg;
 }
 
 describe("macOS traffic-light clearance (corner slot, state 1)", () => {
-  it("insets the slot, fits the full-size lockup, and makes the strip the drag surface on darwin", () => {
+  it("insets the slot, holds nothing but the toggle, and makes the strip the drag surface on darwin", () => {
     const { container } = mountSidebar({
       projects: [project("p1", "atlas")],
       platform: "darwin",
@@ -602,42 +610,28 @@ describe("macOS traffic-light clearance (corner slot, state 1)", () => {
     // control inside marks itself `app-region-no-drag`.
     expect(slot.className).toContain("app-region-drag");
 
-    // The mark is the sphere, at the same height as the wordmark beside it, and it is
-    // the FIRST thing after the reserved light zone.
-    const sphere = slotSphere(slot);
-    expect(sphere.getAttribute("data-liquid-sphere")).toBeTruthy();
-    expect((sphere as HTMLElement).style.width).toBe(`${LOCKUP_HEIGHT}px`);
-    expect((sphere as HTMLElement).style.height).toBe(`${LOCKUP_HEIGHT}px`);
-    const svg = slotWordmark(slot);
-    expect(svg.getAttribute("height")).toBe(String(LOCKUP_HEIGHT));
-    // Node.DOCUMENT_POSITION_FOLLOWING (4) — sphere, then wordmark.
-    expect(sphere.compareDocumentPosition(svg) & 4).toBe(4);
+    // The identity is NOT here any more: no sphere, no wordmark, no accessible name.
+    // Those three absences are the whole point of the change and each is asserted on
+    // its own, because "the row looks right" is exactly what a screenshot cannot say.
+    expect(slot.querySelector("[data-liquid-sphere]")).toBeNull();
+    expect(slot.querySelectorAll("svg:not(.lucide)").length).toBe(0);
+    expect(slot.querySelectorAll('[aria-label="Rennet"]').length).toBe(0);
 
-    // The accessible name survives the split: two decorative halves under ONE role=img
-    // called "Rennet", never two images or none.
-    const lockup = slot.querySelector('[role="img"][aria-label="Rennet"]');
-    if (!lockup) throw new Error("the assembled lockup lost its accessible name");
-    expect(lockup.contains(sphere)).toBe(true);
-    expect(lockup.contains(svg)).toBe(true);
-    expect(slot.querySelectorAll('[aria-label="Rennet"]').length).toBe(1);
-
-    // Reading order is lights → lockup → toggle: the reserved zone is the slot's
-    // own leading padding, so the lockup is the FIRST child and the toggle follows.
+    // What is left is the toggle, alone, held at the row's trailing edge.
+    const controls = slot.querySelectorAll("button, a, input, [role='button']");
+    expect(controls.length).toBe(1);
     const toggle = slot.querySelector('[aria-label="Collapse sidebar"]');
     if (!toggle) throw new Error("corner slot has no sidebar toggle");
-    expect(svg.compareDocumentPosition(toggle) & 4).toBe(4);
+    expect(controls[0]).toBe(toggle);
+    expect(toggle.className).toContain("ml-auto");
 
-    // Unclipped, with EVERY term of the row counted — including the slot's own 8px gap,
-    // which the single-lockup version of this sum quietly omitted. 81 + 24 + 4 + 102.9
-    // + 8 + 12 + 24 = 255.9 ≤ 256: it fits at full size, with ~0.1px to spare.
-    const width = Number(svg.getAttribute("width"));
-    expect(width).toBeCloseTo(LOCKUP_HEIGHT * WORDMARK_RATIO, 3);
-    expect(
-      LIGHT_RESERVE + LOCKUP_HEIGHT + MARK_GAP + width + SLOT_GAP + TRAILING_PAD + TOGGLE,
-    ).toBeLessThanOrEqual(SIDEBAR_PANEL_WIDTH);
+    // The budget the corner row has to clear is now only its own: 81 + 12 + 24 = 117
+    // of 256. It was 255.9 when the lockup rode this strip, which is why the lockup
+    // could not grow inside it and why it moved.
+    expect(LIGHT_RESERVE + TRAILING_PAD + TOGGLE).toBeLessThanOrEqual(SIDEBAR_PANEL_WIDTH);
   });
 
-  it("leaves every non-darwin host un-inset, full-size and undraggable", () => {
+  it("leaves every non-darwin host un-inset and undraggable, with the same single toggle", () => {
     for (const platform of ["win32", "linux", undefined]) {
       const { container } = mountSidebar({
         projects: [project("p1", "atlas")],
@@ -647,12 +641,10 @@ describe("macOS traffic-light clearance (corner slot, state 1)", () => {
       expect(slot.className).toContain("pl-3");
       expect(slot.className).not.toMatch(/pl-\[\d+px\]/);
       expect(slot.className).not.toContain("app-region-drag");
-      // One size on every host now — darwin's 14px shrink is gone, because the
-      // re-derived budget above says the full lockup clears the lights.
-      expect(slotWordmark(slot).getAttribute("height")).toBe(String(LOCKUP_HEIGHT));
-      expect(slotSphere(slot)).toBeTruthy();
       // Non-darwin loses the inset, not the affordance: the same single toggle.
       expect(slot.querySelectorAll('[aria-label="Collapse sidebar"]').length).toBe(1);
+      // And the lockup row is a row of the PANEL, so it is identical on every host.
+      expect(slotWordmark(lockupRow(container)).getAttribute("height")).toBe(String(WORDMARK));
       cleanup();
     }
   });
@@ -662,13 +654,86 @@ describe("macOS traffic-light clearance (corner slot, state 1)", () => {
     // orb carries. Driven through the review-activity projection, which is what the
     // sidebar's own rows read, so this cannot pass on a prop nobody sets.
     const { container } = mountSidebar({ projects: [project("p1", "atlas")] });
-    expect(slotSphere(cornerSlot(container)).getAttribute("data-state")).toBe("resting");
+    expect(slotSphere(lockupRow(container)).getAttribute("data-state")).toBe("resting");
     act(() =>
       useReviewActivityState.setState({ bySession: { s1: { kind: "running", runId: "r1" } } }),
     );
-    expect(slotSphere(cornerSlot(container)).getAttribute("data-state")).toBe("working");
+    expect(slotSphere(lockupRow(container)).getAttribute("data-state")).toBe("working");
     act(() => useReviewActivityState.setState({ bySession: {} }));
-    expect(slotSphere(cornerSlot(container)).getAttribute("data-state")).toBe("resting");
+    expect(slotSphere(lockupRow(container)).getAttribute("data-state")).toBe("resting");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The lockup row — Rai's placement from `spikes/sidebar-lockup-prototypes`: "Own row"
+// geometry with the stacked header's 2:1 mark-to-wordmark proportion. It sits BELOW
+// the corner strip, so it is panel, not titlebar: it does not drag the window and it
+// answers to the 256px panel width rather than to the light reserve.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("the sidebar lockup row", () => {
+  it("draws one lockup, beneath the corner slot, at 44 over 22", () => {
+    const { container } = mountSidebar({ projects: [project("p1", "atlas")], platform: "darwin" });
+    const rows = container.querySelectorAll('[data-slot="sidebar-lockup"]');
+    expect(rows.length).toBe(1);
+    const row = lockupRow(container);
+
+    // BENEATH the corner slot, and outside it — the strip owns the lights and the
+    // toggle, this row owns the identity. Node.DOCUMENT_POSITION_FOLLOWING (4).
+    const slot = cornerSlot(container);
+    expect(row.closest('[data-slot="corner-slot"]')).toBeNull();
+    expect(slot.compareDocumentPosition(row) & 4).toBe(4);
+    // ...and ABOVE the actions, so the identity leads the panel. Asserted by POSITION
+    // against a named neighbour rather than by membership: "a button exists after it"
+    // is satisfied by every arrangement of the panel, including the wrong ones.
+    const searchRow = [...container.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("Search"),
+    );
+    if (!searchRow) throw new Error("sidebar has no Search action");
+    expect(row.compareDocumentPosition(searchRow) & 4).toBe(4);
+    expect(row.nextElementSibling?.contains(searchRow)).toBe(true);
+
+    // 44px mark, 22px wordmark: the wordmark is exactly HALF the mark. Asserted as a
+    // RATIO as well as two numbers, because the pair is the decision — either size
+    // alone could drift to something that still reads plausibly in a screenshot.
+    const sphere = slotSphere(row);
+    expect((sphere as HTMLElement).style.width).toBe(`${MARK}px`);
+    expect((sphere as HTMLElement).style.height).toBe(`${MARK}px`);
+    const svg = slotWordmark(row);
+    const height = Number(svg.getAttribute("height"));
+    expect(height).toBe(WORDMARK);
+    expect(height * 2).toBe(MARK);
+    // The width follows the authored 480.168:112 window — ~94.3px.
+    expect(Number(svg.getAttribute("width"))).toBeCloseTo(WORDMARK * WORDMARK_RATIO, 3);
+
+    // Mark then wordmark, at the authored gap, on the actions' 16px icon column,
+    // vertically centred on each other.
+    expect(sphere.compareDocumentPosition(svg) & 4).toBe(4);
+    expect(row.className).toContain("gap-2");
+    expect(row.className).toContain("pl-4");
+    expect(row.className).toContain("h-14");
+    expect(row.className).toContain("items-center");
+
+    // The row fits the panel with room to spare: 16 + 44 + 8 + 94.3 + 12 = 174.3.
+    expect(
+      LOCKUP_ROW_PAD_LEFT + MARK + LOCKUP_GAP + Number(svg.getAttribute("width")) + TRAILING_PAD,
+    ).toBeLessThanOrEqual(SIDEBAR_PANEL_WIDTH);
+  });
+
+  it("carries the one accessible name on the wrapper, and is not a drag region", () => {
+    const { container } = mountSidebar({ projects: [project("p1", "atlas")], platform: "darwin" });
+    const row = lockupRow(container);
+    // ONE role=img called "Rennet" over two decorative halves — the accessible name is
+    // unchanged by the move, which is the part a geometry assertion cannot see.
+    expect(row.getAttribute("role")).toBe("img");
+    expect(row.getAttribute("aria-label")).toBe("Rennet");
+    expect(container.querySelectorAll('[aria-label="Rennet"]').length).toBe(1);
+    expect(slotSphere(row).getAttribute("aria-label")).toBeNull();
+    expect(slotWordmark(row).getAttribute("aria-hidden")).toBe("true");
+    // Below the titlebar strip on darwin, so it neither drags nor opts out of dragging.
+    // What this CANNOT prove: `-webkit-app-region` has no representation in happy-dom,
+    // so this is the absence of the DECLARATION, not of the behaviour.
+    expect(row.className).not.toContain("app-region-drag");
+    expect(row.className).not.toContain("app-region-no-drag");
   });
 });
 
