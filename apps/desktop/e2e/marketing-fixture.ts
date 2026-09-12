@@ -897,6 +897,10 @@ export function seedMarketingRepo(): string {
 const author = { kind: "lens-agent", id: "claude" } as const;
 
 /** 1-based line of the first line in `path` (head side) containing `needle`. */
+export function fixtureLine(path: string, needle: string, after = 0): number {
+  return lineOf(path, needle, after);
+}
+
 function lineOf(path: string, needle: string, after = 0): number {
   const content = HEAD_CONTENT[path];
   if (content === undefined) throw new Error(`no fixture content for ${path}`);
@@ -993,6 +997,13 @@ function sequence(patchsetId: string): LensFixture {
       "export function take(",
       "retryAfterSeconds: Math.ceil",
       "take",
+    ),
+    ref(
+      "seq-ref-clamp",
+      patchsetId,
+      F.bucket,
+      "const elapsedSeconds = Math.max(",
+      "const tokens = Math.min(",
     ),
     ref(
       "seq-ref-store",
@@ -1114,7 +1125,7 @@ function sequence(patchsetId: string): LensFixture {
     ),
     annotation(
       "seq-anno-refill",
-      "seq-ref-take",
+      "seq-ref-clamp",
       "`Math.min(policy.burst, …)` is the burst cap and `Math.max(0, …)` guards a clock that went backwards; both are silent. `retryAfterSeconds` rounds up, so a client told to wait is never told too little.",
     ),
     prose(
@@ -1631,7 +1642,7 @@ function flagged(patchsetId: string): LensFixture {
         author,
         severity: "high",
         concern:
-          "`failOpen` turns a store failure into `undefined`, and `take` treats `undefined` as a brand-new organisation with a full burst. So while Redis is unreachable every organisation gets an unlimited allowance, which is the spec's stated intent, but the only evidence it is happening is `console.error` once per request in `bucketStore`. Nothing counts it, nothing alarms on it, and `X-RateLimit-Remaining` keeps reporting a healthy number. The incident this branch answers was a tight retry loop; a tight retry loop during a Redis blip now produces one log line per request and no limit.\n\n**Fix:** count fail-open decisions in a metric and mark the response (a header, or `X-RateLimit-Remaining` omitted) so the degraded state is visible to operators and clients.",
+          "A Redis outage removes every limit, and the only trace is one log line per request.\n\n`failOpen` turns a store failure into `undefined`, and `take` treats `undefined` as a brand-new organisation with a full burst. So while Redis is unreachable every organisation gets an unlimited allowance, which is the spec's stated intent, but the only evidence it is happening is `console.error` once per request in `bucketStore`. Nothing counts it, nothing alarms on it, and `X-RateLimit-Remaining` keeps reporting a healthy number. The incident this branch answers was a tight retry loop; a tight retry loop during a Redis blip now produces one log line per request and no limit.\n\n**Fix:** count fail-open decisions in a metric and mark the response (a header, or `X-RateLimit-Remaining` omitted) so the degraded state is visible to operators and clients.",
         code: ["flg-ref-failopen", "flg-ref-onerror"],
         concurrence: BOTH,
         accord: "conflict",
@@ -1651,7 +1662,7 @@ function flagged(patchsetId: string): LensFixture {
         author,
         severity: "medium",
         concern:
-          "The middleware does a GET, decides in process, then a SET. With `RedisStore` and more than one replica, two requests that arrive together both read the same bucket, both see a token, and both write back a bucket that has spent one; the limit under-counts by up to the replica count at every refill boundary. The branch adds Redis specifically so replicas share a limit, so this is the case it was written for.\n\n**Fix:** make the take atomic in Redis, either a small Lua script that refills and decrements in one call, or `INCR` on a per-window counter for the shared store.",
+          "Two replicas can grant the same token: the take is a read, a decision, then a write.\n\nThe middleware does a GET, decides in process, then a SET. With `RedisStore` and more than one replica, two requests that arrive together both read the same bucket, both see a token, and both write back a bucket that has spent one; the limit under-counts by up to the replica count at every refill boundary. The branch adds Redis specifically so replicas share a limit, so this is the case it was written for.\n\n**Fix:** make the take atomic in Redis, either a small Lua script that refills and decrements in one call, or `INCR` on a per-window counter for the shared store.",
         code: ["flg-ref-readwrite", "flg-ref-redisstore"],
         concurrence: CLAUDE_ONLY,
         accord: "split",
@@ -1665,7 +1676,7 @@ function flagged(patchsetId: string): LensFixture {
         author,
         severity: "medium",
         concern:
-          '`docs/api.md` promises that every error is a JSON object with one `error` string, and this branch adds the 429 row to that table. The 429 itself is sent with `response.end("rate limit exceeded")` and no content type, so a client parsing the envelope gets a JSON error on the first limited request. The `json` helper is one import away.\n\n**Fix:** answer the 429 through `json(response, 429, { error: "rate limit exceeded" })`.',
+          'The 429 is plain text, so it breaks the JSON error envelope the API doc promises.\n\n`docs/api.md` promises that every error is a JSON object with one `error` string, and this branch adds the 429 row to that table. The 429 itself is sent with `response.end("rate limit exceeded")` and no content type, so a client parsing the envelope gets a JSON error on the first limited request. The `json` helper is one import away.\n\n**Fix:** answer the 429 through `json(response, 429, { error: "rate limit exceeded" })`.',
         code: ["flg-ref-429body", "flg-ref-envelope"],
         concurrence: BOTH,
         accord: "concur",
