@@ -51,7 +51,7 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
   splices patchset (kind, branch or PR number, base and head oids, the exact `git diff` command),
   the context directory path when present, and the attached tool names; `SESSION_BRIEFING_MAX_BYTES = 4096`
   enforced with an honest marker on the dynamic lines; every interpolation bounded at its call site.
-- [ ] 2.3 `session-briefing.test.ts`: byte ceiling; patchset line and tool names present; a fixture
+- [x] 2.3 `session-briefing.test.ts`: byte ceiling; patchset line and tool names present; a fixture
   with a 95-file change renders byte-identical to a 1-file change (no content travels); **positive
   control** — interpolate one board element into the fixture and the absence assertion fails.
   Cluster gate green. Commit.

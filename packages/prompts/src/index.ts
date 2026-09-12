@@ -72,6 +72,13 @@ export const ROUND_REPORT_FILE = "prompts/report.md";
  * on every round trip of every turn for the life of the thread. The manifest test pins this
  * file at `SESSION_BRIEFING_FIXED_MAX_BYTES` so the dynamic lines always have room under
  * `SESSION_BRIEFING_MAX_BYTES`.
+ *
+ * Measured 2026-09-12: the file is 2,559 B and renders to 3,297 B beside a reference
+ * review's patchset, context and tool lines — 799 B of headroom. Its `{{reader-voice}}`
+ * marker costs 16 B as it stands; expanding that partial in whole (2,846 B) puts the fixed
+ * half at 5,389 B, past the whole ceiling on its own. Whoever splices partials into this
+ * file answers for that, and the renderer will not hide it — the truncation marker lands
+ * on the review's lines, never on this text.
  */
 export const SESSION_BRIEFING_FILE = "prompts/session-briefing.md";
 
