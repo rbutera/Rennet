@@ -32,13 +32,15 @@ export function resolveAppUserModelId(
 // binary. The packaged win32 exe carries the brand `.ico` via forge, so on that
 // path the file may be absent from the app layout — a missing file must degrade to
 // "no icon option", never throw. `baseDir` is the compiled main's dir (dist/main);
-// brand/ lives at the repo root in the dev/source layout.
+// brand/ lives at the repo root in the dev/source layout. This names the SAME
+// variant forge packages (`rennet-color`), so a dev window and an installed one show
+// one identity; PACKAGING.md states that equivalence.
 export function brandWindowIcon(baseDir: string, platform: NodeJS.Platform): string | undefined {
   const rel =
     platform === "win32"
-      ? "app-icons/windows/rennet-white-on-black.ico"
+      ? "app-icons/windows/rennet-color.ico"
       : platform === "linux"
-        ? "app-icons/linux/white-on-black/256x256.png"
+        ? "app-icons/linux/color/256x256.png"
         : undefined;
   if (!rel) return undefined;
   const candidate = join(baseDir, "../../../../brand/exports", rel);

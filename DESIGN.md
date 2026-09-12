@@ -142,6 +142,8 @@ Beyond it, a viewer may select a bundled **theme pack** (GitHub, One Dark Pro, D
 
 The wordmark is vector artwork. Do not recreate it with a font.
 
+**The mark is a liquid sphere.** A warm gradient body — `#f3b437` at the top, `#e8641f` through the middle, `#d42c3b` at the bottom, resting on `#ecdfcf` ground — that ripples while Rennet is working and settles when it is done. Colour surfaces get the colour sphere: app icons, favicons, both site headers, every lockup. Surfaces that are monochrome by contract — a macOS menu-bar template image, a stencil, one-ink print — get the ridged mark instead: the same sphere as a single-ink silhouette with its ripple creases cut through it, three deep ridges below 32px and six above 48px. Never filter or recolour the colour sphere to fake the monochrome one; the monochrome mark is drawn, not derived. The assets and the rebuild order live in `brand/README.md`.
+
 Display headings can reach `6rem` with a line height near `1`. Keep letter spacing at `-0.04em` or looser. Keep long prose lines between 45 and 75 characters where the layout permits.
 
 **Casing.** Structural headers use title case: dialog titles, section headers, short label-like headers, and control labels ("Add Remote", "Pairing Code", "What Changes"). Body copy, helper text, and any title that is a sentence (a finding claim, a decision statement) use sentence case. Casing is content, never CSS: `text-transform` cannot know that a code token (`wsl.exe`, `ensureWslDaemon`) or an acronym keeps its exact casing, so strings are authored cased — chrome by hand, board content by the drafting prompts.

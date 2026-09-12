@@ -107,11 +107,13 @@ async function verifyPackagedNativePayload(_forgeConfig, packageResult) {
 // The app icon, per the platform the packaging RUNS on (add-windows-support). The
 // path is given WITHOUT extension so @electron/packager appends `.icns` on macOS and
 // `.ico` on Windows; the two brand exports live in separate dirs, so the base path is
-// chosen here rather than relying on a single shared base.
+// chosen here rather than relying on a single shared base. The COLOUR variant ships: a
+// dock/taskbar tile is a colour surface, and the liquid sphere is the identity there.
+// The monochrome variants stay in the brand pack for monochrome surfaces.
 const appIcon =
   process.platform === "win32"
-    ? path.join(__dirname, "../../brand/exports/app-icons/windows/rennet-white-on-black")
-    : path.join(__dirname, "../../brand/exports/app-icons/macos/rennet-white-on-black");
+    ? path.join(__dirname, "../../brand/exports/app-icons/windows/rennet-color")
+    : path.join(__dirname, "../../brand/exports/app-icons/macos/rennet-color");
 
 module.exports = {
   packagerConfig: {
@@ -166,12 +168,9 @@ module.exports = {
       {
         name: "Rennet",
         authors: "Rai Butera",
-        setupIcon: path.join(
-          __dirname,
-          "../../brand/exports/app-icons/windows/rennet-white-on-black.ico",
-        ),
+        setupIcon: path.join(__dirname, "../../brand/exports/app-icons/windows/rennet-color.ico"),
         iconUrl:
-          "https://raw.githubusercontent.com/rbutera/rennet/main/brand/exports/app-icons/windows/rennet-white-on-black.ico",
+          "https://raw.githubusercontent.com/rbutera/rennet/main/brand/exports/app-icons/windows/rennet-color.ico",
       },
       ["win32"],
     ),

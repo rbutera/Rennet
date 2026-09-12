@@ -1,29 +1,35 @@
 {
   "name": "Rennet",
-  "concept": "A large body becoming digestible pieces",
-  "primaryMode": "monochrome",
+  "concept": "A liquid sphere that ripples while the work runs",
+  "primaryMode": "color",
   "colors": {
     "ink": "#0B0D10",
     "paper": "#F7F4EE",
-    "white": "#FFFFFF"
-  },
-  "applicationIconArtwork": {
-    "midnight": "#11143B",
-    "cobalt": "#3556E8",
-    "orchid": "#A657E7",
-    "cyan": "#7CE6F5"
+    "white": "#FFFFFF",
+    "sphereTop": "#f3b437",
+    "sphereMid": "#e8641f",
+    "sphereBottom": "#d42c3b",
+    "sphereGround": "#ecdfcf"
   },
   "assets": {
     "primaryLockup": "exports/logo/svg/lockup-horizontal-black.svg",
     "inverseLockup": "exports/logo/svg/lockup-horizontal-white.svg",
-    "mark": "exports/logo/svg/mark-black.svg",
-    "smallMark": "exports/logo/svg/mark-small-black.svg",
+    "monoLockup": "exports/logo/svg/lockup-horizontal-mono-black.svg",
+    "inverseMonoLockup": "exports/logo/svg/lockup-horizontal-mono-white.svg",
+    "mark": "exports/logo/svg/mark-color.svg",
+    "monoMark": "exports/logo/svg/mark-black.svg",
+    "inverseMonoMark": "exports/logo/svg/mark-white.svg",
+    "smallMonoMark": "exports/logo/svg/mark-small-black.svg",
+    "inverseSmallMonoMark": "exports/logo/svg/mark-small-white.svg",
     "primaryAppIcon": "exports/app-icons/masters/app-icon-color-1024.png",
-    "favicon": "exports/web/favicon.svg"
+    "favicon": "exports/web/favicon.svg",
+    "restingSphere": "exports/sphere/mark-resting-1024.png",
+    "workingSphere": "exports/sphere/mark-working-1024.png"
   },
   "minimumSizes": {
-    "fullMarkPx": 48,
-    "smallMarkPx": 16,
+    "colorMarkPx": 16,
+    "monoMarkPx": 48,
+    "smallMonoMarkPx": 16,
     "horizontalLockupWidthPx": 140
   }
 }

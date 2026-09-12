@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Rennet liquid sphere — animated master</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  html, body { margin: 0; height: 100%; background: #ecdfcf; overflow: hidden; }
+  canvas { display: block; }
+  #hint { position: fixed; left: 12px; bottom: 10px; font: 12px/1.4 ui-monospace, monospace; color: #7a5a44; opacity: .7; }
+  #toggle {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+    padding: 12px 22px; border-radius: 999px; border: 1px solid #c9a27a;
+    background: #f7efe3; color: #5a3a2a; font: 500 15px/1 ui-sans-serif, system-ui, sans-serif;
+    cursor: pointer; box-shadow: 0 6px 20px rgba(90, 58, 42, .12); transition: background .2s, color .2s;
+  }
+  #toggle[data-state="working"] { background: #e8641f; color: #fff7ee; border-color: #c9501a; }
+  #toggle small { display: block; margin-top: 5px; font-size: 11px; opacity: .65; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.186.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.186.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="hint">space: pause · w: toggle state · s: save png · g: toggle panel</div>
+<button id="toggle" data-state="resting">Start working<small>resting</small></button>
+<script type="module">
+import * as THREE from "three";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import GUI from "three/addons/libs/lil-gui.module.min.js";
+
+// ---------- render options (query string; used by render.mjs) ----------
+//   ?state=working|resting   initial state (default resting)
+//   ?transparent=1           no backdrop; alpha canvas for compositing
+//   ?bare=1                  no panel, hint or button
+//   ?loop=<seconds>          quantise every rate so the motion repeats exactly every N s
+const Q = new URLSearchParams(location.search);
+const TRANSPARENT = Q.get("transparent") === "1";
+const BARE = Q.get("bare") === "1";
+const LOOP = Number(Q.get("loop")) || 0;
+
+// ---------- look (shared by both states) ----------
+const LOOK = {
+  bottom: "#d42c3b",
+  mid: "#e8641f",
+  top: "#f2b032",
+  background: "#ecdfcf",
+  roughness: 0.7,
+  clearcoat: 0.4,
+  clearcoatRoughness: 0.5,
+  envIntensity: 0.53,
+  exposure: 0.8,
+  speed: 1.0,
+  paused: false,
+  transition: 1.6,      // seconds to cross between states
+};
+
+// ---------- motion presets ----------
+// resting: lava lamp. broad, slow swells; the pulse field barely breathes.
+// working: the reference. tight travelling ridges from a wandering pole.
+const STATES = {
+  resting: {
+    ampMax: 0.028, freqMin: 2.5, freqMax: 5, travel: 0.35, pulse: 0.12, poleDrift: 0.06,
+    ampB: 0.03, freqB: 2.2, travelB: 0.18, spin: 0.03,
+  },
+  working: {
+    ampMax: 0.075, freqMin: 11.2, freqMax: 35.3, travel: 4.1, pulse: 0.87, poleDrift: 0.28,
+    ampB: 0.018, freqB: 4.5, travelB: 0.6, spin: 0.08,
+  },
+};
+const KEYS = Object.keys(STATES.resting);
+const live = { ...STATES.resting };
+let target = Q.get("state") === "working" ? "working" : "resting";
+let blend = target === "working" ? 1 : 0;   // 0 = resting, 1 = working
+
+// ---------- renderer / scene ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: TRANSPARENT, premultipliedAlpha: false, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = LOOK.exposure;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = TRANSPARENT ? null : new THREE.Color(LOOK.background);
+if (TRANSPARENT) { renderer.setClearColor(0x000000, 0); document.documentElement.style.background = "transparent"; document.body.style.background = "transparent"; }
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const camera = new THREE.PerspectiveCamera(28, innerWidth / innerHeight, 0.1, 20);
+camera.position.set(0, 0.35, 5.2);
+camera.lookAt(0, 0, 0);
+
+const key = new THREE.DirectionalLight(0xfff4e0, 0.85);
+key.position.set(-2.5, 4, 3.5);
+scene.add(key);
+const fill = new THREE.HemisphereLight(0xffe9d2, 0xc86a50, 0.6);
+scene.add(fill);
+
+// ---------- material: MeshPhysical + injected displacement ----------
+const uniforms = {
+  uPole: { value: new THREE.Vector3(0, 1, 0) },
+  uPoleB: { value: new THREE.Vector3(1, 0.2, 0.3).normalize() },
+  uFreq: { value: 12 },
+  uAmp: { value: 0.03 },
+  uPhase: { value: 0 },
+  uFreqB: { value: 4.5 },
+  uAmpB: { value: 0.018 },
+  uPhaseB: { value: 0 },
+  uBottom: { value: new THREE.Color(LOOK.bottom) },
+  uMid: { value: new THREE.Color(LOOK.mid) },
+  uTop: { value: new THREE.Color(LOOK.top) },
+};
+
+const material = new THREE.MeshPhysicalMaterial({
+  color: 0xffffff,
+  roughness: LOOK.roughness,
+  metalness: 0,
+  clearcoat: LOOK.clearcoat,
+  clearcoatRoughness: LOOK.clearcoatRoughness,
+  envMapIntensity: LOOK.envIntensity,
+});
+
+material.onBeforeCompile = (shader) => {
+  Object.assign(shader.uniforms, uniforms);
+
+  shader.vertexShader = shader.vertexShader
+    .replace(
+      "#include <common>",
+      /* glsl */ `
+      #include <common>
+      uniform vec3 uPole, uPoleB;
+      uniform float uFreq, uAmp, uPhase, uFreqB, uAmpB, uPhaseB;
+      varying float vHeight;
+
+      // Ring ripple radiating from a pole. Ridges broad, creases narrow
+      // (stacked tori), flat cap at the pole, damped on the far side.
+      float ring(vec3 n, vec3 pole, float freq, float phase) {
+        float a = acos(clamp(dot(n, pole), -1.0, 1.0));   // 0 at pole, π at antipode
+        float s = 0.5 + 0.5 * sin(a * freq - phase);
+        float w = 1.0 - 2.0 * pow(1.0 - s, 2.2);
+        float env = smoothstep(0.0, 0.32, a) * mix(0.3, 1.0, smoothstep(3.1416, 0.7, a));
+        return w * env;
+      }
+      float disp(vec3 n) {
+        return uAmp * ring(n, uPole, uFreq, uPhase)
+             + uAmpB * ring(n, uPoleB, uFreqB, uPhaseB);
+      }
+      vec3 surf(vec3 n) { return n * (1.0 + disp(n)); }
+      `,
+    )
+    .replace(
+      "#include <beginnormal_vertex>",
+      /* glsl */ `
+      vec3 n0 = normalize(position);
+      vec3 up = abs(n0.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+      vec3 tX = normalize(cross(up, n0));
+      vec3 tY = cross(n0, tX);
+      float e = 0.006;
+      vec3 pC = surf(n0);
+      vec3 pX = surf(normalize(n0 + tX * e));
+      vec3 pY = surf(normalize(n0 + tY * e));
+      vec3 objectNormal = normalize(cross(pX - pC, pY - pC));
+      `,
+    )
+    .replace(
+      "#include <begin_vertex>",
+      /* glsl */ `
+      vec3 transformed = pC;
+      vHeight = pC.y;
+      `,
+    );
+
+  shader.fragmentShader = shader.fragmentShader
+    .replace(
+      "#include <common>",
+      /* glsl */ `
+      #include <common>
+      uniform vec3 uBottom, uMid, uTop;
+      varying float vHeight;
+      `,
+    )
+    .replace(
+      "#include <color_fragment>",
+      /* glsl */ `
+      #include <color_fragment>
+      {
+        float h = clamp(vHeight * 0.5 + 0.5, 0.0, 1.0);
+        vec3 g = mix(uBottom, uMid, smoothstep(0.08, 0.5, h));
+        g = mix(g, uTop, smoothstep(0.62, 1.0, h));
+        diffuseColor.rgb *= g;
+      }
+      `,
+    );
+};
+
+const geometry = new THREE.SphereGeometry(1, 320, 320);
+const sphere = new THREE.Mesh(geometry, material);
+scene.add(sphere);
+
+// ---------- state machine ----------
+const button = document.getElementById("toggle");
+function setState(name) {
+  target = name;
+  button.dataset.state = name;
+  button.innerHTML = name === "working"
+    ? "Rest<small>working</small>"
+    : "Start working<small>resting</small>";
+}
+button.addEventListener("click", () => setState(target === "working" ? "resting" : "working"));
+
+// ---------- animation ----------
+const clock = new THREE.Clock();
+let t = 0;
+const pole = new THREE.Vector3();
+const smooth = (x) => x * x * (3 - 2 * x);
+
+// In loop mode every angular rate is snapped to a whole number of cycles per
+// LOOP seconds (at least one, except spin, which may snap to zero), and phases
+// are computed from t rather than accumulated, so frame N of the next lap is
+// identical to frame N of this one. Live mode accumulates, so a state change
+// keeps its phase continuous.
+const TAU = Math.PI * 2;
+const snap = (rate, allowZero) => {
+  if (!LOOP) return rate;
+  const unit = TAU / LOOP;
+  const cycles = Math.round(rate / unit);
+  return unit * Math.max(allowZero ? 0 : 1, cycles);
+};
+const phases = { a: 0, b: 0, spin: 0 };
+
+function step(dt) {
+  // ease blend toward target, then lerp every motion parameter
+  const dir = target === "working" ? 1 : -1;
+  blend = Math.min(1, Math.max(0, blend + (dir * dt) / LOOK.transition));
+  const k = smooth(blend);
+  for (const key of KEYS) live[key] = STATES.resting[key] + (STATES.working[key] - STATES.resting[key]) * k;
+
+  t += dt * LOOK.speed;
+  const scaled = dt * LOOK.speed;
+
+  const drift = live.poleDrift;
+  pole.set(
+    Math.sin(t * snap(drift * 1.00)) * 0.9,
+    Math.cos(t * snap(drift * 0.73)) * 1.0,
+    Math.sin(t * snap(drift * 0.57) + 1.3) * 0.8,
+  ).normalize();
+  uniforms.uPole.value.copy(pole);
+
+  const breathe = smooth(0.5 + 0.5 * Math.sin(t * snap(live.pulse)));
+  uniforms.uAmp.value = live.ampMax * (0.25 + 0.75 * breathe);
+  uniforms.uFreq.value = live.freqMin + (live.freqMax - live.freqMin) * breathe;
+
+  if (LOOP) {
+    phases.a = t * snap(live.travel);
+    phases.b = t * snap(live.travelB);
+    phases.spin = t * snap(live.spin, true);
+  } else {
+    phases.a += scaled * live.travel;
+    phases.b += scaled * live.travelB;
+    phases.spin += scaled * live.spin;
+  }
+  uniforms.uPhase.value = phases.a;
+  uniforms.uAmpB.value = live.ampB;
+  uniforms.uFreqB.value = live.freqB;
+  uniforms.uPhaseB.value = phases.b;
+  sphere.rotation.y = phases.spin;
+}
+
+function frame() {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (!LOOK.paused) step(dt);
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+frame();
+
+// ---------- controls ----------
+if (BARE) { document.getElementById("hint").remove(); button.remove(); }
+const gui = new GUI({ title: "liquid sphere" });
+if (BARE) gui.hide();
+const fCol = gui.addFolder("palette");
+for (const k of ["bottom", "mid", "top"]) fCol.addColor(LOOK, k).onChange((v) => uniforms["u" + k[0].toUpperCase() + k.slice(1)].value.set(v));
+fCol.addColor(LOOK, "background").onChange((v) => { scene.background.set(v); document.body.style.background = v; });
+const fMat = gui.addFolder("material");
+fMat.add(LOOK, "roughness", 0, 1).onChange((v) => (material.roughness = v));
+fMat.add(LOOK, "clearcoat", 0, 1).onChange((v) => (material.clearcoat = v));
+fMat.add(LOOK, "clearcoatRoughness", 0, 1).onChange((v) => (material.clearcoatRoughness = v));
+fMat.add(LOOK, "envIntensity", 0, 2).onChange((v) => (material.envMapIntensity = v));
+fMat.add(LOOK, "exposure", 0.3, 2).onChange((v) => (renderer.toneMappingExposure = v));
+const ranges = { ampMax: [0, 0.12], freqMin: [1, 40], freqMax: [1, 60], travel: [0, 6], pulse: [0, 2], poleDrift: [0, 1], ampB: [0, 0.06], freqB: [1, 12], travelB: [0, 3], spin: [-0.5, 0.5] };
+for (const name of ["resting", "working"]) {
+  const f = gui.addFolder(name);
+  f.close();
+  for (const k of KEYS) f.add(STATES[name], k, ...ranges[k]);
+}
+const fScene = gui.addFolder("scene");
+fScene.add(LOOK, "transition", 0.2, 5);
+fScene.add(LOOK, "speed", 0, 3);
+fScene.add(LOOK, "paused");
+
+function savePng() {
+  renderer.render(scene, camera);
+  const a = document.createElement("a");
+  a.download = `liquid-sphere-${target}-${t.toFixed(2)}.png`;
+  a.href = renderer.domElement.toDataURL("image/png");
+  a.click();
+}
+addEventListener("keydown", (e) => {
+  if (e.key === " ") { LOOK.paused = !LOOK.paused; gui.controllersRecursive().forEach((c) => c.updateDisplay()); }
+  if (e.key === "w") setState(target === "working" ? "resting" : "working");
+  if (e.key === "s") savePng();
+  if (e.key === "g") gui.show(gui._hidden);
+});
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// expose for headless capture scripts
+window.__sphere = { LOOK, STATES, uniforms, step, setState, render: () => renderer.render(scene, camera), setTime(v) { t = v; }, setBlend(v) { blend = v; }, loop: LOOP };
+</script>
+</body>
+</html>

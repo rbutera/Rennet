@@ -64,8 +64,8 @@ describe("forge.config.cjs signing", () => {
     // real per-platform choice — on Windows it becomes live win32 icon coverage.
     const expected =
       process.platform === "win32"
-        ? /brand[\\/]exports[\\/]app-icons[\\/]windows[\\/]rennet-white-on-black$/
-        : /brand[\\/]exports[\\/]app-icons[\\/]macos[\\/]rennet-white-on-black$/;
+        ? /brand[\\/]exports[\\/]app-icons[\\/]windows[\\/]rennet-color$/
+        : /brand[\\/]exports[\\/]app-icons[\\/]macos[\\/]rennet-color$/;
     expect(packagerConfig.icon).toMatch(expected);
   });
 

@@ -3,7 +3,6 @@ import "@fontsource-variable/fraunces/wght.css";
 import "@fontsource-variable/geist/wght.css";
 import "@fontsource-variable/newsreader/wght.css";
 import logoWhite from "../../../../brand/exports/logo/svg/lockup-horizontal-white.svg?url";
-import markWhite from "../../../../brand/exports/logo/svg/mark-small-white.svg?url";
 import CategoryStatement from "../components/CategoryStatement.astro";
 import "../styles/global.css";
 
@@ -79,8 +78,8 @@ const lenses = [
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header shell">
       <a class="brand" href="#top" aria-label="Rennet home">
-        <img class="logo-light" src="/brand/rennet-lockup.svg" alt="Rennet" width="160" height="46" />
-        <img class="logo-dark" src={logoWhite} alt="Rennet" width="160" height="46" />
+        <img class="logo-light" src="/brand/rennet-lockup.svg" alt="Rennet" width="160" height="32" />
+        <img class="logo-dark" src={logoWhite} alt="Rennet" width="160" height="32" />
       </a>
       <nav aria-label="Primary navigation">
         <a href="#workflows">Workflows</a>
@@ -328,8 +327,7 @@ const lenses = [
 
       <section class="closing" data-scheme="dark">
         <div class="shell closing-inner">
-          <img class="closing-mark-light" src="/brand/rennet-mark-small.svg" alt="" width="72" height="54" />
-          <img class="closing-mark-dark" src={markWhite} alt="" width="72" height="54" />
+          <img class="closing-mark" src="/brand/rennet-mark.svg" alt="" width="72" height="72" />
           <p class="closing-theme">Not for avoiding the code.<br />For engineers accountable for it.</p>
           <h2>Make the next change digestible.</h2>
           <div class="hero-actions"><a class="button primary inverse" href={downloadUrl}>Download for macOS</a><a class="text-link inverse-link" href={githubUrl}>View on GitHub</a></div>
@@ -339,7 +337,7 @@ const lenses = [
     </main>
 
     <footer class="site-footer shell">
-      <a class="brand" href="#top" aria-label="Rennet home"><img class="logo-light" src="/brand/rennet-lockup.svg" alt="Rennet" width="136" height="40" /><img class="logo-dark" src={logoWhite} alt="Rennet" width="136" height="40" /></a>
+      <a class="brand" href="#top" aria-label="Rennet home"><img class="logo-light" src="/brand/rennet-lockup.svg" alt="Rennet" width="136" height="27" /><img class="logo-dark" src={logoWhite} alt="Rennet" width="136" height="27" /></a>
       <div class="footer-copy">
         <p>Rennet turns a body of code into pieces a person can digest, question, and answer for.</p>
         <p class="footer-meaning">Rennet is the enzyme that separates milk into curds and whey. It adds nothing; it separates what is already there.</p>
