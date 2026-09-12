@@ -4,6 +4,7 @@ Active changes describe accepted work that has not yet been promoted into `opens
 
 ## Active
 
+- `session-thread-briefing` — the session's T3 thread is created with Rennet's briefing, the app-tools MCP server and the council's `orchestrator-chat` routing, so the reviewer's conversation knows the review, reads its boards and stages asks.
 - `workspace-settings` — Settings → Projects → Worktrees becomes four settings the binding reads (location, layout, `workspace: share|own`) plus an inventory of the workspaces they produced; `own` works beside an existing checkout on a sibling branch.
 
 ## Lifecycle
