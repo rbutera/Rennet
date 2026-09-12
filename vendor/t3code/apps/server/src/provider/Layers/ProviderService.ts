@@ -782,8 +782,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           // caller bothers to carry the thread's briefing on the turn — can
           // read the thread's own instructions and servers back out, instead
           // of starting the resumed session bare.
-          instructions: input.instructions,
-          mcpServers: input.mcpServers,
+          ...(input.instructions !== undefined ? { instructions: input.instructions } : {}),
+          ...(input.mcpServers !== undefined ? { mcpServers: input.mcpServers } : {}),
         });
         yield* analytics.record("provider.session.started", {
           provider: sessionWithInstance.provider,
