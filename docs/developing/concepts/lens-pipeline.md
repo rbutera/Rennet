@@ -143,9 +143,12 @@ and calls board regeneration through this runtime.
    Markdown introduction, and a measure. The target owns the final measure: Design is
    `structured`; Sequence, Decisions, Flagged, and Noise are `reading`. The host constructs
    the landed-round report document with the `reading` measure.
-   The host, never the drafter, writes the board ops through
-   `whiteboard-client` (the sole op writer); drafters never call whiteboard
-   tools. The Flagged lens runs **review then compile**: two lane-less review seats
+   Every board write still lands through `whiteboard-client`, the sole op writer;
+   what a drafter never calls is the five whiteboard **protocol** tools
+   (`create`/`schema`/`apply`/`describe`/`events`), which stay host-only. A lens
+   seat writes its own board through the board **authoring** verbs, and those
+   calls reach `whiteboard-client` under the hood.
+   The Flagged lens runs **review then compile**: two lane-less review seats
    (Claude and Codex) read the change independently and each writes a findings file with
    its own file tools — no board, no board tools, no lane address. A third **compiler**
    seat reads both files and writes the whole Flagged board in one turn, attributing each
@@ -372,7 +375,7 @@ and calls board regeneration through this runtime.
    round-report leg, which supplies no evidence manifest and is still bound to the full
    board schema. `lint`, `validateDraft` and the pointer-only `renderRepairPrompt` are that
    caller's loop and nothing else's.
-4. **Freeze.** The validated structured draft becomes the lens board without a
+4. **Freeze.** The validated draft board becomes the lens board without a
    second model rewrite. Host-owned Design projections, the Flagged compiler's
    `origin`/`agreement` expansion, round composition, delta stamps, and metadata
    persistence remain deterministic.
@@ -541,10 +544,11 @@ is scrubbed the same way before one fresh classification turn.
 
 ## Writing a board with verbs
 
-The pipeline above parses one returned document per seat. The pieces of a second
-way to write a board are built and not yet connected: `lens-board-tools` group 1
-landed the surface and the writer, and groups 2 and 3 wire them to the daemon and
-the seats.
+Writing a board through tools is the live flow: every lens seat authors its board
+by calling verbs on the daemon's per-seat loopback board MCP server, and returns
+no document. The only document parse left is the legacy round-report leg
+(*Validate*, step 3). This section covers the verb surface and the writer behind
+it.
 
 A seat's tool set is **derived**, never listed per lens. `buildBoardTools` in
 `packages/protocol/src/board/tool-schemas.ts` walks the shared authoring kinds plus

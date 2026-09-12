@@ -61,9 +61,11 @@ Rennet-shaped.
 
 Rennet declares **one host schema**, at board creation, covering every board. It
 lives at `packages/protocol/src/board/schema.ts` — not in `@wboard/*` — and it is
-the reason the protocol needs no review vocabulary of its own. A drafting seat
-meets the same schema once, as its session's structured-output format; it is
-never sent as prompt text.
+the reason the protocol needs no review vocabulary of its own. The schema is
+declared once, host-side, at board creation. A drafting seat never meets it as an
+output format: the seat authors elements through the board tool surface, whose
+per-verb inputs are derived from that same schema. The schema is never sent as
+prompt text, and no output-schema contract binds the seat's turn.
 
 The schema declares a closed palette of thirteen kinds: the typed lens outputs
 (`finding`, `decision`, `requirement`, `noise_verdict`, `order_step`,
@@ -109,7 +111,7 @@ is an `element`-typed attribute (there is no protocol-level relation table),
 `code_ref` cites the immutable patchset so code is never copied into a block, and
 read-state and attention stay UI-only.
 
-## Who calls the five tools
+## Who writes a board
 
 `packages/adapters/src/whiteboard-client.ts` exposes the five protocol tools —
 `create`, `schema`, `apply`, `describe`, `events` — as a typed client over an
@@ -117,10 +119,14 @@ injected `BoardService`. **It is the only writer of board ops in Rennet.** Reads
 may go anywhere; writes come through here, and a test asserts that no other file
 calls `BoardService.apply` or constructs board ops.
 
-The tools serve the host's composing turns and the human surfaces. Lens drafters do not call
-them: a drafter returns schema-validated structured output and the host writes it
-to the draft board as ops on the drafter's behalf, because agentic tool-calling
-per element is slow and expensive. See [the lens pipeline](../concepts/lens-pipeline.md).
+Those five protocol tools stay host- and human-only: composing turns and the
+human surfaces call them, and lens seats never do. A lens seat writes its own
+board through the board **authoring** verbs — `add`, `update`, `set_document`,
+`remove_element`, `settle_absent`, `write_board`, and `finish` — which the daemon
+serves on a per-seat loopback board MCP server, one `BoardWriter` per seat. Those
+verbs route through `whiteboard-client` under the hood, so every write still lands
+as a board op through the one writer above. See
+[the lens pipeline](../concepts/lens-pipeline.md).
 
 `apply` takes a flat ordered ops list, all-or-nothing, attributed to an actor.
 Ops arriving without an `op_id` get one minted in the client — once, before the
@@ -167,6 +173,9 @@ reading as terminal by default.
 ```mermaid
 flowchart LR
   o[Composing turn or human surface] --> wc[whiteboard-client]
+  seat[Lens seat] --> mcp[Per-seat board MCP server]
+  mcp --> bw[BoardWriter]
+  bw --> wc
   wc --> svc["BoardService (@wboard/server)"]
   svc --> store[FileBoardStore]
   store --> log[".rennet/boards/&lt;id&gt;/log.jsonl"]

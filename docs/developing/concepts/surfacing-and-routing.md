@@ -3,9 +3,14 @@ title: Surfacing and routing
 description: How Rennet constrains model output, validates review documents, and assigns model jobs.
 ---
 
-Models do not write directly into a Rennet review surface. A review job supplies a
-versioned instruction and offered anchors, a harness returns structured output,
-and deterministic code decides what the product may use.
+Rennet surfaces model output on two routes. On the validated route a job supplies
+a versioned instruction and offered anchors, the harness returns structured
+output, and deterministic code decides what the product may use — the round-report
+classifier and the RSP noise runner still work this way. A lens board seat takes
+the other route: it writes its board directly through authoring tools on the
+daemon's loopback board server, carrying no output schema and returning no
+document, so the tool surface bounds each write instead of a validator ruling on a
+finished one.
 
 ## The path from job to review surface
 
@@ -14,11 +19,13 @@ flowchart LR
   job[Named review job] --> council[Model Council assignment]
   council --> prompt[Instruction and review context]
   prompt --> harness[Harness turn]
-  harness --> document[RSP document]
+  harness -->|RSP job| document[RSP document]
   document --> validate[Deterministic validation]
   validate -->|admitted| surface[Review surface]
   validate -->|rejected| report[Validation report]
   report --> harness
+  harness -->|lens board seat| tools[Board authoring tools]
+  tools --> board[Board surface]
 ```
 
 Three modules own distinct decisions:

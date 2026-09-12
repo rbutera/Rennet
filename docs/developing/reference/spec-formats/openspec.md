@@ -169,5 +169,3 @@ The single highest-leverage move for a lens: consume `openspec show --json` / `o
 - [Fission-AI/OpenSpec README](https://github.com/Fission-AI/OpenSpec/blob/main/README.md) — workflow, slash commands, directory demo.
 - [OpenSpec CLI reference](https://github.com/Fission-AI/OpenSpec/blob/main/docs/cli.md) — command and flag list.
 - [Writing good specs](https://github.com/Fission-AI/OpenSpec/blob/main/docs/writing-specs.md) — requirement/scenario grammar and delta headers.
-</content>
-</invoke>
