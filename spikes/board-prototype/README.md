@@ -35,8 +35,9 @@ deep-links. Read it before adding demo content; the scenario registry lives in
   card, reference chip, Source, Rennet host). The murder-board map issues
   (#452 and children) are the design authority — NOT the shipped lens code
   in `packages/app-ui`, which the redesign replaces.
-- Screenshots worth keeping go to `wireframes/` at the repo root
-  (`prototype-shell-*.png`, `lens-*.png`, `reference-v0-shell.png`).
+- The root `wireframes/` folder that held this spike's screenshots
+  (`prototype-shell-*.png`, `lens-*.png`, `reference-v0-shell.png`) was removed;
+  recover them from history at `4dffa4ed` if a session needs them.
 
 ## Run it
 

@@ -4,13 +4,14 @@ Rennet's shared packages follow these enforced dependency boundaries. Each arrow
 
 ```text
 protocol     -> (no Rennet package)
-instructions -> protocol
-core         -> protocol, instructions
-adapters     -> protocol, instructions, core
-server       -> protocol, instructions, core, adapters
+prompts      -> protocol
+core         -> protocol, prompts
+adapters     -> protocol, prompts, core
+server       -> protocol, prompts, core, adapters
 client       -> protocol
 ui           -> protocol, theme
 app-ui       -> protocol, theme, ui
+t3-chat      -> protocol
 ```
 
 `protocol` is the base layer: its Zod schemas are the single source of truth for the wire types, and the TypeScript types are `z.infer` exports from `protocol`. `ui` is the presentation kit and imports only `protocol` and `theme`; `app-ui`

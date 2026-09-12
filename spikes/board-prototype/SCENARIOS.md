@@ -340,7 +340,7 @@ lands on the honest empty New chat state and never claims a scenario.
    of steps 2–4 and parallelizable any time after step 1.
 6. **Coherence pass.** Smart-list → scenario mapping, dead fixture data
    removed from `conversation-data.ts`/`smart-list-data.ts`, README pointer to
-   this file, screenshots to `wireframes/`, ruling-log append on #458.
+   this file, ruling-log append on #458.
 
 Per the working agreement: features-only, component tree restated before the
 structural steps (1–3), minimal styling, every new label harness-derivable,
