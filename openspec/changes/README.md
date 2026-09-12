@@ -4,6 +4,7 @@ Active changes describe accepted work that has not yet been promoted into `opens
 
 ## Active
 
+- `headless-review-cli`: `rennet review <base>..<head>` and `rennet review --pr <n>`: a terminal client of the daemon's own session path that prints the lanes and board writes as they happen and writes one JSON document to `<data dir>/reviews/<reviewId>.json`; `session.mint` gains an optional `base`.
 - `workspace-settings` — Settings → Projects → Worktrees becomes four settings the binding reads (location, layout, `workspace: share|own`) plus an inventory of the workspaces they produced; `own` works beside an existing checkout on a sibling branch.
 
 ## Lifecycle
