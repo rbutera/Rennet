@@ -6,9 +6,9 @@
 
 ## 2. The lane waits, bounded, and names the file to Design
 
-- [ ] 2.1 `runRelatedContextRetrieval` resolves with `readonly DossierItem[] | undefined` — the saved items, or the stored dossier on the early return — and `create-server.ts` holds the promise per review id, cleared on archive.
-- [ ] 2.2 Lens pipeline deps gain `relatedContext?: () => Promise<readonly DossierItem[] | undefined>` and `RELATED_CONTEXT_WAIT_MS = 120_000` is declared beside the other lane constants. On the Design lane, when `designSources` is undefined and the assembler produced no board, await it against the ceiling; publish "waiting for related issues" as the lane's latest event while waiting; write `related-context.md` (task 1.1) from the result, or the refs file (task 1.2) past the ceiling, into `designOnlyFiles`.
-- [ ] 2.3 Tests in `lens-pipeline.test.ts`: the file is in the Design seat's context and in no other seat's; the host-located path and the assembler path never call `relatedContext`; a `relatedContext` that never resolves opens the seat after the ceiling with the refs file (fake timers); a resolved dossier opens the seat with the items file.
+- [x] 2.1 `runRelatedContextRetrieval` resolves with `readonly DossierItem[] | undefined` — the saved items, or the stored dossier on the early return — and `create-server.ts` holds the promise per review id, cleared on archive.
+- [x] 2.2 Lens pipeline deps gain `relatedContext?: () => Promise<readonly DossierItem[] | undefined>` and `RELATED_CONTEXT_WAIT_MS = 120_000` is declared beside the other lane constants. On the Design lane, when `designSources` is undefined and the assembler produced no board, await it against the ceiling; publish "waiting for related issues" as the lane's latest event while waiting; write `related-context.md` (task 1.1) from the result, or the refs file (task 1.2) past the ceiling, into `designOnlyFiles`.
+- [x] 2.3 Tests in `lens-pipeline.test.ts`: the file is in the Design seat's context and in no other seat's; the host-located path and the assembler path never call `relatedContext`; a `relatedContext` that never resolves opens the seat after the ceiling with the refs file (fake timers); a resolved dossier opens the seat with the items file.
 
 ## 3. The prompt
 
@@ -19,6 +19,8 @@
 
 ## 4. Drive and fixtures
 
+Not run in the landing PR: each drive spends a live Design seat on the user's subscription, and Rai runs those by hand. The unit, pipeline and lint proofs in sections 1–3 are the landing gate; these three are the end-to-end proof and stay open until driven.
+
 - [ ] 4.1 Add a drive fixture beside `drive/no-spec`: a branch with no specification, a PR body that states a purpose and one decision, one added `docs/` page, and a `Closes #N` ref to an issue with acceptance criteria. Drive the real app: the Design tab shows the overview with `Format: Overview`, the three sections, the decision with its PR source, and one requirement per acceptance criterion with the issue id on its row.
 - [ ] 4.2 Drive `drive/no-spec` unchanged (no PR, no docs, no refs): the lane still settles `no-spec` and the tab reads "No spec found for this branch."
 - [ ] 4.3 Record both drives' Design turn timing and usage from the collector, and how long related-context retrieval took to settle on each, in the sidecar concept page's drive table.
@@ -28,4 +30,4 @@
 - [x] 5.1 `docs/developing/concepts/lens-pipeline.md`, "The Design lens": the overview arm, the file, the bounded wait, the residual absence.
 - [x] 5.2 `docs/using/guides/getting-started.md`, the Design paragraph; `docs/using/concepts/common-questions.md` and `docs/using/index.md` where they say what Design reads.
 - [x] 5.3 `docs/developing/concepts/t3code-sidecar.md`: `related-context.md` in the seat context file list.
-- [ ] 5.4 `pnpm check` green, and the drives in section 4 as the positive control.
+- [x] 5.4 `pnpm check` green, and the drives in section 4 as the positive control.

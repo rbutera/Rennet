@@ -79,7 +79,7 @@ Alternatives: a new `overview` element kind or document field. Rejected: the sch
 
 ### D5. The linter reads context files as sources
 
-The Design lint rules that verify verbatim quoting and source order resolve a `source.path` against the bound root. `pr.md` and `related-context.md` live under `.rennet/context/<sessionId>/` in that root, so they resolve like any file; the rules need no new arm. Task 3.3 proves it on a fixture and, if a rule turns out to read only paths the patchset touches, widens that rule to the context directory rather than exempting the overview.
+The Design lint rules that check a `source.path` — `design-source-known`, `requirement-source-known` and `design-decision-stated` — are gated on a discovered artifact bundle (`ctx.artifacts`) that production's lint context never supplies, so on the model-seat path no rule reads a source path at all, and `pr.md` and `related-context.md` under `.rennet/context/<sessionId>/` pass untouched; the rules need no new arm. Task 3.3 proves it on a fixture whose positive control is the same board under a located-artifact context, where both source rules fire.
 
 ### D6. What stays exactly as it is
 
@@ -89,7 +89,7 @@ The host-located and assembler paths never wait and never draft an overview. The
 
 - **A thin overview.** A PR body of one line and no issues yields a board of one section. That is what the author wrote, stated as such; it is more than "No spec found", and the seat is told not to pad it. Mitigation: the prompt's existing rule against inventing requirements and rationale applies unchanged.
 - **Tracker text as requirements.** An issue's acceptance criteria are the reporter's words, not a spec's normative text. They render as `requirement` because they are the nearest thing the branch has to one and the disposition anchors are useful; the `source` label makes their origin visible on the row.
-- **The wait.** Up to 120 s before the Design seat opens on a branch with no located spec, and only when retrieval has not settled by then; the ordinary case is the retrieval's own duration. The preparation surface already shows the lane's latest event; the lane publishes "waiting for related issues" as that event so the delay is visible, not silent.
+- **The wait.** Up to 120 s before the Design seat opens on a branch with no located spec, and only when retrieval has not settled by then; the ordinary case is the retrieval's own duration. Noise starts on the four core settlements, so the same ceiling bounds its start. The preparation surface already shows the lane's latest event; the lane publishes "waiting for related issues" as that event so the delay is visible, not silent.
 - **Token growth.** Stated in the proposal's Impact. The measure is the collector, as for every seat.
 
 ## Migration Plan

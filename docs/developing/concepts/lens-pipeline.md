@@ -1165,7 +1165,8 @@ light-tier council turn. The ceiling is 120 seconds; past it the file carries th
 deterministically extracted refs with their URLs and a line saying retrieval had not
 finished, so the seat can fetch a GitHub ref itself. While the lane waits its latest
 event reads "waiting for related issues", so the delay is visible on the preparation
-surface rather than silent. The host-located and assembler paths never wait.
+surface rather than silent. Noise starts on the four core settlements, so the same
+ceiling bounds its start. The host-located and assembler paths never wait.
 
 The residual absence is the branch that has none of the three — no pull request paper,
 no documentation change, no related issue. Then the seat returns
@@ -1175,8 +1176,8 @@ an ordinary branch. Design keeps its place on the rail and its board says "No sp
 for this branch." — a stated result rather than a gap, and rather than an empty board,
 which would be a lie about what the repository holds. The tab stays because a lens that
 vanished as it settled would move the reviewer's selection out from under them. Design's
-older `no-material` absence stays readable for generations recorded before this change;
-nothing settles it now.
+older `no-material` absence stays readable for generations recorded before Rennet
+stopped settling it; nothing settles it now.
 
 ### The board it renders
 
