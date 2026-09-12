@@ -305,9 +305,38 @@ A tool result is billed like a prompt and re-read on every remaining round trip 
 the turn, so every result that carries a collection declares a cap, an honest marker
 naming how many were elided, and a cursor to ask for the next page:
 `board.read` at 200 elements, `session.list` at 50 sessions, `session.transcript` at
-100 rows, and `patchset.readEvidence` at 16 kB of patch text. The ceilings are
-executable — `packages/server/src/board/board-tool-surface.measure.test.ts` measures
-each one and fails when a per-call result crosses it.
+100 rows, and `patchset.readEvidence` at 16 kB of patch text. These four caps run
+first, when they apply.
+
+Behind them, every one of the 29 exposed commands answers to one further, universal
+ceiling: the COMPLETE serialised result of any `app_*` call — paged or not — is
+bounded to `APP_TOOL_RESULT_MAX_BYTES` (8 kB). Under it, a result rides unchanged;
+over it, the full result (its page and marker included, when it has them) is
+written to a file and the reply becomes an honest envelope naming what happened:
+
+```json
+{ "truncated": true, "bytes": 79190, "path": "…/tool-results/app_ask_read-….json",
+  "head": "…", "note": "Result exceeded the inline ceiling; read the file at `path` with your own tools." }
+```
+
+The file lands under the calling session's own context directory
+(`.rennet/context/<sessionId>/tool-results/`) when the thread's session and bound
+workspace root both resolve — the same directory a turn's prompt already names, so
+it is swept the same way when the session archives. When neither resolves yet (a
+call before any session is bound, or a bare test harness), the file falls back to a
+plain `tool-results/` directory under the daemon's state dir, swept by age (24
+hours) at daemon start instead, since it carries no session lifecycle to piggyback
+on.
+
+The per-command caps exist because paging a large collection into several
+readable pages is more useful to a model than one opaque spill file would be; the
+universal ceiling exists because a per-command cap is easy to add to four commands
+and easy to forget on the other twenty-five — `ask.read` on a 400-ask projection
+reproduced at 144,611 B with no cap of its own before this ceiling existed. Both
+are executable — `packages/server/src/board/board-tool-surface.measure.test.ts`
+iterates every exposed command against large fixtures, asserts each per-call result
+is at or under the universal ceiling, and asserts the spilled file (when a result
+spills) holds the complete, untruncated result.
 
 ## Changing the inventory
 
@@ -316,5 +345,7 @@ Edit `MENU_EXPOSED` or `AGENT_EXPOSED` in
 `AGENT_INVENTORY` in `commands.test.ts`, and add the row and its rationale here.
 Three protocol tests hold the boundary: menu exposure equals the menu inventory
 exactly, agent exposure equals the agent inventory exactly, and every menu-exposed
-row's schema accepts an empty input. A new agent row that carries a collection in its
-result also earns a cap and a row in the measurement test above.
+row's schema accepts an empty input. A new agent row that carries a collection in
+its result and would benefit from its own page-and-cursor shape earns one, plus a
+row in the measurement test above — but every row, capped or not, already answers to
+the universal ceiling with no further wiring needed.
