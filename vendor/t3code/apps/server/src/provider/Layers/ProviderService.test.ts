@@ -1144,6 +1144,69 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect(
+    "recovers a briefed thread's instructions and servers when a non-turn path (feedback upload) triggers the recovery",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const threadId = asThreadId("thread-feedback-recover-briefed");
+        const instructions = "You are the orchestrator of a Rennet review of feat/x.";
+        const mcpServers = {
+          rennet_app: {
+            url: "http://127.0.0.1:7391/app/threads/thread-feedback-recover-briefed",
+            bearerTokenEnvVar: "RENNET_APP_BEARER",
+          },
+        };
+
+        yield* provider.startSession(threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId,
+          cwd: "/tmp/feedback-project-briefed",
+          runtimeMode: "full-access",
+          instructions,
+          mcpServers,
+        });
+
+        // The runtime is cleared (a daemon restart, a dead child) and the
+        // NEXT thing that touches the thread is `uploadFeedback` rather than
+        // `sendTurn` — a recovery path that never carries the thread's
+        // briefing on its own input. `resolveRoutableSession`/
+        // `recoverSessionForThread` are shared by every recovery path, so the
+        // briefing has to come from the persisted thread record, not from
+        // whatever this particular caller happened to pass in.
+        yield* routing.codex.stopSession(threadId);
+        routing.codex.startSession.mockClear();
+        routing.codex.uploadFeedback.mockClear();
+
+        yield* provider.uploadFeedback({ threadId });
+
+        assert.strictEqual(routing.codex.startSession.mock.calls.length, 1);
+        const resumedStartInput = routing.codex.startSession.mock.calls[0]?.[0];
+        assert.equal(
+          (resumedStartInput as { instructions?: unknown } | undefined)?.instructions,
+          instructions,
+        );
+        assert.deepEqual(
+          (resumedStartInput as { mcpServers?: unknown } | undefined)?.mcpServers,
+          mcpServers,
+        );
+
+        // And the session that came back from that recovery keeps serving
+        // turns on the briefing: a later turn that supplies neither still
+        // reaches the Codex adapter without the session ever having been
+        // restarted bare.
+        routing.codex.sendTurn.mockClear();
+        yield* provider.sendTurn({
+          threadId,
+          input: "what branch am I reviewing?",
+          attachments: [],
+        });
+        assert.strictEqual(routing.codex.startSession.mock.calls.length, 1);
+        assert.strictEqual(routing.codex.sendTurn.mock.calls.length, 1);
+      }),
+  );
+
   it.effect("rejects feedback for providers that do not support uploads", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
