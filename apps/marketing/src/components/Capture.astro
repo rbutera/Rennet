@@ -1,0 +1,23 @@
+---
+// One product capture in a window frame. Every capture under public/product/ is a
+// 3072×2048 pair (<name>-light.png, <name>-dark.png) of the shipped app reviewing the
+// atlas fixture; the site scheme picks one through .shot-light/.shot-dark in global.css,
+// the same mechanism the header lockup uses. The pair is lazy so the fourteen files on
+// the page are fetched only as a reader scrolls to them, and only the scheme's file is
+// ever fetched, since a display:none image is never laid out.
+interface Props {
+  name: string;
+  alt: string;
+  label: string;
+  caption?: string;
+}
+
+const { name, alt, label, caption = "A fixture branch reviewed in the shipped app" } = Astro.props;
+---
+
+<figure class="product-frame">
+  <div class="window-bar"><span class="traffic"><i></i><i></i><i></i></span><span>atlas · feat/rate-limiting</span><span>{label}</span></div>
+  <img class="shot-light" src={`/product/${name}-light.png`} alt={alt} width="1536" height="1024" loading="lazy" decoding="async" />
+  <img class="shot-dark" src={`/product/${name}-dark.png`} alt={`${alt} Shown in the dark theme.`} width="1536" height="1024" loading="lazy" decoding="async" />
+  <figcaption>{caption}</figcaption>
+</figure>
