@@ -11,6 +11,7 @@
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Effect from "effect/Effect";
+import * as Scope from "effect/Scope";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -148,30 +149,69 @@ export interface RunMigrationsOptions {
  * idempotent, so this is safe on every start and on a partially migrated
  * database (a table that does not exist yet is left alone; the next full run
  * finds it).
+ *
+ * The PRAGMA check and the two ALTERs run inside a single write transaction
+ * that is opened with `BEGIN IMMEDIATE` (rather than left as three
+ * independent statements, or wrapped in the plain `BEGIN` `sql.withTransaction`
+ * otherwise uses) so the CHECK and the WRITE can't be split across two
+ * connections: `runMigrations` runs on every server start, and the CLI and
+ * the server start it from separate processes against the same WAL database.
+ * A plain `BEGIN` (or no transaction at all) only takes SQLite's write lock
+ * lazily, on the first write, so two connections can both run the PRAGMA
+ * read before either commits, both see the column missing, and the second
+ * one's `ALTER TABLE ADD COLUMN` then fails with `duplicate column name`
+ * against the column the first one just added — aborting that connection's
+ * startup outright, since the failure isn't the idempotent-guard case this
+ * function otherwise handles. `BEGIN IMMEDIATE` takes the write lock up
+ * front instead of lazily, so a second connection's own `BEGIN IMMEDIATE`
+ * blocks (the server already sets `PRAGMA busy_timeout`, so it waits rather
+ * than failing with `SQLITE_BUSY`) until the first commits, then re-reads
+ * the columns fresh and finds them already there.
  */
-const applyForkColumnAdditions = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  const columns = yield* sql<{ readonly name: string }>`
-    PRAGMA table_info(projection_threads)
-  `;
-  // Zero rows means the table is not there yet (a partially migrated database
-  // in a test), which is not this step's business: the next full run finds it.
-  if (columns.length === 0) {
-    return;
-  }
-  if (!columns.some((column) => column.name === "instructions")) {
-    yield* sql`
-      ALTER TABLE projection_threads
-      ADD COLUMN instructions TEXT
-    `;
-  }
-  if (!columns.some((column) => column.name === "mcp_servers_json")) {
-    yield* sql`
-      ALTER TABLE projection_threads
-      ADD COLUMN mcp_servers_json TEXT
-    `;
-  }
-});
+const applyForkColumnAdditions = SqlClient.SqlClient.pipe(
+  Effect.flatMap((sql) => {
+    const withImmediateTransaction = SqlClient.makeWithTransaction({
+      transactionService: sql.transactionService,
+      spanAttributes: [],
+      acquireConnection: Effect.flatMap(Scope.make(), (scope) =>
+        Effect.map(Scope.provide(sql.reserve, scope), (conn) => [scope, conn] as const),
+      ),
+      begin: (conn) => conn.executeUnprepared("BEGIN IMMEDIATE", [], undefined),
+      savepoint: (conn, id) =>
+        conn.executeUnprepared(`SAVEPOINT effect_sql_${id}`, [], undefined),
+      commit: (conn) => conn.executeUnprepared("COMMIT", [], undefined),
+      rollback: (conn) => conn.executeUnprepared("ROLLBACK", [], undefined),
+      rollbackSavepoint: (conn, id) =>
+        conn.executeUnprepared(`ROLLBACK TO SAVEPOINT effect_sql_${id}`, [], undefined),
+    });
+
+    return withImmediateTransaction(
+      Effect.gen(function* () {
+        const columns = yield* sql<{ readonly name: string }>`
+          PRAGMA table_info(projection_threads)
+        `;
+        // Zero rows means the table is not there yet (a partially migrated
+        // database in a test), which is not this step's business: the next
+        // full run finds it.
+        if (columns.length === 0) {
+          return;
+        }
+        if (!columns.some((column) => column.name === "instructions")) {
+          yield* sql`
+            ALTER TABLE projection_threads
+            ADD COLUMN instructions TEXT
+          `;
+        }
+        if (!columns.some((column) => column.name === "mcp_servers_json")) {
+          yield* sql`
+            ALTER TABLE projection_threads
+            ADD COLUMN mcp_servers_json TEXT
+          `;
+        }
+      }),
+    );
+  }),
+);
 
 /**
  * Run all pending migrations.
