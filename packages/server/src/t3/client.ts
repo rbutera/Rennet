@@ -73,6 +73,27 @@ export interface CreateThreadInput {
    * gets none.
    */
   readonly branch?: string;
+  /**
+   * A briefing appended to the provider's own system prompt for every turn on this thread,
+   * whoever starts it — the reviewer typing in the composer included. It is fixed at create,
+   * exactly like the worktree: a provider session is built on the thread's FIRST turn and a
+   * turn that asks for nothing rides whatever the session holds, so a per-turn field would
+   * brief only the turns Rennet authors. Claude takes it as `systemPrompt.append`, Codex as
+   * a trailing block on its developer instructions.
+   *
+   * It is a PREFIX, re-read on every round trip of every turn for the life of the thread.
+   * Bound it at its call site and keep it a map: names, paths and tools, never content.
+   */
+  readonly instructions?: string;
+  /**
+   * MCP servers every turn on this thread gets, on the same reasoning. They are the session's
+   * base set; a turn may still bring its own (a seat's board server), and the adapter compares
+   * a later turn against the union. Same shape and same guarantees as `StartTurnInput.mcpServers`:
+   * the field names the environment variable holding the credential and never the credential.
+   */
+  readonly mcpServers?: Readonly<
+    Record<string, { readonly url: string; readonly bearerTokenEnvVar?: string }>
+  >;
 }
 
 export interface StartTurnInput {
@@ -379,6 +400,8 @@ export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
         // so an absent binding still means the project root, exactly as before.
         branch: input.branch ?? null,
         worktreePath: input.worktreePath ?? null,
+        ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
+        ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
       });
       return threadId;
     },

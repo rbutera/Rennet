@@ -36,7 +36,7 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
 - [x] 1.4 `Layers/CodexAdapter.ts` + `provider/CodexDeveloperInstructions.ts`: the thread's
   instructions are appended after T3's own blocks. Test on the scripted app-server: the
   developer instructions carry the append. Ledger rows.
-- [ ] 1.5 `packages/server/src/t3/client.ts`: `CreateThreadInput` gains `instructions?` and
+- [x] 1.5 `packages/server/src/t3/client.ts`: `CreateThreadInput` gains `instructions?` and
   `mcpServers?`; `createThread` passes both. Boot contract probe unchanged (no new method).
   Cluster gate green. Commit.
 
