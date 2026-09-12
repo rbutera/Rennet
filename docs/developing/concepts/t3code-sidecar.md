@@ -744,8 +744,21 @@ as its author, and the reviewer sends or unstages it like any other.
 
 **The model comes from the council.** The bind resolves the `orchestrator-chat` job the
 same way a board seat resolves its own, and passes the resulting selection to
-`thread.create`. The sidecar's `DEFAULT_MODEL` is the fallback for the case where no
-installed provider answers that job, and the daemon log says when it was used.
+`thread.create`. That job is the one the first-run welcome's orchestrator choice writes, as
+the Orchestrator review role's Dual Harness override — see
+[Model Council](./model-council.md#review-roles-in-settings) — so a host with both harnesses
+runs the conversation on the harness the reader picked. The sidecar's `DEFAULT_MODEL` is
+the fallback for the case where no installed provider answers that job, and the daemon log
+says when it was used.
+
+**The bind mints the thread id.** T3 mints thread ids client-side, on the create command
+rather than in its reply, and the app-tools url names the thread in its path
+(`/threads/<threadId>`). So `bindReviewThread` mints the id, builds the address from it, and
+hands both to one `thread.create`; a create that minted its own id would give the thread an
+address pointing at a different conversation. An Explain sent to this thread carries an
+`Anchor:` line above its `Code reference:` naming the board, the element, the path and the
+lines, because a `CodeRef` carries none of the first two and the briefing tells the thread
+to read that line.
 
 ## The app-tools server
 
