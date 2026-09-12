@@ -149,7 +149,7 @@ a refused grant to stop that runner and expose degraded output.
 
 ## Review roles in Settings
 
-Model Mappings offers two review roles whose overrides reach production seats.
+Model Mappings offers three review roles whose overrides reach production seats.
 The settings catalogue selects these existing council jobs without changing
 their assignment tables.
 
@@ -157,21 +157,25 @@ their assignment tables.
 |---|---|
 | Lens Drafters | `lens-draft` |
 | Flagged Second Seat | `lens-draft-flagged` |
+| Orchestrator | `orchestrator-chat` |
 
 `REVIEW_ROLE_CATALOGUE` in `packages/core/src/model-council-roles.ts` is the
 source of truth for that list. Confirmation, Adjudication and Post-Process have
-no production model work, so they offer no controls. The Orchestrator role has
-no control either: `orchestrator-chat` routes the session thread from the
-availability tables, and the welcome's orchestrator choice reaches it by
-enabling that harness on the host rather than by writing a role override. Legacy
-overrides for those jobs remain readable in saved settings but do not affect
-dispatch. A registered council job alone does not make a setting active.
+no production model work, so they offer no controls. Legacy overrides for those
+jobs remain readable in saved settings but do not affect dispatch. A registered
+council job alone does not make a setting active.
+
+The Orchestrator row is what the first-run welcome's orchestrator choice writes:
+the welcome reads that row's single-provider cell for the harness the reader
+picked and stores it as the **Dual Harness** override, so a host with both
+harnesses runs the review conversation on the one they chose. It routes the chat
+thread and nothing else — the lens seats resolve from their own rows.
 
 Settings → Environments → *(host card)* → **Edit Mappings** resolves every role in
 all three availability scenarios and shows the result in two columns: **Dual
 Harness**, and a **Single Harness** column that resolves to whichever provider is
 enabled on that host. The read is
-**honest-present**: the tables are static, so the two roles are always there with
+**honest-present**: the tables are static, so the roles are always there with
 real values, even on an install that has never been configured. A role that does
 not run in a scenario resolves to a null cell and renders an em dash — the Flagged
 Second Seat is the case that matters, since it exists only when both providers are

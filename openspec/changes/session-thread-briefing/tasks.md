@@ -99,6 +99,16 @@ grep -n "board.read" packages/protocol/src/commands/index.ts     # present; NOT 
   renderer is deterministic over equal inputs, not that production hands it equal inputs.
 - [x] 4.3 `packages/app-ui/src/review/anchored-ask.tsx`: `Code reference:` is preceded by one
   labelled line (board, lens, path, lines) from the `CodeRef`; bounds unchanged; test updated.
+- [x] 4.4 (added, 2026-09-12) **The welcome's orchestrator choice must be real.**
+  `first-run-welcome.tsx` has always called `setRole({ roleId: "orchestrator", … })` against a
+  `REVIEW_ROLE_CATALOGUE` with no such row, so `reviewRoleJobId` answered `undefined`, the
+  assignment it reads off `settings.reviewRoles` was never there, and the write never
+  happened — while the `both` table routed `orchestrator-chat` to Claude whatever the reader
+  clicked, under copy saying "Codex will orchestrate reviews". Fixed through the council's
+  EXISTING role seam (Decision 5, no second setting): the `orchestrator` role joins the
+  catalogue over `orchestrator-chat`, which makes the welcome's write live and reaches
+  `resolveAssignment` through `taskOverridesFor`. Copy made true; `model-council.md`,
+  `settings-and-setup.md`, `CONTEXT.md` and `getting-started.md` say what is now the case.
   Cluster gate green. Commit.
 
 ## 5. Docs and glossary (definition of done)

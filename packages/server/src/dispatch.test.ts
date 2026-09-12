@@ -3939,7 +3939,7 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
     // the active defaults rather than a blank, every cell `default`.
     const roles = (view as unknown as { reviewRoles: ReviewRoleMapping[] }).reviewRoles;
     expect(roles).toEqual(reviewRoleMappings());
-    expect(roles.map((role) => role.id)).toEqual(["lens-workers", "second-seat"]);
+    expect(roles.map((role) => role.id)).toEqual(["lens-workers", "second-seat", "orchestrator"]);
     // The Flagged Second Seat does not run single-provider: an honest null, not a guess.
     const secondSeat = roles.find((role) => role.id === "second-seat");
     expect(secondSeat?.claudeOnly.value).toBeNull();
