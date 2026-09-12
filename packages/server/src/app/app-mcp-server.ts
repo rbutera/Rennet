@@ -563,12 +563,29 @@ function toolResultOf(
 }
 
 /**
+ * The bytes actually on the wire for one `tools/call` reply: `{jsonrpc:"2.0", id, result}` —
+ * the EXACT shape `handleMessage`'s own `reply()` builds — never the bare `result` object
+ * alone (Codex, round 4). The `jsonrpc`/`id`/`result` keys and the request's own `id` are
+ * overhead this function's earlier version never counted, and `id` is the caller's to pick:
+ * a client that sends a large numeric id (this file's own probes used `9999999`) pushes the
+ * REAL wire body a further 20-34 bytes past what a bare-`result` measurement saw, which is
+ * exactly how a ceiling that measured only `{content, isError?}` still let the complete HTTP
+ * body land at 8,212-8,226 B against an 8,192 B budget. Measuring the reply shape itself,
+ * every time, is what keeps this function and `reply()` from drifting apart again.
+ */
+function wireBytes(requestId: unknown, result: unknown): number {
+  return utf8(JSON.stringify({ jsonrpc: "2.0", id: requestId, result }));
+}
+
+/**
  * The universal ceiling: whatever `shapeAppToolResult` (or any other per-command shaping,
  * or a dispatch refusal) produced, this is the LAST word on whether it rides inline —
- * measured on the COMPLETE serialised `tools/call` result object, not the inner text (both
- * reviewers' P1). A success and a refusal take the EXACT same path through here: `isError`
- * only changes one field of the wrapper this function builds, never whether the ceiling
- * applies — a refusal that blows the budget spills exactly like an oversized success would.
+ * measured on the COMPLETE JSON-RPC reply body the wire sends, `{jsonrpc, id, result}`, not
+ * the bare result object and not the inner text (both reviewers' P1; the envelope-vs-result
+ * distinction is round 4's own finding, above). A success and a refusal take the EXACT same
+ * path through here: `isError` only changes one field of the wrapper this function builds,
+ * never whether the ceiling applies — a refusal that blows the budget spills exactly like an
+ * oversized success would.
  *
  * Only four commands declared their own cap before item 1 — every other exposed command's
  * complete serialised result went straight to the model, unbounded (`ask.read` alone
@@ -577,17 +594,19 @@ function toolResultOf(
  * `spill` is handed the complete text-plus-marker body to write wherever it decides (the two
  * tiers above), and the call gets back a small envelope naming where the rest is and
  * carrying a head-sized sample inline — but the REPLACEMENT envelope is itself measured the
- * same way, because escaping the sample can inflate it too: `head` shrinks at a UTF-8
- * code-point boundary, one measured iteration at a time, until the whole wrapped envelope
+ * same way, because escaping the sample can inflate it too, and so is the `id` this call
+ * arrived on: `head` shrinks at a UTF-8 code-point boundary, one measured iteration at a
+ * time, until the whole wire body — envelope AND `{jsonrpc, id, result}` wrapper together —
  * fits, never computed from the raw byte count alone.
  */
 export function applyResultCeiling(
   result: AppToolResult,
   spill: (body: string) => string,
+  requestId: unknown,
   isError = false,
 ): { readonly content: readonly ToolContentBlock[]; readonly isError?: true } {
   const full = toolResultOf(result, isError);
-  const fullBytes = utf8(JSON.stringify(full));
+  const fullBytes = wireBytes(requestId, full);
   if (fullBytes <= APP_TOOL_RESULT_MAX_BYTES) return full;
 
   const body = result.marker === undefined ? result.text : `${result.text}\n\n${result.marker}`;
@@ -617,7 +636,7 @@ export function applyResultCeiling(
       note: `The complete ${bytes}-byte result did not fit this call's ${APP_TOOL_RESULT_MAX_BYTES}-byte budget, so ${locationNote}; read it with your own tools for the rest. \`head\` is this result's own first bytes, not a separate summary.`,
     };
     const candidate = toolResultOf({ text: JSON.stringify(envelope) }, isError);
-    const candidateBytes = utf8(JSON.stringify(candidate));
+    const candidateBytes = wireBytes(requestId, candidate);
     if (candidateBytes <= APP_TOOL_RESULT_MAX_BYTES || headBytes === 0) return candidate;
     // Escaping only ever ADDS bytes, so trimming the overage straight off the raw head byte
     // count is always enough progress to terminate — never less, occasionally more, and a
@@ -779,6 +798,12 @@ export async function startAppMcpServer(options: StartAppMcpServerOptions): Prom
   const callTool = async (
     threadId: string,
     params: unknown,
+    // The request's own JSON-RPC `id`, threaded all the way to `applyResultCeiling` (round
+    // 4): the wire body this call answers is `{jsonrpc, id, result}`, not the bare `result`,
+    // and `id` is the CALLER's to pick — a large numeric one is real overhead the ceiling
+    // has to count. `handleMessage` already refused a notification (no id) before this is
+    // ever reached, so a real id is always in hand here.
+    requestId: unknown,
   ): Promise<{ readonly result?: unknown; readonly error?: { code: number; message: string } }> => {
     const record = (params ?? {}) as { name?: unknown; arguments?: unknown };
     const tool = toolFor(record.name);
@@ -819,8 +844,10 @@ export async function startAppMcpServer(options: StartAppMcpServerOptions): Prom
       // it, `applyResultCeiling` returns a small spill envelope and the marker (if any) is
       // folded into the spilled file, not carried separately.
       return {
-        result: applyResultCeiling(shaped, (body) =>
-          writeSpillFile(options, threadId, tool.name, body),
+        result: applyResultCeiling(
+          shaped,
+          (body) => writeSpillFile(options, threadId, tool.name, body),
+          requestId,
         ),
       };
     } catch (error) {
@@ -835,6 +862,7 @@ export async function startAppMcpServer(options: StartAppMcpServerOptions): Prom
         result: applyResultCeiling(
           { text: refusalText(error) },
           (body) => writeSpillFile(options, threadId, tool.name, body),
+          requestId,
           true,
         ),
       };
@@ -891,7 +919,7 @@ export async function startAppMcpServer(options: StartAppMcpServerOptions): Prom
       case "tools/list":
         return reply({ tools: servedAppToolCatalog(options.dispatch()) });
       case "tools/call": {
-        const answered = await callTool(threadId, message.params);
+        const answered = await callTool(threadId, message.params, id);
         return answered.error === undefined
           ? reply(answered.result)
           : fail(answered.error.code, answered.error.message);
