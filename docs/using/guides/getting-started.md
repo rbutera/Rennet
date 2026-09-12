@@ -15,8 +15,12 @@ If Rennet is not on this machine yet, [install it](./install-rennet.md) first.
 On a new client with no projects, Rennet opens a full-window welcome. It
 introduces the review model, applies appearance choices immediately, shows the
 tools detected in this environment, and lets you choose the orchestrator and
-Dual Harness mode. Dual Harness starts on when both Claude Code and Codex are
-available.
+Dual Harness mode. The orchestrator is the chat thread a review runs on — the
+one in the chat column. Choosing it enables that harness for reviews on this
+machine and routes the conversation to it, so a machine with both Claude Code
+and Codex runs the chat on the one you picked; the model council picks the
+model it answers on. The lens boards route on their own. Dual Harness starts on
+when both are available.
 
 If neither harness is detected, install [Claude Code or Codex](./install-a-coding-harness.md)
 and check again. The welcome does not replace the contextual
@@ -439,8 +443,18 @@ runs a real turn on your own installed harness, working in this review's checkou
 and streams the answer back as it arrives. The thread persists in the sidecar, so it
 is still there after a reload. Asking about a highlighted span sends your question
 with the cited lines into the same thread and opens the chat on the answer.
-Nothing the thread says stages anything: you stage an ask yourself, from the board,
-a line, or a highlighted span.
+The thread knows it is this review's conversation, and it can use Rennet the way
+you do: read the boards, stage asks into your composer, compose a hand-off,
+dispatch a round. Staging is what it is steered toward, because a staged ask is
+what Rennet tracks — an ask it stages carries the thread as its author, joins the
+basket beside the ones you stage from a board, a line, or a highlighted span, and
+leaves only through the exit you click. Unstage it like any other ask, and the
+basket names it as coming from the chat thread.
+
+A session you opened before this release keeps the thread it already has: a
+thread's briefing and its tools are fixed when the thread is created, and Rennet
+never rewrites one under you. Archive that session and reopen it to get a briefed
+thread.
 
 If the thread is not there yet, the column says which kind of "not there" it is,
 and it never claims something is coming when nothing is. *Connecting to the T3 Code

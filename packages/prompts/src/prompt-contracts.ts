@@ -607,6 +607,8 @@ export const REPAIR_POINTER_LINE_MAX_BYTES = 1_000;
 /** `text` cut to `maxBytes`, on a code-point boundary, with an honest "…" marker. */
 export function capBytes(text: string, maxBytes: number): string {
   if (utf8Bytes(text) <= maxBytes) return text;
+  // A budget the marker itself does not fit: nothing, never a marker over budget.
+  if (maxBytes < utf8Bytes("…")) return "";
   const budget = maxBytes - utf8Bytes("…");
   let kept = "";
   let bytes = 0;
@@ -741,4 +743,266 @@ export function renderBoardRepairTurn(verdict: readonly BoardVerdictPointer[] | 
     "task",
     `\`finish\` did not settle your board. Fix these on the board you already have, then call \`finish\` again:\n${issues}`,
   );
+}
+
+// ── The session thread's briefing (session-thread-briefing 2.2) ──
+
+/**
+ * The ceiling on the WHOLE briefing — the fixed text plus the review's own lines.
+ *
+ * It is the original orchestrator primer's bound, and it is tight for a reason the other
+ * bounds in this file do not share: the briefing is a system-prompt APPEND, so it is a
+ * prefix re-read on every round trip of every turn for the life of the thread, including
+ * the turns the reviewer's own composer starts.
+ */
+export const SESSION_BRIEFING_MAX_BYTES = 4_096;
+
+/**
+ * The budget for the fixed half (`SESSION_BRIEFING_FILE`), pinned by the manifest test.
+ * The dynamic lines get what is left, so a fixed text that grows past this eats the
+ * patchset line's room rather than the ceiling's.
+ *
+ * It is deliberately loose enough that a copy edit does not trip it. The previous value was
+ * 2,816 against a 2,806-byte file — ten bytes of slack, which is a pin that fails for a
+ * reworded sentence and teaches whoever meets it that the number is noise (its own docstring
+ * said so). 3,000 leaves a paragraph of room and still guarantees the review's lines ~1,080 B,
+ * which is more than they have ever needed: the whole render is 3,739 B of 4,096 today.
+ */
+export const SESSION_BRIEFING_FIXED_MAX_BYTES = 3_000;
+
+/** Byte bound on ONE interpolated ref — a branch name or a pull-request label. */
+export const SESSION_BRIEFING_REF_MAX_BYTES = 120;
+
+/** Byte bound on ONE interpolated object id. A full sha is 40; a pathological one is cut. */
+export const SESSION_BRIEFING_OID_MAX_BYTES = 64;
+
+/** Byte bound on the interpolated diff command. Two oids, a verb and flags. */
+export const SESSION_BRIEFING_DIFF_COMMAND_MAX_BYTES = 200;
+
+/** Byte bound on the interpolated context-directory path. */
+export const SESSION_BRIEFING_CONTEXT_DIR_MAX_BYTES = 200;
+
+/**
+ * Byte bound on the interpolated MCP server name. TOML bare keys only, so this is loose.
+ *
+ * The briefing carries the tool COUNT and this name, never the names themselves. The
+ * harness's own `tools/list` already delivers every name with its description, so restating
+ * 29 of them in a system-prompt append is a restatement of something that travels
+ * separately — the same rule that keeps the output schema out of prompt text — and it is
+ * the worst possible place for one: an append is a prefix re-read on every round trip of
+ * every turn for the thread's life. It cost ~900 B of a 4,096 B ceiling and left 34 B of
+ * headroom, so two more `AGENT_EXPOSED` rows would have silently dropped the whole line.
+ */
+export const SESSION_BRIEFING_TOOL_SERVER_MAX_BYTES = 60;
+
+/**
+ * The bytes the review's own lines keep whatever the fixed text costs. Enough for the
+ * patchset line (≤ ~600 B with every field at its cap) and the context sentence, so an
+ * oversized fixed text cannot be what deletes the identity of the change under review.
+ */
+export const SESSION_BRIEFING_REVIEW_FLOOR_BYTES = 1_024;
+
+/** The heading the review's own lines sit under, so the append is attributable in a log. */
+const SESSION_BRIEFING_HEADER = "## This review";
+
+/** Byte bound on the interpolated review id (a uuid) and repository label. */
+export const SESSION_BRIEFING_REVIEW_ID_MAX_BYTES = 64;
+export const SESSION_BRIEFING_REPOSITORY_MAX_BYTES = 120;
+
+/** Which capture the review is of, and the identity a reviewer would recognise it by. */
+export interface SessionBriefingPatchset {
+  readonly kind: "branch" | "pr";
+  /**
+   * The review id every `app_*` tool takes as `reviewId` — named here because the thread
+   * otherwise had to FIND it, and the only way to find one was `app_session_list` plus a
+   * match on the branch name. Two repositories in one workspace both have `main`, so that
+   * match picks whichever row it read first and the thread then reads the wrong
+   * repository's board under the right repository's name. The tool surface stamps this id
+   * for a call that omits it; naming it here is what lets the thread talk about the review
+   * at all — quote it, or hand it to a tool that wants it explicitly.
+   */
+  readonly reviewId: string;
+  /** `owner/name` when the forge knows it, else the checkout's directory name. */
+  readonly repository?: string;
+  /** The branch under review. Present on a branch capture; the head branch of a PR when known. */
+  readonly branch?: string;
+  /** The pull-request number, on a `pr` capture. */
+  readonly prNumber?: number;
+  readonly baseOid: string;
+  readonly headOid: string;
+  /**
+   * The ONE command that reads this change from the checkout. The caller passes what
+   * `reviewedDiffCommand` (in `@rennet/core`) produced for this capture rather than this
+   * package re-deriving it: a working-tree capture and a range capture take different
+   * commands, and two derivations of one command drift.
+   */
+  readonly diffCommand: string;
+}
+
+export interface SessionBriefingInput {
+  /**
+   * The fixed briefing text — `SESSION_BRIEFING_FILE` read by the caller, with its
+   * partials already expanded (this package is node-free and resolves no file). The
+   * manifest test pins the shipped file at `SESSION_BRIEFING_FIXED_MAX_BYTES`; a caller
+   * that hands over a larger text spends the dynamic lines' budget, which is why the
+   * truncation marker below lands on those lines and never on this one.
+   */
+  readonly briefing: string;
+  readonly patchset: SessionBriefingPatchset;
+  /** The session's `.rennet/context/<sessionId>` directory, when one has been written. */
+  readonly contextDir?: string;
+  /**
+   * The tools actually attached: HOW MANY, and the MCP server serving them. Deliberately
+   * not the names — see {@link SESSION_BRIEFING_TOOL_SERVER_MAX_BYTES}. Absent ⇒ the
+   * briefing says none are attached, which is what a thread whose listener could not bind
+   * actually holds.
+   */
+  readonly tools?: { readonly count: number; readonly serverName: string };
+}
+
+/**
+ * Render the session thread's briefing: the fixed map, then this review's own lines.
+ *
+ * What travels is an IDENTITY and paths — the capture's kind, its branch or pull-request
+ * number, its repository, its review id, its base and head oids, the one diff command, the
+ * context directory, and how many tools are attached on which server. No diff, no hunk, no board, no inventory, no file body: the thread stands in the
+ * checkout and holds Rennet's tools, so it reads what it decides it needs. The rendering
+ * therefore does not grow with the change — a ninety-five-file review and a one-file
+ * review on the same oids render the same bytes, which is what the briefing test pins.
+ *
+ * Every interpolation is capped at its call site, and the OUTPUT is capped too: the return
+ * is at most `SESSION_BRIEFING_MAX_BYTES` for ANY input, including a fixed text that is
+ * already over the ceiling on its own. Three rules make that hold, in this order:
+ *
+ *  1. the review's lines keep `SESSION_BRIEFING_REVIEW_FLOOR_BYTES` whatever the fixed text
+ *     costs — the patchset line is first, because it is the line the thread cannot work
+ *     without, and a fixed text that grew must not be what silently deletes it;
+ *  2. the omission marker's own bytes are RESERVED before a line is dropped, so the honest
+ *     "…n more omitted" can never be what pushes the result over;
+ *  3. the fixed text is capped last, with its own marker. That is a programming error — the
+ *     manifest test pins the shipped file at `SESSION_BRIEFING_FIXED_MAX_BYTES` — but the
+ *     renderer holds the ceiling rather than trusting a caller to have read the pin.
+ */
+export function renderSessionBriefing(input: SessionBriefingInput): string {
+  const { patchset } = input;
+  const branch =
+    patchset.branch === undefined
+      ? undefined
+      : capBytes(patchset.branch, SESSION_BRIEFING_REF_MAX_BYTES);
+  const subject =
+    patchset.kind === "pr"
+      ? `pull request ${capBytes(`#${patchset.prNumber ?? "?"}`, SESSION_BRIEFING_REF_MAX_BYTES)}${
+          branch === undefined ? "" : ` on \`${branch}\``
+        }`
+      : `branch \`${branch ?? "(unnamed)"}\``;
+  const repository =
+    patchset.repository === undefined
+      ? ""
+      : ` in \`${capBytes(patchset.repository, SESSION_BRIEFING_REPOSITORY_MAX_BYTES)}\``;
+  const lines = [
+    `- Patchset: ${subject}${repository} — review \`${capBytes(patchset.reviewId, SESSION_BRIEFING_REVIEW_ID_MAX_BYTES)}\`, base ${capBytes(patchset.baseOid, SESSION_BRIEFING_OID_MAX_BYTES)} → head ${capBytes(patchset.headOid, SESSION_BRIEFING_OID_MAX_BYTES)}. Read the change with \`${capBytes(patchset.diffCommand, SESSION_BRIEFING_DIFF_COMMAND_MAX_BYTES)}\`. Every \`app_*\` tool takes that review id; a call that omits it gets this one.`,
+    ...(input.contextDir === undefined
+      ? []
+      : [
+          // The seats' own sentence, plus WHEN the directory appears. A session thread is
+          // created at capture, before any generation has drafted, and its instructions are
+          // fixed at create — so for most of the threads that read this the directory does
+          // not exist yet, and a sentence that only described a directory already there
+          // would be wrong for exactly the reviewer who just opened a review.
+          `- ${renderContextDirectorySentence(capBytes(input.contextDir.replace(/\/$/, ""), SESSION_BRIEFING_CONTEXT_DIR_MAX_BYTES))} It appears once the lens boards have been drafted for this review; before that there is nothing there to read.`,
+        ]),
+    renderSessionBriefingTools(input.tools),
+  ];
+  const scaffold = `\n\n${SESSION_BRIEFING_HEADER}\n`;
+  const overhead = utf8Bytes(scaffold);
+  const fixed = input.briefing.trimEnd();
+  // The review's lines get what the fixed text leaves, but never less than their floor —
+  // otherwise an oversized fixed text deletes the patchset line and the briefing stops
+  // saying which change it is about.
+  const reviewBudget = Math.max(
+    SESSION_BRIEFING_REVIEW_FLOOR_BYTES,
+    SESSION_BRIEFING_MAX_BYTES - overhead - utf8Bytes(fixed),
+  );
+  const review = boundedReviewLines(lines, reviewBudget);
+  // Whatever the review's lines actually spent is what the fixed text may have. Capping it
+  // is the last resort, and it carries its own marker rather than ending mid-sentence.
+  const head = capBytes(
+    fixed,
+    Math.max(0, SESSION_BRIEFING_MAX_BYTES - overhead - utf8Bytes(review)),
+  );
+  return `${head}${scaffold}${review}`;
+}
+
+/**
+ * Join the review's lines under `maxBytes` — INCLUDING the omission marker, which is the
+ * half `boundedJoin` leaves out: it appends its marker after the budget is already spent,
+ * so a caller that treats its return as bounded is over by the marker's own bytes. Here the
+ * marker is made room for, dropping already-kept lines from the end until it fits, and the
+ * count in it stays true as that happens.
+ *
+ * Exported so that contract is executable. It is NOT reachable through
+ * `renderSessionBriefing` today: the briefing has three lines whose capped maximum is about
+ * 900 B, against a review floor of 1,024 B, so the marker always fits without dropping
+ * anything. The drop loop is what keeps that true if a fourth line is added or the floor
+ * moves — and a test that can only exercise it directly is the honest way to pin it.
+ */
+export function boundedReviewLines(lines: readonly string[], maxBytes: number): string {
+  const marker = (omitted: number): string =>
+    `- … ${omitted} more review ${omitted === 1 ? "line" : "lines"} omitted (byte cap)`;
+  const kept: string[] = [];
+  let bytes = 0;
+  let omitted = 0;
+  for (const line of lines) {
+    const size = utf8Bytes(kept.length === 0 ? line : `\n${line}`);
+    // Once one line is over budget the rest are omitted too, so the lines that DO appear
+    // are a prefix of the list and the first one is always the patchset.
+    if (omitted > 0 || bytes + size > maxBytes) {
+      omitted += 1;
+      continue;
+    }
+    kept.push(line);
+    bytes += size;
+  }
+  if (omitted === 0) return kept.join("\n");
+  while (kept.length > 0 && bytes + utf8Bytes(`\n${marker(omitted)}`) > maxBytes) {
+    const dropped = kept.pop() as string;
+    bytes -= utf8Bytes(kept.length === 0 ? dropped : `\n${dropped}`);
+    omitted += 1;
+  }
+  const text = kept.length === 0 ? marker(omitted) : `${kept.join("\n")}\n${marker(omitted)}`;
+  // A budget smaller than the marker itself: cut it rather than return more than asked for.
+  return utf8Bytes(text) <= maxBytes ? text : capBytes(text, maxBytes);
+}
+
+/**
+ * The sentence that points an agent at its session context directory: an index it opens
+ * itself, and nothing from it sent inline.
+ *
+ * Exported because two agents are pointed at the same directory and must be told the same
+ * thing — the lens seats through `lens-pipeline.ts`'s `renderContextReference`, and the
+ * session thread through its briefing. Both call THIS function, so an edit here reaches
+ * both and neither can drift; there is no second copy of the sentence to keep in step.
+ */
+export function renderContextDirectorySentence(dir: string): string {
+  return `Your session's context directory is \`${dir}/\`; its \`README.md\` indexes every file there — what each holds and when to read it. Nothing is sent to you inline: read a file with your own tools when its line says to.`;
+}
+
+/**
+ * The attached tools as a COUNT and a server name — one short line whose length does not
+ * move with the size of the tool surface.
+ *
+ * It used to list every name, which is how the render reached 4,062 of 4,096 bytes: the
+ * list alone was ~900 B, and `boundedReviewLines` drops from the END, so two more exposed
+ * rows would have deleted this whole line and left the thread told nothing about its tools
+ * at all. The names were never this line's to carry — the harness delivers `tools/list`
+ * with a description per tool before the first turn runs.
+ */
+function renderSessionBriefingTools(
+  tools: { readonly count: number; readonly serverName: string } | undefined,
+): string {
+  if (tools === undefined || tools.count <= 0) {
+    return "- Rennet tools on this thread: none attached.";
+  }
+  const server = capBytes(tools.serverName, SESSION_BRIEFING_TOOL_SERVER_MAX_BYTES);
+  return `- Rennet tools on this thread: ${tools.count} \`app_*\` tools on the \`${server}\` MCP server; your own tool list names and describes each one.`;
 }

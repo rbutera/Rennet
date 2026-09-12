@@ -304,7 +304,27 @@ function harness(
     ...(extra.inFlightReviews ? { inFlightReviews: extra.inFlightReviews } : {}),
     ...(extra.submitPullRequest ? { submitPullRequest: extra.submitPullRequest } : {}),
     ...(extra.draftDeltaDigest ? { draftDeltaDigest: extra.draftDeltaDigest } : {}),
-    ...(extra.runHandoffTurn ? { runHandoffTurn: extra.runHandoffTurn } : {}),
+    // A hand-off runs on the review's own T3 thread, bound through `bindReviewThread`
+    // before the turn (session-thread-briefing 4.1 — the one creation path). In production
+    // the pair always travel together: `create-server` composes both or neither. So a
+    // fixture that wires the turn wires the sidecar that gives it a thread; one that does
+    // not gets the honest `unavailable` the command now reports for a bind it cannot make.
+    ...(extra.runHandoffTurn
+      ? {
+          runHandoffTurn: extra.runHandoffTurn,
+          t3Sidecar: {
+            start: () => undefined,
+            threadFor: async () => ({
+              kind: "session" as const,
+              repositoryRoot: "/repo",
+              sessionId: "rv",
+              projectId: "p",
+              threadId: "handoff-thread",
+              createdAt: "2026-09-12T00:00:00.000Z",
+            }),
+          } as unknown as DispatchDeps["t3Sidecar"],
+        }
+      : {}),
     ...(extra.composeBundle ? { composeBundle: extra.composeBundle } : {}),
     ...(extra.onReviewOpened ? { onReviewOpened: extra.onReviewOpened } : {}),
     ...(extra.lensBoardForReview ? { lensBoardForReview: extra.lensBoardForReview } : {}),
@@ -4033,7 +4053,7 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
     // the active defaults rather than a blank, every cell `default`.
     const roles = (view as unknown as { reviewRoles: ReviewRoleMapping[] }).reviewRoles;
     expect(roles).toEqual(reviewRoleMappings());
-    expect(roles.map((role) => role.id)).toEqual(["lens-workers", "second-seat"]);
+    expect(roles.map((role) => role.id)).toEqual(["lens-workers", "second-seat", "orchestrator"]);
     // The Flagged Second Seat does not run single-provider: an honest null, not a guess.
     const secondSeat = roles.find((role) => role.id === "second-seat");
     expect(secondSeat?.claudeOnly.value).toBeNull();

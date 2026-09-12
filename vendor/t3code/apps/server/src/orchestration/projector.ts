@@ -297,6 +297,8 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            ...(payload.instructions !== undefined ? { instructions: payload.instructions } : {}),
+            ...(payload.mcpServers !== undefined ? { mcpServers: payload.mcpServers } : {}),
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,

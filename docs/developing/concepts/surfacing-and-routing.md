@@ -170,8 +170,8 @@ id and carries the id's argument schema, output schema, label, and an `exposure`
 record. All three consumers read it: the dispatch map, the `app_*` agent
 projection, and the ⌘K command menu, which filters the table by
 `exposure.commandMenu` and runs the surviving rows live through the client's data
-seam. That flag is decided command by command — the row-by-row walk of all 104 is
-[command menu exposure](../reference/command-menu-exposure.md). The menu's
+seam. That flag is decided command by command — the row-by-row walk of all 113 is
+[command exposure](../reference/command-menu-exposure.md). The menu's
 navigation entries (sessions, projects, settings pages, dialog actions) come from
 the same projections the sidebar reads, not from the registry.
 
@@ -181,21 +181,17 @@ flowchart LR
   registry --> tools["app_* agent tools\nserver/agent-tools.ts"]
   registry -->|exposure.commandMenu| menu["⌘K command menu\napp-ui/shell/command-menu"]
   map --> handler["Family handler runs"]
-  tools -.->|exposure.agent — no mount today| turn["(unmounted)\nserver/agent-tools.ts"]
+  tools -->|exposure.agent| thread["rennet_app MCP server\nthe session thread"]
 ```
 
-**Nothing mounts these tools today.** A session's conversation is its
-[T3 Code thread](./t3code-sidecar.md), and Rennet does not expose `app_*` tools to a
-T3 thread, so `exposure.agent` gates a surface with no mount. `buildAppTools` and its
-registry contract stay — re-mounting them as an MCP server on T3 threads is its own
-change. What follows describes that contract, not a live path.
-
-A mounted turn would receive the current `app_*` projection as in-process tools,
-rebuilt for every turn, so removing `exposure.agent` from a registry row would remove
-the tool from the next turn without a second allow-list. A turn asked to act in Rennet
-would call the matching tool once and receive the command's durable result or undo
-receipt, and that observed result — never the model's account of it — would be what
-the transcript reports.
+**The session thread holds the projection.** A session's conversation is its
+[T3 Code thread](./t3code-sidecar.md), and the daemon serves the `app_*` tools to it
+from the loopback `rennet_app` MCP server named on that thread — see
+[the app-tools server](./t3code-sidecar.md#the-app-tools-server). So `exposure.agent`
+decides what the reviewer's conversation can do in Rennet: flipping a row off removes
+its tool from the next thread created, with no second allow-list. The thread calls a
+tool once and receives the command's durable result or undo receipt, and that observed
+result — never the model's account of it — is what the transcript reports.
 
 **Dispatch map.** `packages/server/src/dispatch/` binds a
 `Map<commandId, handler>` from the registry, one module per command family
@@ -210,7 +206,7 @@ map serves every command the switch did. An unregistered id fails exactly as the
 switch's `default` did; there is no new gate on the path.
 
 **Agent tools.** `packages/server/src/agent-tools.ts` derives the
-`app_*` in-process SDK tools by iterating the registry for rows where
+`app_*` tools by iterating the registry for rows where
 `exposure.agent` is true. One row yields one tool: name `app_<id>` (dots
 flattened to underscores), args schema and description from the row, and a `run`
 that dispatches the command id. The surface is a pure projection of the flag —
@@ -219,19 +215,22 @@ with no edit here. There is no per-tool allow or deny list (Rule Zero). The
 whiteboard five stay HTTP MCP tools (`WhiteboardClient`, #455-locked names); they
 are not registry ids, so they are structurally absent from this loop.
 
-`buildAppTools` derives the tools from the live registry and passes them through the
-harness-neutral turn contract, which the Claude adapter mounts in its per-turn
-in-process MCP server alongside any configured HTTP MCP servers. Nothing calls it at
-the composition root today. Tool output is captured as an ordered transcript action,
-including the returned command receipt, and the underlying command remains the sole
-writer of durable app state.
+`buildAppTools` derives the tools from the live registry, and the daemon serves that
+list over a loopback HTTP MCP server, `rennet_app`. The server is named on the session
+thread when the thread is created, so it is a thread fact for the thread's whole life
+rather than something assembled per turn: every turn on that thread, including the ones
+the reviewer starts from the composer, reaches the same tools. Tool output is captured
+as an ordered transcript action, including the returned command receipt, and the
+underlying command remains the sole writer of durable app state.
 
 `exposure.agent` is the only per-row datum that gates the agent surface. The inventory
-covers staging a review ask, project add and list, review capture and
-open-PR, and the settings ops. Session-scoped tools stay unexposed by choice: `session.list` and
-its rename / pin / archive writes exist (C18), but they are client-surface reads
-and writes, not app tools. A client-locus `navigate` command does not exist in
-the registry yet, so it is left unbound rather than stubbed.
+covers what the thread needs to know what the reviewer is looking at — the sessions,
+the review, its boards, its patchset evidence and spans, its asks, rounds and
+transcript — and the acts through the paths Rennet tracks: staging, editing and
+unstaging an ask, replying on a thread, composing a hand-off, drafting the pull-request
+body, dispatching a round, project add and list, review capture and open-PR, and the
+settings ops. A client-locus `navigate` command does not exist in the registry yet, so
+it is left unbound rather than stubbed.
 
 ## Code map
 

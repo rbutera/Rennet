@@ -15,7 +15,13 @@ import {
   removeSidecarClaim,
   spawnSidecar,
 } from "./sidecar";
-import { bindThread, sweepThreads, type ThreadBinding, type ThreadBindingKey } from "./threads";
+import {
+  bindThread,
+  type SessionThreadCreation,
+  sweepThreads,
+  type ThreadBinding,
+  type ThreadBindingKey,
+} from "./threads";
 
 export interface T3SidecarSupervisorOptions {
   readonly dataDir: string;
@@ -69,6 +75,14 @@ export interface T3SidecarSupervisor {
    * no sidecar for a call to have come from.
    */
   readonly boardBearer: () => string;
+  /**
+   * The app-tools server's process bearer as it stands in the CURRENT sidecar's
+   * environment (`session-thread-briefing`), or an empty string before one is running.
+   * A reader for the same reason {@link T3SidecarSupervisor.boardBearer} is: a respawn
+   * replaces the environment every harness child inherits, and a listener holding the old
+   * bearer would refuse every tool call the session thread made while it ran and billed.
+   */
+  readonly appBearer: () => string;
   /** The daemon's own RPC client over the sidecar socket, connected on first use. */
   readonly client: () => Promise<T3Client>;
   /** The T3 thread bound to (repository root, key), created on first use. */
@@ -84,6 +98,18 @@ export interface T3SidecarSupervisor {
     readonly worktreePath?: string;
     /** The branch that workspace has checked out; absent for a detached PR snapshot. */
     readonly branch?: string;
+    /**
+     * The id to create the thread with, minted by the caller because it had to know it
+     * first (session-thread-briefing 4.1): the app-tools url names the thread in its path.
+     * Absent ⇒ the client mints one, which is what every caller but the session bind wants.
+     */
+    readonly threadId?: string;
+    /**
+     * What a SESSION thread is created with beyond its cwd — briefing, app tools, the
+     * council's selection — resolved only if a thread is actually created. Session binds
+     * only; see `bindThread`.
+     */
+    readonly creation?: () => Promise<SessionThreadCreation>;
   }) => Promise<ThreadBinding>;
   /**
    * Archiving a session is the pruning act: delete every thread bound to any of these
@@ -219,6 +245,8 @@ export function createT3SidecarSupervisor(
       ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
       ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
       ...(input.branch === undefined ? {} : { branch: input.branch }),
+      ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+      ...(input.creation === undefined ? {} : { creation: input.creation }),
     });
 
   // ONE sweep at a time (review finding 2). The bindings file is a read-modify-write over a
@@ -299,6 +327,7 @@ export function createT3SidecarSupervisor(
     // exits, so between a crash and the next `ensure()` this is empty and no bearer
     // matches — which is honest: there is no sidecar for a call to have come from.
     boardBearer: () => running?.boardBearer ?? "",
+    appBearer: () => running?.appBearer ?? "",
     client,
     threadFor,
     forgetSession,

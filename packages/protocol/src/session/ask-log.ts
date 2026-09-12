@@ -31,6 +31,19 @@ const id = z.string().min(1);
 const lineSchema = z.number().int().min(1);
 
 /**
+ * WHO staged an ask — the reviewer (the default, by absence) or the session thread acting
+ * through `rennet_app` (`session-thread-briefing`, both reviewers' cluster-3 finding). Not
+ * the board's `AuthorSchema`: that vocabulary is human/lens-agent/orchestrator, this one is
+ * the two parties who can ever stage a durable ask. `id` is the thread id, present only for
+ * the orchestrator kind (there is only ever one reviewer).
+ */
+export const AskAuthorSchema = z.object({
+  kind: z.enum(["user", "orchestrator"]),
+  id: z.string().optional(),
+});
+export type AskAuthor = z.infer<typeof AskAuthorSchema>;
+
+/**
  * A staged ask — the reviewer's pending request-change/comment/question. Mirrors
  * `app-ui`'s `StagedAsk`: `id` is the stable identity the overlays key on;
  * `anchor` is the SOURCE provenance (a `path:line` or a quoted prose span), kept
@@ -43,6 +56,14 @@ export const StagedAskSchema = z.object({
   type: dispositionTypeSchema,
   body: z.string(),
   threadId: id.optional(),
+  /**
+   * WHO staged it. Optional and additive — absent means the reviewer, so every row minted
+   * before this field existed decodes unchanged. Stamped SERVER-SIDE only
+   * (`dispatch/ask.ts`'s `ask.stage` handler, from `ctx.author`, never from this field as the
+   * model sent it): a client naming itself here would put its words in the reviewer's mouth
+   * in a durable log.
+   */
+  author: AskAuthorSchema.optional(),
   /**
    * The diff SIDE a code-anchored ask posts to (B11 finding 7). Additive/optional: absent
    * defaults to `RIGHT` (the post-image), the common case. A DELETION-side ask sets `LEFT`

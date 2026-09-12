@@ -53,6 +53,7 @@ import {
   REVIEW_DRAFT_VOICE_FILE,
   ROUND_REPORT_FILE,
   renderBoardRepairTurn,
+  renderContextDirectorySentence,
   renderLayer,
   renderRepairTurn,
 } from "@rennet/prompts";
@@ -772,11 +773,18 @@ export function roundContextFile(
   };
 }
 
-/** The context layer: a path reference, under two kilobytes whatever the change's size. */
+/**
+ * The context layer: a path reference, under two kilobytes whatever the change's size.
+ *
+ * The opening sentence is IMPORTED, not written here (session-thread-briefing 4.1). Two
+ * agents are pointed at the same directory — a lens seat through this, and the session
+ * thread through its briefing — and they were told it in two hand-synchronised copies of
+ * one sentence. One import, so an edit to what a context directory IS reaches both.
+ */
 function renderContextReference(context: DrafterContextRef): string {
   const dir = context.dir.replace(/\/$/, "");
   return [
-    `Your session's context directory is \`${dir}/\`; its \`README.md\` indexes every file there — what each holds and when to read it. Nothing is sent to you inline: read a file with your own tools when its line says to.`,
+    renderContextDirectorySentence(dir),
     ...context.files.map(
       (file) => `- \`${dir}/${file.name}\` — ${file.holds} Read it ${file.readWhen}`,
     ),

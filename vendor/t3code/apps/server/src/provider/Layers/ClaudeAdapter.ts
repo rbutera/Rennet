@@ -4520,7 +4520,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,
-        systemPrompt: { type: "preset", preset: "claude_code" },
+        // The thread's briefing rides the preset rather than replacing it: the
+        // SDK's `append` leaves the `claude_code` system prompt, the user's own
+        // settings and their CLAUDE.md exactly where they are. Nothing else in
+        // this option set changes.
+        systemPrompt: {
+          type: "preset",
+          preset: "claude_code",
+          ...(input.instructions !== undefined ? { append: input.instructions } : {}),
+        },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // `ultracode` is a Claude Code setting, not an API effort level. It is
         // normalized to `xhigh` above and paired with `settings.ultracode`.

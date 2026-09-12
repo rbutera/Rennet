@@ -256,13 +256,14 @@ Everything gathers as **asks**: typed messages carrying an anchor, text, an
 intent, and an exit lane, minted from findings, code-line comments, quote
 threads, or plain conversation, each with provenance back to its source.
 
-**Staging is the reviewer's act.** An ask is minted where the reviewer decides
+**Sending is the reviewer's.** An ask is minted where the reviewer decides
 one: a finding's control, a code-line comment, a highlighted span of board prose,
 or a conclusion reached in the review's own conversation — its
 [T3 Code thread](./t3code-sidecar.md), which fills the chat slot
-(`packages/app-ui/src/chat/t3-chat-dock.tsx`, sending on `chat.t3Send`). The thread
-holds no `app_*` tools today, so a conclusion drawn there is staged from the board,
-the line, or the span it belongs to rather than by the thread itself. Every staging
+(`packages/app-ui/src/chat/t3-chat-dock.tsx`, sending on `chat.t3Send`). A conclusion
+drawn there is staged from the board, the line, or the span it belongs to — or the
+thread can stage it too, with itself as the ask's author; the reviewer sends or
+unstages it like any other. Every staging
 act leaves an undecorated receipt at its source — a chip on the thread — and the
 receipt is also the undo. Findings never auto-stage; staging records the reviewer's
 judgment, not the lens output.

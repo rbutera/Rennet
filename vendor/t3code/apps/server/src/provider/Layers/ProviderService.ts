@@ -13,6 +13,7 @@ import {
   ModelSelection,
   NonNegativeInt,
   ThreadId,
+  normalizeTurnMcpServers,
   ProviderInterruptTurnInput,
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
@@ -20,11 +21,11 @@ import {
   ProviderSessionStartInput,
   ProviderStopSessionInput,
   ProviderUploadFeedbackInput,
+  TurnMcpServers,
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
   type ProviderSession,
-  type TurnMcpServers,
 } from "@t3tools/contracts";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -62,6 +63,7 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 const isModelSelection = Schema.is(ModelSelection);
+const isTurnMcpServers = Schema.is(TurnMcpServers);
 
 /**
  * Hook for tests that want to override the canonical event logger pulled
@@ -138,6 +140,12 @@ function toRuntimePayloadFromSession(
   session: ProviderSession,
   extra?: {
     readonly modelSelection?: unknown;
+    /** The thread's briefing, persisted alongside the session's other
+     * restart-survival facts so every recovery path — not just the one that
+     * happened to be carrying it on its own input — can read it back. */
+    readonly instructions?: string;
+    /** The thread's MCP servers, persisted for the same reason. */
+    readonly mcpServers?: TurnMcpServers;
     readonly lastRuntimeEvent?: string;
     readonly lastRuntimeEventAt?: string;
   },
@@ -148,6 +156,8 @@ function toRuntimePayloadFromSession(
     activeTurnId: session.activeTurnId ?? null,
     lastError: session.lastError ?? null,
     ...(extra?.modelSelection !== undefined ? { modelSelection: extra.modelSelection } : {}),
+    ...(extra?.instructions !== undefined ? { instructions: extra.instructions } : {}),
+    ...(extra?.mcpServers !== undefined ? { mcpServers: extra.mcpServers } : {}),
     ...(extra?.lastRuntimeEvent !== undefined ? { lastRuntimeEvent: extra.lastRuntimeEvent } : {}),
     ...(extra?.lastRuntimeEventAt !== undefined
       ? { lastRuntimeEventAt: extra.lastRuntimeEventAt }
@@ -175,6 +185,39 @@ function readPersistedCwd(
   if (typeof rawCwd !== "string") return undefined;
   const trimmed = rawCwd.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * The thread's briefing, read back off whatever this session was last
+ * (re)started with. Every recovery path goes through `recoverSessionForThread`,
+ * which reads this rather than trusting its own input to carry it: only
+ * `sendTurn`'s caller bothers to pass the thread's instructions along, and a
+ * recovery reached from `interruptTurn`, `respondToRequest`,
+ * `respondToUserInput`, `rollbackConversation`, or `uploadFeedback` does not.
+ * A session recovered without this runs every turn after the restart
+ * unbriefed, silently.
+ */
+function readPersistedInstructions(
+  runtimePayload: ProviderSessionDirectory.ProviderRuntimeBinding["runtimePayload"],
+): string | undefined {
+  if (!runtimePayload || typeof runtimePayload !== "object" || Array.isArray(runtimePayload)) {
+    return undefined;
+  }
+  const raw = "instructions" in runtimePayload ? runtimePayload.instructions : undefined;
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? raw : undefined;
+}
+
+/** Same story as `readPersistedInstructions`, for the thread's MCP servers. */
+function readPersistedMcpServers(
+  runtimePayload: ProviderSessionDirectory.ProviderRuntimeBinding["runtimePayload"],
+): TurnMcpServers | undefined {
+  if (!runtimePayload || typeof runtimePayload !== "object" || Array.isArray(runtimePayload)) {
+    return undefined;
+  }
+  const raw = "mcpServers" in runtimePayload ? runtimePayload.mcpServers : undefined;
+  return isTurnMcpServers(raw) ? raw : undefined;
 }
 
 const dieOnMissingBindingInstanceId = (
@@ -319,6 +362,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     threadId: ThreadId,
     extra?: {
       readonly modelSelection?: unknown;
+      readonly instructions?: string;
+      readonly mcpServers?: TurnMcpServers;
       readonly lastRuntimeEvent?: string;
       readonly lastRuntimeEventAt?: string;
     },
@@ -427,6 +472,22 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
      * with the wrong tools or refuses it.
      */
     readonly mcpServers?: TurnMcpServers;
+    /**
+     * The THREAD's briefing, carried on the turn for the same reason again: a
+     * provider fixes its system prompt when the session process is created, so
+     * a session recovered without it runs every turn after the restart
+     * unbriefed — the thread would silently stop being what it was created as.
+     *
+     * This is a courtesy from callers that happen to have it (`sendTurn`), not
+     * something this function can rely on: `interruptTurn`, `respondToRequest`,
+     * `respondToUserInput`, `rollbackConversation`, and `uploadFeedback` all
+     * reach recovery through `resolveRoutableSession` without ever knowing the
+     * thread's briefing. So the THREAD's own persisted instructions and MCP
+     * servers, read a few lines down from `input.binding.runtimePayload`, are
+     * the source of truth here; this field and `mcpServers` above only ever
+     * add a turn-specific server on top.
+     */
+    readonly instructions?: string;
   }) {
     const bindingInstanceId = yield* requireBindingInstanceId(input.operation, input.binding);
     yield* Effect.annotateCurrentSpan({
@@ -468,6 +529,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
+      // The THREAD's briefing and servers, read off what this session was last
+      // (re)started with — not off `input`, because most recovery callers
+      // never carry them. `input.instructions`/`input.mcpServers` are a
+      // fallback for a binding persisted before this field existed, and a
+      // turn-specific server still merges in on top of the thread's own.
+      const persistedInstructions = readPersistedInstructions(input.binding.runtimePayload);
+      const persistedMcpServers = readPersistedMcpServers(input.binding.runtimePayload);
+      const effectiveInstructions = persistedInstructions ?? input.instructions;
+      const effectiveMcpServers = normalizeTurnMcpServers({
+        ...(persistedMcpServers ?? {}),
+        ...(input.mcpServers ?? {}),
+      });
 
       yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
       const resumed = yield* adapter
@@ -480,7 +553,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
           runtimeMode: input.binding.runtimeMode ?? "full-access",
           ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
-          ...(input.mcpServers !== undefined ? { mcpServers: input.mcpServers } : {}),
+          ...(effectiveMcpServers !== undefined ? { mcpServers: effectiveMcpServers } : {}),
+          ...(effectiveInstructions !== undefined ? { instructions: effectiveInstructions } : {}),
         })
         .pipe(Effect.onError(() => clearMcpSession(input.binding.threadId)));
       if (resumed.provider !== adapter.provider) {
@@ -494,6 +568,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       yield* upsertSessionBinding(
         { ...resumed, providerInstanceId: bindingInstanceId },
         input.binding.threadId,
+        {
+          // The EFFECTIVE values this session was just (re)started with, not
+          // `input`'s own fields: `toRuntimePayloadFromSession` rebuilds the
+          // whole runtime payload from `extra` alone, so omitting these here
+          // silently erased whatever a PRIOR recovery had persisted. A
+          // second recovery (say, through `uploadFeedback`, which carries
+          // neither) must still see the turn-specific server an earlier
+          // `sendTurn` recovery folded in, not fall back to the thread's own
+          // bare set.
+          ...(effectiveInstructions !== undefined ? { instructions: effectiveInstructions } : {}),
+          ...(effectiveMcpServers !== undefined ? { mcpServers: effectiveMcpServers } : {}),
+        },
       );
       yield* analytics.record("provider.session.recovered", {
         provider: resumed.provider,
@@ -519,6 +605,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly outputSchema?: unknown;
     /** Carried into a recovered session; see `recoverSessionForThread`. */
     readonly mcpServers?: TurnMcpServers;
+    /** Carried into a recovered session; see `recoverSessionForThread`. */
+    readonly instructions?: string;
   }) {
     const bindingOption = yield* directory.getBinding(input.threadId);
     const binding = Option.getOrUndefined(bindingOption);
@@ -557,6 +645,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       operation: input.operation,
       ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
       ...(input.mcpServers !== undefined ? { mcpServers: input.mcpServers } : {}),
+      ...(input.instructions !== undefined ? { instructions: input.instructions } : {}),
     });
     return {
       adapter: recovered.adapter,
@@ -701,6 +790,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         });
         yield* upsertSessionBinding(sessionWithInstance, threadId, {
           modelSelection: input.modelSelection,
+          // Persisted so every later recovery — not just a `sendTurn` whose
+          // caller bothers to carry the thread's briefing on the turn — can
+          // read the thread's own instructions and servers back out, instead
+          // of starting the resumed session bare.
+          ...(input.instructions !== undefined ? { instructions: input.instructions } : {}),
+          ...(input.mcpServers !== undefined ? { mcpServers: input.mcpServers } : {}),
         });
         yield* analytics.record("provider.session.started", {
           provider: sessionWithInstance.provider,
@@ -826,6 +921,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           // the MCP servers the turn expects.
           ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
           ...(input.mcpServers !== undefined ? { mcpServers: input.mcpServers } : {}),
+          // ...and on the thread's briefing, which the reactor puts on every
+          // turn precisely so a recovery has it.
+          ...(input.instructions !== undefined ? { instructions: input.instructions } : {}),
         });
       }
       metricProvider = routed.adapter.provider;
