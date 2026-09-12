@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   boundedReviewLines,
+  capBytes,
   renderSessionBriefing,
   SESSION_BRIEFING_FILE,
   SESSION_BRIEFING_MAX_BYTES,
@@ -316,7 +317,8 @@ describe("renderSessionBriefing", () => {
     const marker = "- … 1 more review line omitted (byte cap)";
     // A budget that fits the first two lines but leaves less than the marker needs: the
     // join has to give a line back and re-count. (Control: delete the `while` loop in
-    // `boundedReviewLines` and this byte assertion reddens — measured, not assumed.)
+    // `boundedReviewLines` and the omitted-count assertion below reddens — the fallback
+    // still bounds the bytes, so the byte assertion does not; measured, not assumed.)
     const budget = bytes(`${lines[0]}\n${lines[1]}`) + bytes(`\n${marker}`) - 4;
     const joined = boundedReviewLines(lines, budget);
 
@@ -387,5 +389,16 @@ describe("renderSessionBriefing", () => {
       toolNames: [],
     });
     expect(rendered).toContain("- Rennet tools on this thread: none attached.");
+  });
+});
+
+describe("capBytes under a budget smaller than its marker", () => {
+  it("returns nothing rather than a marker over budget", () => {
+    for (const budget of [0, 1, 2]) {
+      expect(capBytes("x".repeat(200), budget)).toBe("");
+      expect(bytes(boundedReviewLines(["x".repeat(200)], budget))).toBeLessThanOrEqual(budget);
+    }
+    // Positive control: at exactly the marker's size the marker fits and is all that is kept.
+    expect(capBytes("x".repeat(200), 3)).toBe("…");
   });
 });

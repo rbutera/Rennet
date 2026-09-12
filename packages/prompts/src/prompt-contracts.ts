@@ -607,6 +607,8 @@ export const REPAIR_POINTER_LINE_MAX_BYTES = 1_000;
 /** `text` cut to `maxBytes`, on a code-point boundary, with an honest "…" marker. */
 export function capBytes(text: string, maxBytes: number): string {
   if (utf8Bytes(text) <= maxBytes) return text;
+  // A budget the marker itself does not fit: nothing, never a marker over budget.
+  if (maxBytes < utf8Bytes("…")) return "";
   const budget = maxBytes - utf8Bytes("…");
   let kept = "";
   let bytes = 0;
