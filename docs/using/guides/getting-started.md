@@ -10,6 +10,8 @@ once, end to end.
 
 ## First run
 
+If Rennet is not on this machine yet, [install it](./install-rennet.md) first.
+
 On a new client with no projects, Rennet opens a full-window welcome. It
 introduces the review model, applies appearance choices immediately, shows the
 tools detected in this environment, and lets you choose the orchestrator and

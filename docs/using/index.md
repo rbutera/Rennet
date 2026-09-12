@@ -9,6 +9,7 @@ with the tour, then follow the guide for the change in front of you.
 
 ## Start here
 
+- [Install Rennet](./guides/install-rennet.md) downloads the desktop app for macOS or Windows and gets it to the first-run welcome.
 - [Getting started](./guides/getting-started.md) walks the whole loop: add a project, read the boards, stage asks, take an exit.
 - [Install a coding harness](./guides/install-a-coding-harness.md) sets up Claude Code, Codex, or both for Dual Harness reviews.
 - [The onboarding tour](./guides/onboarding-tour.md) explains the contextual coach marks shown after setup: one at a time, skippable, and replayable from Help.
