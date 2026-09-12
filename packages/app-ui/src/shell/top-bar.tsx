@@ -7,6 +7,7 @@ import { LensSwitcher } from "../board";
 import { lensesWithResult, useBoardData, useLensBoards } from "../board/board-data";
 import { countOpenFindings } from "../board/finding-lifecycle";
 import { useLensActivityHistory } from "../board/lens-activity-state";
+import { seatHoldsSelection } from "../board/lens-seats";
 import { Icon } from "../components/icon";
 import { useRoundRecords, useRoundState, useRoundsUnavailable } from "../rounds/rounds-data";
 import { useSlugResolution } from "../routes/slug";
@@ -171,9 +172,14 @@ export function TopBar() {
   // The fallback is a lens with something to OPEN, not the first rail entry: the rail
   // now always starts at Design, and falling back to it would open an empty board over
   // a settled sibling.
+  // …and never while the requested lens's seat is live (`seatHoldsSelection`): a running
+  // lane's board is arriving, so the tab the reviewer clicked stays the tab that is lit.
   const fallbackLens = lensesWithResult(lenses)[0]?.lens;
+  const requestedSeat = lenses.find(({ lens }) => lens === routeQuery.lens)?.seat;
   const effectiveLens =
-    selectedBoard.status === "missing" && fallbackLens !== undefined
+    selectedBoard.status === "missing" &&
+    fallbackLens !== undefined &&
+    (requestedSeat === undefined || !seatHoldsSelection(requestedSeat))
       ? fallbackLens
       : routeQuery.lens;
   const query = routeQuery;

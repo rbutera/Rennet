@@ -7,6 +7,7 @@ import {
   type LensDraftSnapshot,
   type LensDraftState,
   type LensKind,
+  patchsetIdOfGeneration,
   projectBoardSections,
   resolveBoardDocument,
 } from "@rennet/protocol";
@@ -180,14 +181,40 @@ export function useLensDrafts(reviewId: string, generation: string): LensDrafts 
  * that is a different copy of the board with the marks stamped on.
  */
 export function draftAsBoard(draft: LiveDraft): LensBoard {
+  const elements = stampDraftPatchset(draft.elements, patchsetIdOfGeneration(draft.generation));
   return {
     lens: draft.lens,
     generation: draft.generation,
     boardId: `draft:${draft.generation}:${draft.lens}`,
     document: resolveBoardDocument(draft.lens, draft.document),
-    sections: projectBoardSections(draft.elements, draft.lens),
-    elements: draft.elements,
+    sections: projectBoardSections(elements, draft.lens),
+    elements,
   } as LensBoard;
+}
+
+/**
+ * The patchset stamp the durable copy will carry, applied to the live copy first.
+ *
+ * A seat is never told the captured patchset's identity, so a drafted `code_ref` has no
+ * `patchset_id`; the host stamps it once at settle (`stampPatchsetId` in `@rennet/core`).
+ * Rendered as-is, every citation on a board being written asked the daemon for a span of
+ * patchset "" and painted the schema's rejection under its own code block until the lane
+ * closed. The generation the draft is written into names the patchset, so the same stamp
+ * is applied here, to the elements that lack one — an element that already carries a
+ * patchset keeps it, exactly as `toCodeRef` reads it.
+ */
+function stampDraftPatchset(
+  elements: readonly DraftElement[],
+  patchsetId: string | undefined,
+): readonly DraftElement[] {
+  if (patchsetId === undefined) return elements;
+  return elements.map((el) => {
+    if (el.kind !== "code_ref") return el;
+    const data = el.data as { patchset_id?: string };
+    return data.patchset_id === undefined
+      ? ({ ...el, data: { ...data, patchset_id: patchsetId } } as DraftElement)
+      : el;
+  });
 }
 
 /** Whether this lens has a live board worth rendering over the durable one: a draft that

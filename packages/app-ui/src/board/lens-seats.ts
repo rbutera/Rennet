@@ -132,6 +132,23 @@ export interface LensSeatState {
 }
 
 /**
+ * Whether a lens with no durable board yet still HOLDS the reviewer's selection.
+ *
+ * The selected-lens fallback exists for a generation that genuinely does not carry the
+ * lens — a frozen predecessor with no Design board should open on something readable.
+ * A running generation is never that: a `working` seat's board is arriving, and a
+ * `waiting` one (only ever read on a running generation — `fromReadAlone` says `none`
+ * otherwise) is owed. Falling back moved the reviewer off the thing they asked for:
+ * clicking Flagged while it drafted opened Design's "no spec found for this branch"
+ * under a Flagged tab that never lit, because the rail and the board view each fell
+ * back to the first settled sibling (Rai, 2026-09-12). Both surfaces ask THIS, so the
+ * tab and the board cannot disagree about which lens is on screen.
+ */
+export function seatHoldsSelection(seat: LensSeatState): boolean {
+  return seat.register === "working" || seat.register === "waiting";
+}
+
+/**
  * The generation's lanes and whether it is still going.
  *
  * `running` is NOT derivable from the lanes: a cancelled preparation keeps the lanes it

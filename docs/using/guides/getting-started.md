@@ -240,12 +240,12 @@ open transcript together, and opening a transcript from another lens's tab selec
 that lens, so the transcript always sits beside its own board; opening Diff closes
 the transcript drawer.
 
-While the change is being reviewed, the main action says so and cannot advance.
-It becomes Continue when the review is ready. The Rennet mark in the top-left
+While the change is being reviewed there is no Continue yet; it appears in the
+bottom-right corner when the review is ready. The Rennet mark in the top-left
 corner is what animates while Rennet works — in the sidebar's lockup when the
 sidebar is open, and as a floating orb in the corner when it is collapsed — so
-nothing repeats that over the boards. A floating Cancel button sits under the
-titlebar on the right while the boards are being generated. If a generation
+nothing repeats that over the boards. A floating Cancel button sits in that
+bottom-right corner while the boards are being generated. If a generation
 fails or you cancel it, a header appears over the boards with the reason and a
 Retry.
 
