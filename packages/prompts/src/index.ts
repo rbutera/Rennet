@@ -59,6 +59,32 @@ export const FLAGGED_REVIEW_FILE = "prompts/flagged-review.md";
 export const ROUND_REPORT_FILE = "prompts/report.md";
 
 /**
+ * The session thread's briefing — the FIXED half of the system-prompt append every turn
+ * on a review session's thread runs under (`session-thread-briefing`).
+ *
+ * It is a MAP and carries no content: who the thread is, what it can do (everything the
+ * reviewer can), the steer toward staging an ask because that is the path Rennet tracks,
+ * what an anchored `Code reference` is, and which tools reach the review. The review's own
+ * facts — the patchset, the context directory, the attached tool names — are spliced by
+ * `renderSessionBriefing`, which owns the byte ceiling.
+ *
+ * Its size is load-bearing in a way a lens prompt's is not: an append is a PREFIX, re-read
+ * on every round trip of every turn for the life of the thread. The manifest test pins this
+ * file at `SESSION_BRIEFING_FIXED_MAX_BYTES` so the dynamic lines always have room under
+ * `SESSION_BRIEFING_MAX_BYTES`.
+ *
+ * It carries its own short register and NO shared partial (Rai, 2026-09-12). Splicing
+ * `reader-voice.md` here would put 2,847 B of board-prose guidance under a 4,096 B ceiling
+ * that also has to hold the review's own lines, and its ground rules tell a writer not to
+ * name lenses or boards — which is what this thread does for the reviewer all day.
+ *
+ * Measured 2026-09-12: the file is 2,789 B and renders to 3,549 B beside a reference
+ * review's patchset, context and tool lines — 547 B of headroom. The renderer holds the
+ * 4,096 B ceiling for any input, including a fixed text already over it on its own.
+ */
+export const SESSION_BRIEFING_FILE = "prompts/session-briefing.md";
+
+/**
  * The "Investigate before you draft" partial every lens file carries. One file, so
  * the five lens prompts cannot drift apart on it (#737).
  */

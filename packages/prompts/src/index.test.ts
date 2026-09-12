@@ -13,9 +13,12 @@ import {
   PROMPT_PARTIALS,
   REVIEW_DRAFT_VOICE_FILE,
   ROUND_REPORT_FILE,
+  SESSION_BRIEFING_FILE,
+  SESSION_BRIEFING_FIXED_MAX_BYTES,
   WRITE_WITH_TOOLS_MARKER,
   WRITE_WITH_TOOLS_PARTIAL_FILE,
 } from "./index.js";
+import { prohibitions } from "./test/prohibitions.js";
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
 
@@ -430,6 +433,88 @@ describe("lens prompt manifest", () => {
     expect(text.length).toBeGreaterThan(500);
     expect(text).not.toContain("post-process"); // #737: the file it cited is gone
     expect(text.replace(/\s+/g, " ")).toContain("under their own name");
+  });
+
+  /**
+   * The session thread's briefing (`session-thread-briefing` 2.1). Two things are pinned
+   * here that no other prompt file needs: its SIZE, because the briefing is a system-prompt
+   * append — a prefix re-read on every round trip of every turn for the thread's life — and
+   * the ABSENCE of any prohibition, because Decision 3 says the thread can do everything the
+   * reviewer can and the briefing steers rather than forbids.
+   */
+  it("briefs the session thread with a map, a steer, and no prohibition", () => {
+    const text = readFileSync(join(srcDir, SESSION_BRIEFING_FILE), "utf8");
+    const normalized = text.replace(/\s+/g, " ");
+    // The fixed half's budget. `SESSION_BRIEFING_MAX_BYTES` (4,096) covers fixed + dynamic,
+    // so pinning the file here is what leaves the patchset, context and tool lines room.
+    expect(new TextEncoder().encode(text).length, "fixed briefing bytes").toBeLessThanOrEqual(
+      SESSION_BRIEFING_FIXED_MAX_BYTES,
+    );
+    expect(text).toMatch(/^# /);
+
+    // Identity and division of labour: who it is, who already read the change, who judges.
+    expect(normalized).toContain("conversation of one Rennet review session");
+    expect(normalized).toContain("Design, Sequence, Decisions, Flagged, Noise");
+    expect(normalized).toContain("drafted by seats that already read it");
+    expect(normalized).toContain("coding rounds run on their own threads");
+    expect(normalized).toContain("Rennet has no backend");
+    // Capability, then the steer — in that order, because the steer is a steer.
+    expect(normalized).toContain("Everything the reviewer can");
+    expect(normalized.indexOf("Everything the reviewer can")).toBeLessThan(
+      normalized.indexOf("stage an ask"),
+    );
+    expect(normalized).toContain("Staging is the path Rennet tracks");
+    expect(normalized).toContain("Editing the checkout yourself is fine");
+    // The tools it reaches the review through, and the anchored-question contract.
+    for (const tool of [
+      "`app_session_list`",
+      "`app_review_load`",
+      "`app_board_read`",
+      "`app_patchset_readSpan`",
+      "`app_patchset_readEvidence`",
+      "`app_ask_stage`",
+    ]) {
+      expect(text, `the briefing names ${tool}`).toContain(tool);
+    }
+    expect(normalized).toContain("`Code reference: {…}`");
+    expect(normalized).toContain("Retrieve it first");
+    // No tool's input schema is restated: the schemas travel with the tool list.
+    expect(text).not.toContain("```json");
+    expect(text).not.toMatch(/"type"\s*:/);
+
+    // The briefing carries its OWN short register and no shared partial (Rai, 2026-09-12):
+    // `reader-voice.md` is 2,847 B of board-prose guidance against a 4,096 B ceiling that
+    // also has to hold the review's lines, and its ground rules tell a writer not to name
+    // lenses or boards — which is the opposite of what this thread does for the reviewer.
+    // So the file carries no marker at all, and this asserts that for EVERY partial the
+    // manifest knows, not just the one that was removed.
+    for (const marker of Object.keys(PROMPT_PARTIALS)) {
+      expect(text, `the briefing carries no ${marker}`).not.toContain(marker);
+    }
+    expect(text, "a marker of any shape").not.toMatch(/\{\{[\w-]+\}\}/);
+    expect(text).not.toContain("## Explain the change and its mechanism");
+    expect(expandPromptPartials(text, partials), "nothing to splice").toBe(text);
+    // Its own register, in the briefing's own words.
+    expect(normalized).toContain("Lead with the consequence, then the mechanism");
+    expect(normalized).toContain("cite it by path and line range");
+
+    // Decision 3: the briefing forbids nothing.
+    expect(prohibitions(text), "the briefing forbids nothing").toEqual([]);
+    // Positive control, one per pattern: each phrase is proven able to fire. Without this
+    // the assertion above passes for a file that simply never matched anything. The last
+    // one is wrapped MID-PHRASE across a line break, the way every sentence in these
+    // hard-wrapped files is — the detector's first version split on `\n` and could not see
+    // it, which left three of its four patterns dead while the test read as four checks.
+    for (const sentence of [
+      "Never edit the checkout.",
+      "Do not commit anything.",
+      "Do not push this branch.",
+      "You must not open the pull request.",
+      "Don't touch the base branch.",
+      "You really must\nnot open the pull request without asking.",
+    ]) {
+      expect(prohibitions(`${text}\n${sentence}\n`), sentence).toHaveLength(1);
+    }
   });
 
   it("fails when a manifest entry points at a missing file", () => {

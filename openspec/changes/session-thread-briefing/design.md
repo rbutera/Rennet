@@ -90,7 +90,11 @@ the exits), what it can do (everything the reviewer can: read, run, edit, and us
 its tools), the steer (stage asks to the draft PR or the round submission, because that is the
 path Rennet tracks and receipts — a steer, never a prohibition; the file carries no "never"),
 what an Explain's `Code reference` is, how to find and read a review (`app_session_list`,
-`app_review_load`, `app_board_read`, `app_patchset_readSpan`), the `{{reader-voice}}` marker. `renderSessionBriefing(input)` in `prompt-contracts.ts` splices the dynamic lines — the
+`app_review_load`, `app_board_read`, `app_patchset_readSpan`), and its own short register — no
+shared partial, because `reader-voice.md` is 2,847 B of board-prose guidance against a 4,096-byte
+ceiling that must also hold the review's lines, and its ground rules tell a writer not to name
+lenses or boards, which is the opposite of what this thread does for the reviewer (Rai,
+2026-09-12). `renderSessionBriefing(input)` in `prompt-contracts.ts` splices the dynamic lines — the
 patchset (branch or PR number, base and head oids, the exact `git diff <base>...<head>` command),
 the context directory path when one exists, the tool names actually attached — and enforces
 `SESSION_BRIEFING_MAX_BYTES = 4096` with an honest truncation marker on the dynamic lines only
@@ -126,10 +130,13 @@ and passes it. When the council has no installed provider for the job, the bind 
 `DEFAULT_MODEL` and says so in the daemon log — the thread still opens. The welcome's
 `orchestrator` review role is the council input it already writes; nothing new is stored.
 
-**Explain labels its anchor.** `anchoredAskText` renders `Code reference:` as one line naming the
-board target, the lens, the path and the line range from the `CodeRef`, and then the JSON as
-today (the briefing tells the thread the JSON is the same anchor `app_ask_stage` accepts, so it can
-stage against it). Bounds unchanged.
+**Explain labels its anchor.** `anchoredAskText` renders one line naming the board target, the
+lens, the path and the line range, and then `Code reference:` with the JSON as today. The JSON is
+a `CodeRef` (`protocol/delta/citations.ts`: `patchsetId`, `path`, `side`, `startLine`, `endLine`,
+optional `symbol`) — it carries no board and no lens, which is why the labelled line above it
+does. `ask.stage` takes a `StagedAsk` (`protocol/session/ask-log.ts`) whose `anchor` is a required
+string and whose `codeRef` is the optional canonical position, so the briefing tells the thread to
+pass that JSON as the ask's `codeRef` beside its own `anchor` and body. Bounds unchanged.
 
 **Doc and glossary edits, in this change.** `getting-started.md:437` becomes: the thread can use
 Rennet as you do — read the boards, stage asks into your composer, compose a handoff, dispatch a
