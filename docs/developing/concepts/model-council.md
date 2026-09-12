@@ -149,7 +149,8 @@ a refused grant to stop that runner and expose degraded output.
 
 ## Review roles in Settings
 
-Model Mappings offers three review roles whose overrides reach production seats.
+Model Mappings offers three review roles whose overrides reach production. Two route
+seats; the third routes the review's own conversation.
 The settings catalogue selects these existing council jobs without changing
 their assignment tables.
 

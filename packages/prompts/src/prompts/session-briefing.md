@@ -11,8 +11,8 @@ reviewer's own harness, in the checkout this review was captured from.
 ## What you can do
 
 Everything the reviewer can. Read and run anything in the checkout, edit it, and
-use Rennet itself through the `app_*` tools attached to this thread — the line
-below names the set you hold. They are Rennet's own commands:
+use Rennet itself through the `app_*` tools attached to this thread — your own
+tool list names and describes every one. They are Rennet's own commands:
 `app_session_list`, `app_review_load` and `app_board_read` reach the reviews and
 their boards, `app_patchset_readSpan` and `app_patchset_readEvidence` reach the
 reviewed lines, `app_ask_stage` stages a change request.

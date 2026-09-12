@@ -178,8 +178,10 @@ describe("bindReviewThread creates the session thread briefed and tooled", () =>
     // 3. THE COUNCIL'S ROUTING. Absent before this change, so every review's conversation
     //    ran on the sidecar's default whatever the reviewer had chosen.
     expect(create?.modelSelection).toBe(SELECTION);
-    // And the briefing names the tools it was actually handed.
-    expect(create?.instructions).toContain("app_board_read");
+    // And the briefing states how many tools it was actually handed, and on which server.
+    expect(create?.instructions).toContain(
+      `${appToolNames().length} \`app_*\` tools on the \`rennet_app\` MCP server`,
+    );
   });
 
   it("names the session's context directory, relative to the thread's cwd, only when one exists", async () => {
@@ -355,12 +357,20 @@ describe("every tool the briefing names is a tool the app server serves", () => 
 
 // The ceiling is not a theory: the SHIPPED briefing, the REAL exposed command set and a
 // realistic review have to fit under it TOGETHER, and only production knows all three at
-// once. Measured at the merge of cluster 4: 4,056 B of 4,096 — 2,789 B of fixed prose, 29
-// tool names, and the review's three lines. That is thin, deliberately so (an append is a
-// prefix re-read on every round trip of every turn for the thread's life), and the line it
-// costs first is the tool list, which `boundedReviewLines` drops from the end with an
-// honest marker. Flipping a few more rows into `AGENT_EXPOSED` is what would spend the
-// remaining bytes, so the assertion is on the LINE surviving, not only on the total.
+// once.
+//
+// It was 4,062 B of 4,096 when the tool line enumerated all 29 names: 34 B of headroom, and
+// `boundedReviewLines` drops from the END, so two more `AGENT_EXPOSED` rows would have
+// deleted the whole tool line and left the thread told nothing about its tools at all.
+//
+// The names were never that line's to carry. The harness's own `tools/list` delivers every
+// one with a description before the first turn runs, so restating them in a system-prompt
+// append — a prefix re-read on every round trip of every turn for the thread's life — was a
+// restatement of something that already travels, which is the rule that also keeps the
+// output schema out of prompt text. The line now carries the COUNT and the server name:
+// 3,484 B of 4,096 (2,806 B of fixed prose, 612 B of headroom), and a line whose length no
+// longer moves with the size of the tool surface. The assertion below is still on the LINE
+// surviving rather than only on the total.
 describe("the real briefing fits, with its tool line intact", () => {
   it("renders the shipped file and the live tool set under the ceiling", () => {
     const promptsSrcDir = join(dirname(fileURLToPath(import.meta.url)), "../../../prompts/src");
@@ -376,14 +386,14 @@ describe("the real briefing fits, with its tool line intact", () => {
       },
       // A real session context directory path: a uuid under `.rennet/context/`.
       contextDir: ".rennet/context/a1b2c3d4-5e6f-4071-8293-a4b5c6d7e8f9",
-      toolNames: appToolNames(),
+      tools: { count: appToolNames().length, serverName: "rennet_app" },
     });
     expect(Buffer.byteLength(rendered, "utf8")).toBeLessThanOrEqual(SESSION_BRIEFING_MAX_BYTES);
     // Not merely under the ceiling — still SAYING the three things it is for. A render that
     // spent its budget would carry the omission marker instead of one of these.
     expect(rendered).toContain("Patchset:");
     expect(rendered).toContain("context directory");
-    expect(rendered).toContain("Rennet tools on this thread:");
+    expect(rendered).toContain(`${appToolNames().length} \`app_*\` tools`);
     expect(rendered).not.toContain("more review lines omitted");
     // ...and the fixed prose survives WHOLE. `capBytes` is the renderer's last resort and it
     // ends the text with a bare "…", which would eat the closing register guidance silently.

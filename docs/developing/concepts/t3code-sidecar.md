@@ -728,9 +728,11 @@ rather than silently bare.
 **The briefing is a map under 4,096 bytes, and it carries no content.** The fixed text is
 `session-briefing.md` in `@rennet/prompts`; `renderSessionBriefing` splices the dynamic
 lines — the patchset (branch or pull request, base and head oids, the exact `git diff`
-command), the session's context directory when one exists, and the names of the tools
-actually attached — and enforces `SESSION_BRIEFING_MAX_BYTES` with an honest truncation
-marker. No board, no diff, no file inventory: an append is a prefix, re-read on every round
+command), the session's context directory when one exists, and how many tools are attached
+on which server — and enforces `SESSION_BRIEFING_MAX_BYTES` with an honest truncation
+marker. It carries the tool COUNT and not the tool names: the harness's own `tools/list`
+delivers every name with its description before the first turn runs, so restating them in a
+prefix re-read on every round trip is a restatement of something that already travels. No board, no diff, no file inventory: an append is a prefix, re-read on every round
 trip of every turn for the life of the thread, so the rule that no prompt carries context
 inline binds harder here than anywhere else. The thread reads what it decides it needs,
 through its tools and through the checkout it is already standing in.
@@ -755,10 +757,19 @@ says when it was used.
 rather than in its reply, and the app-tools url names the thread in its path
 (`/threads/<threadId>`). So `bindReviewThread` mints the id, builds the address from it, and
 hands both to one `thread.create`; a create that minted its own id would give the thread an
-address pointing at a different conversation. An Explain sent to this thread carries an
-`Anchor:` line above its `Code reference:` naming the board, the element, the path and the
-lines, because a `CodeRef` carries none of the first two and the briefing tells the thread
-to read that line.
+address pointing at a different conversation.
+
+**The bind is the only thing that creates this thread.** The hand-off runs on it too — the
+same `{ kind: "session" }` key — and takes the binding from `dispatch/review.ts` rather than
+making one, because a thread's instructions and MCP servers are fixed at create: whichever
+path got there first would otherwise decide, for the thread's whole life, whether the
+reviewer's conversation knew anything about Rennet.
+
+**An Explain names its anchor.** A question sent from a board span carries an `Anchor:` line
+above its `Code reference:`, naming the board, the element, the path and the line range. A
+`CodeRef` carries the patchset, path, side and lines and nothing about where the reviewer
+was looking, so the label is the only thing that can say it — and the briefing tells the
+thread to read that line.
 
 ## The app-tools server
 

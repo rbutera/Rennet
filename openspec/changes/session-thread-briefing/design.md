@@ -96,7 +96,7 @@ ceiling that must also hold the review's lines, and its ground rules tell a writ
 lenses or boards, which is the opposite of what this thread does for the reviewer (Rai,
 2026-09-12). `renderSessionBriefing(input)` in `prompt-contracts.ts` splices the dynamic lines — the
 patchset (branch or PR number, base and head oids, the exact `git diff <base>...<head>` command),
-the context directory path when one exists, the tool names actually attached — and enforces
+the context directory path when one exists, the COUNT of attached tools and the server serving them — and enforces
 `SESSION_BRIEFING_MAX_BYTES = 4096` with an honest truncation marker on the dynamic lines only
 (the fixed text is sized to fit with room; the manifest test pins it). Every interpolation names
 its bound at the call site. The renderer is node-free; the daemon resolves the file.
@@ -177,3 +177,10 @@ Additive. Existing session threads were created without instructions or servers 
 for their life; the thread list reads sensibly because their titles do not change. A reviewer who
 wants a briefed thread on an old session archives and reopens it (un-archiving creates a fresh
 thread, `t3-lens-threads`). No setting, no flag, no fallback engine.
+
+One stored value changes meaning: an `orchestrator-chat` cell under `routing.task` in an existing
+`client-settings.json` was INERT before this change — the welcome wrote it against a catalogue with
+no `orchestrator` role, so `taskOverridesFor` never read it back — and is now LIVE. A reviewer who
+picked an orchestrator in the welcome, or hand-edited that cell, gets the provider they named on
+their next session thread rather than the `both` table's default. Nothing is migrated: the value
+was always a legal override and it now reaches the job it always named.

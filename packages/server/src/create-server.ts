@@ -5490,11 +5490,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // once per THREAD (`creation` is a thunk), so there is nothing left to save.
       modelSelection: (repoRoot) =>
         resolveSessionThreadModel(repoRoot, {
-          claudeAvailable: async (root) => (await claudeAdapterForRepo(root)) !== null,
-          codexAvailable: async (root) =>
-            (await getCodexResolution(locusContextForRepo(root).locus)).availability.available,
-          disabledHarnesses: (root) => {
-            const { locus } = locusContextForRepo(root);
+          // `turnRoot` by name as well as by value, because the locus-threading guard
+          // (`locus-harness-threading.test.ts`) enumerates these call sites by argument
+          // identifier: a WSL adapter BAKES its `--cd` at construction, so the root handed
+          // to the resolver is the tree every turn of that harness really runs in. This one
+          // arrives from `bindReviewThread` as the session's bound workspace.
+          claudeAvailable: async (turnRoot) => (await claudeAdapterForRepo(turnRoot)) !== null,
+          codexAvailable: async (turnRoot) => {
+            const locus = locusContextForRepo(turnRoot).locus;
+            return (await getCodexResolution(locus)).availability.available;
+          },
+          disabledHarnesses: (turnRoot) => {
+            const { locus } = locusContextForRepo(turnRoot);
             const source = locus.kind === "wsl" ? `wsl:${locus.distro}` : "local";
             return daemonSettingsStore.readState().config.hosts?.[source]?.disabledHarnesses ?? [];
           },

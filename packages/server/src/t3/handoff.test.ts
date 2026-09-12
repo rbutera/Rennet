@@ -103,7 +103,7 @@ describe("runHandoffTurn", () => {
   });
 
   it("reports a failed or interrupted turn as failed with T3's reason, keeping the diff it did produce", async () => {
-    const { client, threadFor } = stubs(
+    const { client } = stubs(
       { turnId: "turn-1", state: "error", thread: thread("error", [], "provider crashed") },
       { diff: "partial", files: [{ path: "a" }] },
     );
@@ -134,7 +134,7 @@ describe("runHandoffTurn", () => {
   });
 
   it("carries per-turn main-loop usage without subtracting the previous handoff", async () => {
-    const { client, threadFor } = stubs({
+    const { client } = stubs({
       turnId: "turn-2",
       state: "completed",
       thread: thread("completed"),
@@ -169,7 +169,7 @@ describe("runHandoffTurn", () => {
   // the throw as "the turn changed nothing" — losing the diff AND the checkpoint handle a
   // revert needs, over a round that had genuinely committed. So the read WAITS.
   it("waits for a checkpoint that lands after the turn settles, and keeps its diff", async () => {
-    const { client, threadFor } = stubs({
+    const { client } = stubs({
       turnId: "turn-1",
       state: "completed",
       thread: thread("completed"),
@@ -204,7 +204,7 @@ describe("runHandoffTurn", () => {
   // checkpoint — as the code did before Codex #817-2 — is the "lie in the UI" family: spend and
   // a moved branch the receipt cannot see. So the honest outcome is FAILED, naming thread+turn.
   it("fails a completed turn whose checkpoint never arrives, naming the thread and turn", async () => {
-    const { client, threadFor } = stubs({
+    const { client } = stubs({
       turnId: "turn-1",
       state: "completed",
       thread: thread("completed"),
@@ -233,7 +233,7 @@ describe("runHandoffTurn", () => {
   // A read FAILURE (an RPC error, a disconnected sidecar) is NOT a late checkpoint: it must not
   // be retried into silence, and it fails at once rather than after the whole 10s wait.
   it("fails immediately on a non-not-ready read error, without retrying the wait", async () => {
-    const { client, threadFor } = stubs({
+    const { client } = stubs({
       turnId: "turn-1",
       state: "completed",
       thread: thread("completed"),
@@ -475,7 +475,7 @@ describe("readRoundTurnCheckpoint", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe("a handoff turn on a briefed session thread", () => {
   it("starts with no mcpServers of its own, so the thread's set is the only one in play", async () => {
-    const { client, startTurn, threadFor } = stubs({
+    const { client, startTurn } = stubs({
       turnId: "turn-1",
       state: "completed",
       thread: thread("completed", [

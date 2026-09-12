@@ -161,9 +161,12 @@ async function sessionThreadCreation(
       briefing: fixed,
       patchset,
       ...(contextDir === undefined ? {} : { contextDir }),
-      // The tool names the server ACTUALLY serves, and none at all when no listener
-      // answered above.
-      toolNames: app === undefined ? [] : appToolNames(),
+      // HOW MANY tools the server actually serves and what it is called — never the
+      // names, which the harness's own `tools/list` delivers with a description each. No
+      // listener answered above ⇒ no tools, and the line says so.
+      ...(app === undefined
+        ? {}
+        : { tools: { count: appToolNames().length, serverName: app.name } }),
     });
   } catch (error) {
     warn(`rennet: review ${review.id}'s thread gets no briefing: ${describeThreadError(error)}`);

@@ -9,7 +9,7 @@ import {
   SESSION_BRIEFING_FILE,
   SESSION_BRIEFING_MAX_BYTES,
   SESSION_BRIEFING_REF_MAX_BYTES,
-  SESSION_BRIEFING_TOOL_NAME_CAP,
+  SESSION_BRIEFING_TOOL_SERVER_MAX_BYTES,
   type SessionBriefingInput,
 } from "./index.js";
 import { prohibitions } from "./test/prohibitions.js";
@@ -20,6 +20,10 @@ const encoder = new TextEncoder();
 const bytes = (text: string): number => encoder.encode(text).length;
 
 /** The tool set the session thread is expected to hold (`AGENT_EXPOSED`, projected). */
+const TOOLS = { count: 29, serverName: "rennet_app" } as const;
+
+/** The tool set the session thread is expected to hold (`AGENT_EXPOSED`, projected). Named
+ *  here so the leak fixtures and the "never the names" assertion share one list. */
 const TOOL_NAMES = [
   "app_session_list",
   "app_review_load",
@@ -90,10 +94,14 @@ function briefingFor(change: ChangeFixture, leak: LeakOptions = {}): string {
       leak.leakInventory === true
         ? `.rennet/context/ses_01HZ-${change.files.length}-files`
         : ".rennet/context/ses_01HZ",
-    toolNames:
-      leak.leakThroughTools === true && element !== undefined
-        ? [...TOOL_NAMES, element.title]
-        : [...TOOL_NAMES],
+    // The COUNT and the server, never the names (the harness's own `tools/list` carries
+    // those). A leak fixture therefore has to try it through the SERVER NAME, which is the
+    // only free-text field this line still has.
+    tools: {
+      count: TOOL_NAMES.length,
+      serverName:
+        leak.leakThroughTools === true && element !== undefined ? element.title : "rennet_app",
+    },
   };
   return renderSessionBriefing(input);
 }
@@ -120,10 +128,13 @@ describe("renderSessionBriefing", () => {
     expect(rendered).toContain("`.rennet/context/ses_01HZ/`");
     expect(rendered).toContain("its `README.md` indexes every file there");
     expect(rendered).toContain("Nothing is sent to you inline");
-    // The tools actually attached, every one of them.
-    for (const name of TOOL_NAMES) {
-      expect(rendered, `tool ${name}`).toContain(`\`${name}\``);
-    }
+    // HOW MANY tools are attached and where they are served — never the names, which the
+    // harness's own `tools/list` already delivers with a description each.
+    expect(rendered).toContain("10 `app_*` tools on the `rennet_app` MCP server");
+    // Not on the DYNAMIC line — the fixed prose hand-names six of them on purpose, which
+    // is what teaches the thread what a tool is FOR; the ~900 B enumeration is what went.
+    const toolLine = rendered.split("\n").find((line) => line.startsWith("- Rennet tools")) ?? "";
+    for (const name of TOOL_NAMES) expect(toolLine, `tool ${name}`).not.toContain(name);
     // The fixed half rides in whole — it is the map the dynamic lines hang off.
     expect(rendered).toContain("You are the conversation of one Rennet review session");
     expect(rendered).toContain("## This review");
@@ -140,7 +151,7 @@ describe("renderSessionBriefing", () => {
         headOid: "19abfee6",
         diffCommand: "git diff 807bcfeb...19abfee6",
       },
-      toolNames: [...TOOL_NAMES],
+      tools: TOOLS,
     });
     expect(rendered).toContain("- Patchset: pull request #943 on `feat/marketing-lens-sections`");
     // A chat-only session has no context directory yet, and the briefing says nothing
@@ -208,7 +219,7 @@ describe("renderSessionBriefing", () => {
         headOid: "bbb2222",
         diffCommand: "git diff aaa1111...bbb2222",
       },
-      toolNames: ["app_board_read"],
+      tools: TOOLS,
     } as const satisfies SessionBriefingInput;
     const lineOf = (rendered: string, prefix: string): string =>
       rendered.split("\n").find((line) => line.startsWith(prefix)) ?? "";
@@ -253,13 +264,16 @@ describe("renderSessionBriefing", () => {
       "indexes every file there",
     );
 
-    const longToolNames = renderSessionBriefing({
+    const longServerName = renderSessionBriefing({
       ...base,
-      toolNames: [`app_${"x".repeat(300)}`, "app_board_read"],
+      tools: { count: 29, serverName: `rennet_${"x".repeat(300)}` },
     });
-    const toolLine = lineOf(longToolNames, "- Rennet tools");
-    expect(toolLine, "each name is cut inside its own backticks").toMatch(/`app_x+…`/);
-    expect(toolLine).toContain("`app_board_read`");
+    const toolLine = lineOf(longServerName, "- Rennet tools");
+    expect(toolLine, "the server name is cut inside its own backticks").toMatch(/`rennet_x+…`/);
+    expect(
+      bytes(toolLine),
+      "and the line's length does not move with the size of the tool surface",
+    ).toBeLessThan(SESSION_BRIEFING_TOOL_SERVER_MAX_BYTES + 160);
   });
 
   it("holds the ceiling for a fixed text that is already over it", () => {
@@ -276,7 +290,7 @@ describe("renderSessionBriefing", () => {
         diffCommand: "git diff aaa1111...bbb2222",
       },
       contextDir: ".rennet/context/ses_01HZ",
-      toolNames: [...TOOL_NAMES],
+      tools: TOOLS,
     } as const satisfies Omit<SessionBriefingInput, "briefing">;
 
     for (const fixedBytes of [2_816, 3_950, 5_000]) {
@@ -350,14 +364,19 @@ describe("renderSessionBriefing", () => {
             headOid: "bbb2222",
             diffCommand: "git diff aaa1111...bbb2222",
           },
-          toolNames: [...TOOL_NAMES],
+          tools: TOOLS,
         }),
       ),
       "a prohibition wrapped across a line break is still a prohibition",
     ).toHaveLength(1);
   });
 
-  it("lists the tool-name cap's worth and counts the remainder", () => {
+  it("carries the tool COUNT and the server, and never the names", () => {
+    // The names travel separately and better: the harness's own `tools/list` delivers every
+    // name with a description before the first turn runs, so restating them in a
+    // system-prompt append is a restatement — of ~900 B, re-read on every round trip of
+    // every turn for the thread's life. `renderSessionBriefing` is no longer even GIVEN
+    // them, which is the structural version of that rule.
     const rendered = renderSessionBriefing({
       briefing: "# Stub briefing",
       patchset: {
@@ -367,11 +386,42 @@ describe("renderSessionBriefing", () => {
         headOid: "bbb2222",
         diffCommand: "git diff aaa1111...bbb2222",
       },
-      toolNames: Array.from({ length: SESSION_BRIEFING_TOOL_NAME_CAP + 7 }, (_u, i) => `app_t${i}`),
+      tools: { count: 29, serverName: "rennet_app" },
     });
-    expect(rendered).toContain(`\`app_t${SESSION_BRIEFING_TOOL_NAME_CAP - 1}\``);
-    expect(rendered).not.toContain(`\`app_t${SESSION_BRIEFING_TOOL_NAME_CAP}\``);
-    expect(rendered).toContain("…and 7 more attached but not listed here");
+    expect(rendered).toContain(
+      "- Rennet tools on this thread: 29 `app_*` tools on the `rennet_app` MCP server",
+    );
+    expect(rendered).toContain("your own tool list names and describes each one");
+    // The stub briefing carries no prose, so the whole render is the dynamic lines here.
+    for (const name of TOOL_NAMES) expect(rendered).not.toContain(name);
+  });
+
+  it("does not grow when the exposed surface grows — 200 tools, same line", () => {
+    // The overflow this replaced: at 29 names the render sat 34 B under the ceiling, and
+    // `boundedReviewLines` drops from the END, so two more `AGENT_EXPOSED` rows deleted this
+    // whole line and left the thread told nothing about its tools. A count cannot overflow.
+    const render = (count: number): string =>
+      renderSessionBriefing({
+        briefing: fixedBriefing,
+        patchset: {
+          kind: "branch",
+          branch: "feat/session-thread-briefing",
+          baseOid: "a".repeat(40),
+          headOid: "b".repeat(40),
+          diffCommand: `git diff ${"a".repeat(40)}...${"b".repeat(40)}`,
+        },
+        contextDir: ".rennet/context/a1b2c3d4-5e6f-4071-8293-a4b5c6d7e8f9",
+        tools: { count, serverName: "rennet_app" },
+      });
+    const small = render(29);
+    const huge = render(200);
+    expect(bytes(huge)).toBeLessThanOrEqual(SESSION_BRIEFING_MAX_BYTES);
+    // One byte apart: "29" against "200". Nothing else moved.
+    expect(bytes(huge) - bytes(small)).toBe(1);
+    expect(huge).toContain("200 `app_*` tools");
+    expect(huge).not.toContain("more review lines omitted");
+    // The shipped fixed text still arrives whole at 200 tools.
+    expect(huge.startsWith(fixedBriefing.trimEnd())).toBe(true);
   });
 
   it("says so when no tools are attached", () => {
@@ -386,9 +436,23 @@ describe("renderSessionBriefing", () => {
         headOid: "bbb2222",
         diffCommand: "git diff aaa1111...bbb2222",
       },
-      toolNames: [],
+      tools: { count: 0, serverName: "rennet_app" },
     });
     expect(rendered).toContain("- Rennet tools on this thread: none attached.");
+    // ...and with no listener at all, which is what a thread whose app server could not
+    // bind actually holds.
+    expect(
+      renderSessionBriefing({
+        briefing: "# Stub briefing",
+        patchset: {
+          kind: "branch",
+          branch: "main",
+          baseOid: "aaa1111",
+          headOid: "bbb2222",
+          diffCommand: "git diff aaa1111...bbb2222",
+        },
+      }),
+    ).toContain("- Rennet tools on this thread: none attached.");
   });
 });
 

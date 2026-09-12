@@ -5,7 +5,6 @@
 // `review.handoff.run` recaptures the checkout and offers the delta re-review as before.
 // No Effect here: the client's Promise API is the seam.
 
-import { basename } from "node:path";
 import { settledTurnUsage } from "@rennet/adapters";
 import type { HandoffTurnOutcome } from "@rennet/core";
 import type { RoundCheckpoint, RspTokenUsage } from "@rennet/protocol";
