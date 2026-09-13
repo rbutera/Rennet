@@ -100,9 +100,9 @@ whichever way it ends, so a script always has something to parse: a failure,
 cancellation, or timeout writes the review document with its reason, and even a
 capture-stage failure (before a review id exists) writes a small failure
 document, keyed by the session id, carrying `capture: "failed"`, the outcome,
-and the reason. The exceptions write nothing because there is no session to key
-a document on: a missing daemon and a usage mistake (`2`) both print only to
-stderr. A review opened this way is an ordinary
+and the reason. Errors BEFORE a session is created write no document and print
+only to stderr: usage errors (`2`), a missing or incompatible daemon, and an
+invalid checkout or pull-request target. A review opened this way is an ordinary
 session: open it in the app by its id afterwards and its boards and transcript
 are where you left them.
 
