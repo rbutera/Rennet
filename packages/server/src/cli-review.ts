@@ -9,6 +9,7 @@ import { parseArgs } from "node:util";
 import {
   type CommandOutput,
   currentGenerationId,
+  type ForgeRepoIdentity,
   LENS_KINDS,
   type LensDraftEvent,
   type LensKind,
@@ -16,6 +17,7 @@ import {
   REVIEW_CLI_FEATURE,
   type Review,
   type SessionPreparation,
+  sameForgeRepository,
 } from "@rennet/protocol";
 
 /** The default review timeout: half an hour, matching the desktop's patience for a generation. */
@@ -54,6 +56,14 @@ export interface ScopablePr {
   readonly number: number;
   /** The row's canonical `owner/name`, the daemon-produced identity (never CLI-spelled). */
   readonly repository: string;
+  /** The provider-qualified identity, when the row carries one; used to break same-slug forge ties. */
+  readonly forgeRepository?: ForgeRepoIdentity;
+}
+
+/** The standing checkout's daemon-resolved identity (headless-review-cli D11). */
+export interface StandingRepository {
+  readonly repository: string;
+  readonly forgeRepository?: ForgeRepoIdentity;
 }
 
 /** What `resolvePrTarget` decided: the one standing-repo row, nothing by that number, or a refusal. */
@@ -63,23 +73,37 @@ export type PrTargetResolution<Row extends ScopablePr> =
   | { readonly kind: "ambiguous"; readonly candidates: readonly string[] };
 
 /**
+ * Is this PR row in the standing repository? When both carry a provider-qualified identity, compare
+ * that (so a GitHub `acme/widget` checkout never matches a GitLab `acme/widget#7` row, same slug,
+ * different forge); otherwise fall back to the `owner/name` slug the older project-detail producers
+ * and local-only repos still carry.
+ */
+function prIsInStandingRepo(pr: ScopablePr, standing: StandingRepository): boolean {
+  if (pr.forgeRepository !== undefined && standing.forgeRepository !== undefined) {
+    return sameForgeRepository(pr.forgeRepository, standing.forgeRepository);
+  }
+  return pr.repository === standing.repository;
+}
+
+/**
  * Scope `--pr <n>` to the STANDING repository (headless-review-cli D11). A branch NAME and a PR
  * NUMBER are each unique only within one repo, so `prs.find(pr => pr.number === n)` project-wide
- * captures the wrong repo in a workspace. Match on `(number, standingRepository)`: exactly one
+ * captures the wrong repo in a workspace. Match on `(number, standing repository)`: exactly one
  * standing-repo row is `found`; no row anywhere by that number is `not-listed`; and rows exist by
  * that number but none is the standing repo's (a cross-repo collision, or a #n that lives only in
  * a sibling) is `ambiguous`, carrying every `owner/name#number` candidate so the refusal names
- * them rather than taking a project-wide first hit. `standingRepository` is the daemon's own
- * identity string for the checkout, so the match cannot drift from what the row carries.
+ * them rather than taking a project-wide first hit. The standing identity is the daemon's own
+ * (repository + forgeRepository) for the checkout, so the match cannot drift from what the row
+ * carries, and a same-slug cross-forge collision is decided by forge, not name.
  */
 export function resolvePrTarget<Row extends ScopablePr>(
   prs: readonly Row[],
   prNumber: number,
-  standingRepository: string,
+  standing: StandingRepository,
 ): PrTargetResolution<Row> {
   const matches = prs.filter((pr) => pr.number === prNumber);
   if (matches.length === 0) return { kind: "not-listed" };
-  const scoped = matches.filter((pr) => pr.repository === standingRepository);
+  const scoped = matches.filter((pr) => prIsInStandingRepo(pr, standing));
   const only = scoped.length === 1 ? scoped[0] : undefined;
   if (only !== undefined) return { kind: "found", row: only };
   return { kind: "ambiguous", candidates: matches.map((pr) => `${pr.repository}#${pr.number}`) };

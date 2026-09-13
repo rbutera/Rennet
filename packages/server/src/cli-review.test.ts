@@ -336,24 +336,52 @@ describe("buildReviewDocument (tasks.md 3.3)", () => {
 describe("resolvePrTarget: scope --pr <n> to the standing repo (headless-review-cli D11)", () => {
   const A = { number: 7, repository: "owner/repo-a", branch: "feat/x" };
   const B = { number: 7, repository: "owner/repo-b", branch: "feat/x" };
+  const inRepoA = { repository: "owner/repo-a" };
+  const inRepoB = { repository: "owner/repo-b" };
 
   it("finds the standing repo's row when the number is unique within it", () => {
     // The single-repo case: one row, and it is the standing repo's. Byte-identical to the
     // pre-D11 `prs.find(number === n)` for a lone repo.
-    expect(resolvePrTarget([A], 7, "owner/repo-a")).toEqual({ kind: "found", row: A });
+    expect(resolvePrTarget([A], 7, inRepoA)).toEqual({ kind: "found", row: A });
   });
 
   it("picks the standing repo's row out of a cross-repo number collision", () => {
     // Two repos both carry #7. The pre-D11 `prs.find` would have taken whichever came first;
     // scoping takes the standing one.
-    expect(resolvePrTarget([B, A], 7, "owner/repo-a")).toEqual({ kind: "found", row: A });
-    expect(resolvePrTarget([A, B], 7, "owner/repo-b")).toEqual({ kind: "found", row: B });
+    expect(resolvePrTarget([B, A], 7, inRepoA)).toEqual({ kind: "found", row: A });
+    expect(resolvePrTarget([A, B], 7, inRepoB)).toEqual({ kind: "found", row: B });
+  });
+
+  it("breaks a same-slug cross-forge collision by forge, never by name", () => {
+    // Both rows are `acme/widget#7`, one on GitHub and one on GitLab. Slug alone would scope
+    // both (ambiguous); the standing forge identity picks the one the checkout is actually in.
+    const gh = {
+      number: 7,
+      repository: "acme/widget",
+      forgeRepository: { forge: "github", owner: "acme", name: "widget" },
+    };
+    const gl = {
+      number: 7,
+      repository: "acme/widget",
+      forgeRepository: { forge: "gitlab", owner: "acme", name: "widget" },
+    };
+    expect(
+      resolvePrTarget([gh, gl], 7, {
+        repository: "acme/widget",
+        forgeRepository: { forge: "gitlab", owner: "acme", name: "widget" },
+      }),
+    ).toEqual({ kind: "found", row: gl });
+    // Slug-only comparison would have matched both and refused; forge disambiguation finds one.
+    expect(resolvePrTarget([gh, gl], 7, { repository: "acme/widget" })).toEqual({
+      kind: "ambiguous",
+      candidates: ["acme/widget#7", "acme/widget#7"],
+    });
   });
 
   it("refuses a collision where NONE of the rows is the standing repo, listing every candidate", () => {
     // The exact bug D11 names: `prs.find(number === n)` would have returned repo-a's #7 while
     // the reviewer stands in a THIRD repo. Refuse, and name both real candidates.
-    expect(resolvePrTarget([A, B], 7, "owner/repo-c")).toEqual({
+    expect(resolvePrTarget([A, B], 7, { repository: "owner/repo-c" })).toEqual({
       kind: "ambiguous",
       candidates: ["owner/repo-a#7", "owner/repo-b#7"],
     });
@@ -362,15 +390,15 @@ describe("resolvePrTarget: scope --pr <n> to the standing repo (headless-review-
   it("refuses a single #n that lives only in a sibling repo, not the standing one", () => {
     // A lone #7, but in repo-b, while the reviewer stands in repo-a: `prs.find` would have
     // opened the sibling's PR silently. Scoping refuses and names the one candidate.
-    expect(resolvePrTarget([B], 7, "owner/repo-a")).toEqual({
+    expect(resolvePrTarget([B], 7, inRepoA)).toEqual({
       kind: "ambiguous",
       candidates: ["owner/repo-b#7"],
     });
   });
 
   it("reports not-listed when no row anywhere carries that number", () => {
-    expect(resolvePrTarget([A, B], 9, "owner/repo-a")).toEqual({ kind: "not-listed" });
-    expect(resolvePrTarget([], 7, "owner/repo-a")).toEqual({ kind: "not-listed" });
+    expect(resolvePrTarget([A, B], 9, inRepoA)).toEqual({ kind: "not-listed" });
+    expect(resolvePrTarget([], 7, inRepoA)).toEqual({ kind: "not-listed" });
   });
 });
 

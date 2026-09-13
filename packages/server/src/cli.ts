@@ -1024,7 +1024,9 @@ async function driveReview(
     })) as CommandOutput<"project.detail">;
     // Scope `--pr <n>` to the standing repository (headless-review-cli D11): a bare number is
     // unique only within one repo, so a project-wide `prs.find` can open a sibling repo's PR.
-    const resolution = resolvePrTarget(detail.prs, target.number, standing.repository);
+    // The full standing identity (with forgeRepository) is passed so a same-slug cross-forge
+    // collision is decided by forge, not name.
+    const resolution = resolvePrTarget(detail.prs, target.number, standing);
     if (resolution.kind === "not-listed") {
       io.err(
         detail.authUnavailable !== undefined
