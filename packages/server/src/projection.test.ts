@@ -1141,3 +1141,81 @@ describe("repository.identify output projection (#952)", () => {
     expect(projectCommandOutput("repository.identify", identity, ctx)).toEqual(identity);
   });
 });
+
+describe("session + project repository-identity projection (the P1, #952)", () => {
+  // A local-only checkout (or a linked worktree with no forge remote) stamps
+  // `SessionModel.repository` with the durable git-common-dir — an ABSOLUTE HOST PATH. It rides to
+  // the sidebar via `SidebarSession.repository` and to `project.detail`'s rows the same way. These
+  // fixtures put that common-dir OUTSIDE every registered root and the home dir, so the blanket root
+  // scrub cannot touch it and ONLY the new identity scrub stands between the host path and a
+  // projected client. `repositoryRoot`/`boundRoot` are deliberately absent from the sidebar shape.
+  const COMMON_DIR = "/srv/git/common/repo-b.git";
+  const localOnlySession = {
+    id: "s1",
+    projectId: "p1",
+    target: "your-branch",
+    claim: { branch: "feat/x" },
+    repository: COMMON_DIR,
+    createdAt: 1,
+  };
+
+  it("scrubs a common-dir session identity out of session.list to a projected client", () => {
+    const out = projectCommandOutput("session.list", { sessions: [localOnlySession] }, ctx) as {
+      sessions: { repository: string }[];
+    };
+    expect(out.sessions[0]?.repository).not.toContain("/srv/git");
+    expect(out.sessions[0]?.repository).toBe("<path>");
+  });
+
+  it("scrubs the minted session's common-dir identity out of session.mint", () => {
+    const out = projectCommandOutput(
+      "session.mint",
+      { session: localOnlySession, reattached: false },
+      ctx,
+    ) as { session: { repository: string }; reattached: boolean };
+    expect(out.session.repository).not.toContain("/srv/git");
+    expect(out.session.repository).toBe("<path>");
+  });
+
+  it("leaves an owner/name slug on a session byte-identical (the single-repo / forge wire)", () => {
+    const slugSession = { ...localOnlySession, repository: "acme/widget" };
+    const out = projectCommandOutput(
+      "session.mint",
+      { session: slugSession, reattached: true },
+      ctx,
+    ) as { session: { repository: string } };
+    expect(out.session.repository).toBe("acme/widget");
+  });
+
+  it("passes a null minted session through untouched", () => {
+    const out = projectCommandOutput("session.mint", { session: null, reattached: false }, ctx) as {
+      session: null;
+    };
+    expect(out.session).toBeNull();
+  });
+
+  it("scrubs a common-dir under a known root to that root's display token", () => {
+    const out = projectCommandOutput(
+      "session.list",
+      { sessions: [{ ...localOnlySession, repository: `${REPO}/.git` }] },
+      ctx,
+    ) as { sessions: { repository: string }[] };
+    expect(out.sessions[0]?.repository).not.toContain(REPO);
+    expect(out.sessions[0]?.repository).toContain("<rennet>");
+  });
+
+  it("scrubs the common-dir identity on project.detail's local-work and PR rows", () => {
+    const out = projectCommandOutput(
+      "project.detail",
+      {
+        viewer: { login: "rai" },
+        locals: [{ id: "l1", repository: COMMON_DIR, branch: "feat/x" }],
+        prs: [{ id: "pr1", number: 3, repository: COMMON_DIR, branch: "feat/y" }],
+        truncated: false,
+      },
+      ctx,
+    ) as { locals: { repository: string }[]; prs: { repository: string }[] };
+    expect(out.locals[0]?.repository).toBe("<path>");
+    expect(out.prs[0]?.repository).toBe("<path>");
+  });
+});

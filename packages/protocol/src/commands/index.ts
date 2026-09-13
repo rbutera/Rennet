@@ -54,6 +54,7 @@ import {
   projectLogoMimeSchema,
   projectLogoSchema,
   projectProcessRunSchema,
+  projectRepositoryAddressSchema,
   projectSchema,
   projectVisibilitySchema,
   prSubmissionSchema,
@@ -156,10 +157,12 @@ const definitions = {
   // than reaching an unknown command.
   "repository.identify": {
     input: z.object({ path: z.string().min(1) }),
-    output: z.object({
-      repository: z.string().min(1),
-      forgeRepository: forgeRepoIdentitySchema.optional(),
-    }),
+    // The identity the CLI mints and PR-scopes with: `owner/name` with a forge remote, else the
+    // durable git-common-dir string with `forgeRepository` absent. This is exactly the wire-safe
+    // `projectRepositoryAddressSchema` shape (`locals`/`prs` carry the same pair), and reusing it
+    // adds its `forgeRepositoryMatchesLegacy` refine so a slug and a structured identity can never
+    // be returned CONTRADICTING each other (#952 (a)) — a hand-rolled twin here allowed exactly that.
+    output: projectRepositoryAddressSchema,
   },
   "review.capture": {
     input: z.object({

@@ -573,3 +573,30 @@ describe("command registry invariants (#465)", () => {
     expect(isCommandName("ordering.approve")).toBe(false);
   });
 });
+
+describe("repository.identify output consistency (#952 (a))", () => {
+  // The output now reuses `projectRepositoryAddressSchema`, whose `forgeRepositoryMatchesLegacy`
+  // refine forbids a slug and a structured identity that name different repos. The hand-rolled
+  // twin this replaced allowed exactly that contradiction to be returned.
+  it("accepts a consistent owner/name slug beside its structured forge identity", () => {
+    const consistent = {
+      repository: "acme/widget",
+      forgeRepository: { forge: "github", owner: "acme", name: "widget" },
+    };
+    expect(parseCommandOutput("repository.identify", consistent)).toEqual(consistent);
+  });
+
+  it("accepts a forgeless local-only common-dir identity", () => {
+    const forgeless = { repository: "/srv/git/common/repo-b.git" };
+    expect(parseCommandOutput("repository.identify", forgeless)).toEqual(forgeless);
+  });
+
+  it("rejects a slug that contradicts its structured forge identity", () => {
+    expect(() =>
+      parseCommandOutput("repository.identify", {
+        repository: "acme/widget",
+        forgeRepository: { forge: "github", owner: "other", name: "repo" },
+      }),
+    ).toThrow();
+  });
+});

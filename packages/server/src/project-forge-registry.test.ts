@@ -174,4 +174,23 @@ describe("forge registry", () => {
     ).toBe(true);
     expect(repositoryIdentityAgrees({}, { forgeRepository: GITHUB_WIDGET })).toBe(true);
   });
+
+  // sessions.start's rootless fallback (#952): `resolveProjectRepositoryRoot` does NOT swallow a
+  // failing git-identity read — it propagates the rejection. That is deliberate and load-bearing:
+  // the ONLY reason a git-identity read failure falls back to a rootless `enter` (accepted, no
+  // worse than the pre-#580 behaviour) is that `sessions.start` wraps this call in try/catch. If
+  // this ever started returning `undefined` on a throw instead, the caller's catch would go dead
+  // and a future refactor could turn the failure into a blocked mint unnoticed. Pin the propagation
+  // so the fallback stays a decision, not an accident.
+  it("propagates a failing identity read rather than swallowing it (rootless-enter fallback)", async () => {
+    await expect(
+      resolveProjectRepositoryRoot({
+        project: PROJECT,
+        target: { repository: "acme/widget", forgeRepository: GITHUB_WIDGET },
+        identityForRoot: async () => {
+          throw new Error("git rev-parse failed");
+        },
+      }),
+    ).rejects.toThrow("git rev-parse failed");
+  });
 });
