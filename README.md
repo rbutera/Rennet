@@ -6,7 +6,7 @@
 
 **For agentic engineers who stopped writing the code but still have to answer for it.** Not for vibe coders.
 
-Coding agents now write changes faster than anyone can read them. Rennet spends machine effort to save your attention, running the review through the Claude Code and Codex you already have installed.
+Coding agents produce large changes, and you still have to understand and answer for every one. Rennet spends machine effort to save your attention, running the review through the Claude Code and Codex you already have installed.
 
 <p align="center">
   <picture>
