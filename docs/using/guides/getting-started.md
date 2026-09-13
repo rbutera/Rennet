@@ -87,14 +87,19 @@ older daemon is refused at connect, naming the version to update to, rather than
 reviewing against the wrong repository.
 
 When the boards settle it writes a single JSON
-document (the review, the range, and every lens's board or its typed absence)
-to `<data dir>/reviews/<reviewId>.json` (or a path you pass with `--out`), and
-prints that absolute path as its last line, so a script can take `tail -1`.
+document (the review, the range, a per-lens `lanes` array giving each lens's
+outcome, and every lens's board or its typed absence) to
+`<data dir>/reviews/<reviewId>.json` (or a path you pass with `--out`), and
+prints that absolute path as its last line, so a script can take `tail -1`. The
+path is always absolute, even when `--data-dir` is relative.
 
 The exit code carries the outcome: `0` when the boards settled, `1` when the
 daemon was not running or the review failed, was cancelled, or ran past
-`--timeout` (default half an hour, and the document is still written with the
-reason), `2` for a usage mistake. A review opened this way is an ordinary
+`--timeout` (default half an hour). A document is still written on any of those,
+so a script always has something to parse: even a capture-stage failure (before
+a review id exists) writes a small failure document, keyed by the session id,
+carrying `capture: "failed"`, the outcome, and the reason. `2` is a usage
+mistake. A review opened this way is an ordinary
 session: open it in the app by its id afterwards and its boards and transcript
 are where you left them.
 

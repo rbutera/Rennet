@@ -1,3 +1,4 @@
+import { isAbsolute, resolve } from "node:path";
 import type {
   CommandOutput,
   LensDraftEvent,
@@ -242,6 +243,15 @@ describe("reviewDocumentPath", () => {
   it("keys the document by review id under reviews/", () => {
     expect(reviewDocumentPath("/data", "rev-9")).toBe("/data/reviews/rev-9.json");
   });
+
+  it("resolves a relative dataDir to an absolute document path (f)", () => {
+    // A relative `--data-dir` flowed unresolved to the default document path, so the JSON review
+    // document an automated caller waits for landed relative to the daemon's cwd, not where it
+    // looked. The path helper now resolves internally: a relative input yields an absolute path.
+    const relative = reviewDocumentPath("relative/data", "rev-3");
+    expect(isAbsolute(relative)).toBe(true);
+    expect(relative).toBe(resolve("relative/data", "reviews", "rev-3.json"));
+  });
 });
 
 // ── The document (tasks.md 3.3) ──────────────────────────────────────────────
@@ -330,6 +340,34 @@ describe("buildReviewDocument (tasks.md 3.3)", () => {
       reason: "seat crashed",
     });
     expect(document.reason).toBe("seat crashed");
+  });
+
+  it("carries a per-lens lane for every lens, done for a settled board and pending for an unsettled one (e)", () => {
+    // The document must let a consumer read each lens's outcome without parsing the whole board.
+    // A lens whose board settled is `done`; a lens the failed/timed-out generation never settled
+    // (no board, no absence, no failure) is honestly `pending`, never a fabricated `done`.
+    const document = buildReviewDocument({
+      review: fakeReview(),
+      sessionId: "sess-1",
+      projectId: "proj-1",
+      requestedHead: "feat/x",
+      rounds: [],
+      boards: boardsWith(boardRead({ board: null })),
+      outcome: "timeout",
+      startedAtMs: 1,
+      settledAtMs: 2,
+    });
+    // One lane per lens, no lens dropped.
+    expect(document.lanes.map((lane) => lane.id).sort()).toEqual([...LENS_KINDS].sort());
+    // A settled lens is `done` with no reason.
+    const done = document.lanes.find((lane) => lane.id !== "noise");
+    expect(done?.status).toBe("done");
+    expect(done).not.toHaveProperty("reason");
+    // The unsettled `noise` lens is pending, not a fabricated done.
+    expect(document.lanes.find((lane) => lane.id === "noise")).toEqual({
+      id: "noise",
+      status: "pending",
+    });
   });
 });
 

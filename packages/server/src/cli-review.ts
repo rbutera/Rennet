@@ -4,7 +4,7 @@
 // and where the document lands. `cli.ts` owns the socket, the poll and the writes; this file
 // owns everything a fixture can decide on its own.
 
-import { join } from "node:path";
+import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import {
   type CommandOutput,
@@ -296,9 +296,13 @@ export function lensDraftLines(event: LensDraftEvent, elapsedMs: number): string
   return [`${prefix}${event.lens}  wrote ${count} element${count === 1 ? "" : "s"}`];
 }
 
-/** `<dataDir>/reviews/<reviewId>.json` — a review's document beside every other keyed artifact. */
+/** `<dataDir>/reviews/<reviewId>.json`, a review's document beside every other keyed artifact.
+ *  `dataDir` is resolved to an absolute path so an automated caller always finds the document at a
+ *  stable location: a relative `--data-dir` (or a relative `RENNET_USER_DATA`) would otherwise make
+ *  the default document path relative to the daemon's cwd. An already-absolute dataDir resolves to
+ *  itself, so the daemon's own default path is unchanged. */
 export function reviewDocumentPath(dataDir: string, reviewId: string): string {
-  return join(dataDir, "reviews", `${reviewId}.json`);
+  return resolve(dataDir, "reviews", `${reviewId}.json`);
 }
 
 /** One lens's board.read answer, reduced to the keys it actually carries: never `board: null`. */
@@ -367,6 +371,48 @@ export interface ReviewDocument {
   readonly lanes: readonly ReviewDocumentLane[];
   readonly boards: Record<string, BoardEntry>;
   readonly review: Review;
+}
+
+/**
+ * The document written when a review fails BEFORE a review id exists (a capture-stage failure:
+ * repository resolution or change capture), so there is no review to load, no boards and no
+ * lanes (c). It is discriminated from a `ReviewDocument` by `capture: "failed"`, and carries the
+ * stable top-level fields an automated caller reads regardless of the document kind: `outcome`
+ * and `reason`. Its purpose is that a caller ALWAYS finds a JSON file to parse rather than
+ * nothing when a capture fails.
+ */
+export interface CaptureFailureDocument {
+  readonly schemaVersion: 1;
+  readonly capture: "failed";
+  readonly sessionId: string;
+  readonly projectId: string;
+  readonly outcome: Exclude<ReviewOutcome, "settled">;
+  readonly reason: string;
+  readonly startedAt: string;
+  readonly settledAt: string;
+}
+
+export interface CaptureFailureInput {
+  readonly sessionId: string;
+  readonly projectId: string;
+  readonly outcome: Exclude<ReviewOutcome, "settled">;
+  readonly reason: string;
+  readonly startedAtMs: number;
+  readonly settledAtMs: number;
+}
+
+/** Assemble the capture-stage failure document (c). No review is loaded because none exists yet. */
+export function buildCaptureFailureDocument(input: CaptureFailureInput): CaptureFailureDocument {
+  return {
+    schemaVersion: 1,
+    capture: "failed",
+    sessionId: input.sessionId,
+    projectId: input.projectId,
+    outcome: input.outcome,
+    reason: input.reason,
+    startedAt: new Date(input.startedAtMs).toISOString(),
+    settledAt: new Date(input.settledAtMs).toISOString(),
+  };
 }
 
 export interface ReviewDocumentInput {

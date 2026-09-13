@@ -96,6 +96,50 @@ describe("outbound structural projection", () => {
     expect(projected.attention).toBeUndefined();
   });
 
+  it("projects the review NESTED at result.review for review.handoff.run (h)", () => {
+    // `review.handoff.run` with status "ran" carries the newly-captured review at
+    // `result.review`, not at the top level. Its `repositoryRoot`/`patchsets[].repository`
+    // point at a git-common-dir OUTSIDE every known root (a data volume, say), which the
+    // blanket root/home scrub does not catch. Before the nested-review projection, the host
+    // path crossed to a paired client verbatim.
+    const external = "/srv/handoff/checkout";
+    const nestedReview = {
+      ...review,
+      repositoryRoot: external,
+      patchsets: [
+        {
+          id: "ps1",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          repository: { ...provenance, root: external, commonDir: `${external}/.git` },
+          files: [],
+        },
+      ],
+    };
+    const out = projectCommandOutput(
+      "review.handoff.run",
+      {
+        status: "ran",
+        result: {
+          review: nestedReview,
+          turnDiff: "",
+          filesTouched: [],
+          carriedForward: 0,
+          orphaned: 0,
+        },
+      },
+      ctx,
+    ) as { result: { review: Record<string, unknown> } };
+
+    const projected = out.result.review;
+    expect((projected.repositoryRoot as { repoKey: string }).repoKey).toBeTruthy();
+    const ps = (projected.patchsets as Record<string, unknown>[])[0] as Record<string, unknown>;
+    const prov = ps.repository as Record<string, { repoKey: string }>;
+    expect(prov.root?.repoKey).toBeTruthy();
+    expect(prov.commonDir?.repoKey).toBeTruthy();
+    // The external host path must not cross the projected connection anywhere in the frame.
+    expect(JSON.stringify(out)).not.toContain(external);
+  });
+
   it("attaches the additive attention summary when the daemon advertises attention (#383)", () => {
     // An attention-capable context: needs-you from the attention registry, running from the
     // in-flight-review registry — NOT pendingPatchsetId (staleness, deliberately ignored here).

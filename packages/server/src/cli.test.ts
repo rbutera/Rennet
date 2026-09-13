@@ -17,7 +17,12 @@ import { fileURLToPath } from "node:url";
 import { PROTOCOL_VERSION } from "@rennet/protocol";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
-import { type CliIo, NO_SIDECAR_WARNING, runCli as runSourceCli } from "./cli";
+import {
+  type CliIo,
+  NO_SIDECAR_WARNING,
+  runCli as runSourceCli,
+  writeCaptureFailureDocument,
+} from "./cli";
 import { REVIEW_USAGE } from "./cli-review";
 import { createRennetServer } from "./create-server";
 import { type DaemonInfo, readDaemonFile, removeDaemonFile, writeDaemonFile } from "./daemon-file";
@@ -693,6 +698,47 @@ describe("rennet review: argument and daemon-identity handling", () => {
     const code = await runSourceCli(argv, captured.io, {}, { probe: vi.fn(), kill: vi.fn() });
     expect(code).toBe(2);
     expect(captured.err.at(-1)).toBe(REVIEW_USAGE);
+  });
+
+  it("writes a findable failure document when the capture stage fails before a review exists (c)", () => {
+    // A capture-stage failure exits before a review id is minted, so `writeReviewDocument` (which
+    // loads a review by id) cannot run. The old path returned a non-zero exit with NO document, so
+    // an automated caller had nothing to parse. The capture-failure path now writes a minimal
+    // document keyed by the session id and prints its absolute path.
+    const dataDir = mkdtempSync(resolve(tmpdir(), "rennet-capture-fail-"));
+    try {
+      const captured = captureIo();
+      const code = writeCaptureFailureDocument({
+        sessionId: "sess-cap-1",
+        projectId: "proj-1",
+        dataDir,
+        outcome: "failed",
+        reason: "could not resolve the repository",
+        startedAtMs: 1_700_000_000_000,
+        settledAtMs: 1_700_000_000_500,
+        io: captured.io,
+      });
+      expect(code).toBe(1);
+      const path = captured.out.at(-1) ?? "";
+      // The document lands at the stable, findable path an automated caller looks for.
+      expect(path).toBe(resolve(dataDir, "reviews", "sess-cap-1.json"));
+      expect(existsSync(path)).toBe(true);
+      const document = JSON.parse(readFileSync(path, "utf8"));
+      expect(document).toMatchObject({
+        schemaVersion: 1,
+        capture: "failed",
+        outcome: "failed",
+        reason: "could not resolve the repository",
+        sessionId: "sess-cap-1",
+        projectId: "proj-1",
+      });
+      // The reason is also on stderr, for a human reading the terminal.
+      expect(captured.err.some((line) => line.includes("could not resolve the repository"))).toBe(
+        true,
+      );
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 
   it("reports the daemon-absent message and exits 1, before any other output", async () => {

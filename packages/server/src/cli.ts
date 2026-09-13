@@ -51,6 +51,7 @@ import { WebSocket } from "ws";
 import { createStageTimer, isMapBenchmarkStage } from "./benchmark-recorder";
 import { createBenchmarkRecording } from "./benchmark-store";
 import {
+  buildCaptureFailureDocument,
   buildReviewDocument,
   foldPreparationLines,
   lensDraftLines,
@@ -916,6 +917,52 @@ async function writeReviewDocument(input: {
   return input.outcome === "settled" ? 0 : 1;
 }
 
+/**
+ * Write the capture-stage FAILURE document (c). When the capture stage fails before a review id
+ * exists (repository resolution or change capture never produced a review), `writeReviewDocument`
+ * cannot run (it loads a review by id). This writes a minimal failure document keyed by the SESSION
+ * id, so an automated caller always finds a `<dataDir>/reviews/<id>.json` with the failure outcome
+ * and reason rather than nothing to parse. Prints the reason on stderr and the absolute path as the
+ * final stdout line; returns a non-zero exit.
+ */
+export function writeCaptureFailureDocument(input: {
+  sessionId: string;
+  projectId: string;
+  dataDir: string;
+  out?: string;
+  outcome: Exclude<ReviewOutcome, "settled">;
+  reason: string;
+  startedAtMs: number;
+  settledAtMs: number;
+  io: CliIo;
+}): number {
+  const { io } = input;
+  const document = buildCaptureFailureDocument({
+    sessionId: input.sessionId,
+    projectId: input.projectId,
+    outcome: input.outcome,
+    reason: input.reason,
+    startedAtMs: input.startedAtMs,
+    settledAtMs: input.settledAtMs,
+  });
+  const path =
+    input.out !== undefined
+      ? resolve(input.out)
+      : reviewDocumentPath(input.dataDir, input.sessionId);
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+  } catch (error) {
+    io.err(
+      `rennet review: could not write the document: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return 1;
+  }
+  io.err(`rennet review: ${input.reason}`);
+  io.out(path);
+  return 1;
+}
+
 /** The mint input for a resolved target: the branch/base for a range, or the PR row's fields. */
 type MintInput = {
   projectId: string;
@@ -945,7 +992,10 @@ async function review(
     io.err(REVIEW_USAGE);
     return 2;
   }
-  const dataDir = target.dataDir ?? env.RENNET_USER_DATA ?? defaultDataDir();
+  // Resolve once at the definition so a relative `--data-dir` (or relative `RENNET_USER_DATA`)
+  // reaches the socket path AND the default review-document path as an absolute location; an
+  // already-absolute dataDir resolves to itself, so the daemon's own default is unchanged (f).
+  const dataDir = resolve(target.dataDir ?? env.RENNET_USER_DATA ?? defaultDataDir());
 
   // Probe + connect FIRST, so the daemon-absent message is the first output (D9).
   let socket: CliSocket;
@@ -1097,8 +1147,22 @@ async function driveReview(
     io,
   );
   if (result.reviewId === undefined) {
-    io.err(`rennet review: ${result.reason ?? "the preparation produced no review"}`);
-    return 1;
+    // The capture stage failed before a review id existed (repository resolution or change
+    // capture). `writeReviewDocument` cannot run (there is no review to load), so write a minimal
+    // failure document keyed by the session id, so an automated caller finds a document to parse
+    // rather than nothing (c). A `settled` outcome that produced no review is an anomaly, recorded
+    // as `failed`; a timeout/cancellation keeps its own honest outcome.
+    return writeCaptureFailureDocument({
+      sessionId: row.id,
+      projectId,
+      dataDir,
+      out: target.out,
+      outcome: result.outcome === "settled" ? "failed" : result.outcome,
+      reason: result.reason ?? "the preparation produced no review",
+      startedAtMs,
+      settledAtMs: result.settledAtMs,
+      io,
+    });
   }
   return writeReviewDocument({
     socket,
