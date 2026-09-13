@@ -73,7 +73,20 @@ rennet review --pr 128               # a pull request by number
 It resolves the repository at the given path (the current directory by default),
 adds it as a project if it is not one yet, and prints the review as the daemon
 produces it: the capture step, each lens lane as it settles, and each board write
-as it lands, one plain line each. When the boards settle it writes a single JSON
+as it lands, one plain line each.
+
+Both forms are scoped to the repository you run them in, which matters in a
+workspace project that holds several repositories: a branch name and a pull
+request number are each unique only within one repository. `rennet review --pr
+128` reviews repository #128 of the checkout you are standing in, and refuses
+(naming the candidates) rather than guessing when two of the workspace's
+repositories both carry a #128 and neither is this one. The repository identity
+comes from the daemon, so the CLI never has to spell it. `rennet review` needs a
+daemon new enough to resolve that identity (Rennet server 0.1.5 or later); an
+older daemon is refused at connect, naming the version to update to, rather than
+reviewing against the wrong repository.
+
+When the boards settle it writes a single JSON
 document (the review, the range, and every lens's board or its typed absence)
 to `<data dir>/reviews/<reviewId>.json` (or a path you pass with `--out`), and
 prints that absolute path as its last line, so a script can take `tail -1`.

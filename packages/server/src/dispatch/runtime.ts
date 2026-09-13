@@ -232,6 +232,17 @@ export interface DispatchDeps {
   /** Resolve a repository to review (Electron dialog, or the test-repo env). `null` = cancelled. */
   chooseRepository(): Promise<string | null>;
   /**
+   * Resolve a checkout PATH to its canonical `owner/name` (headless-review-cli D11), the same
+   * identity `locals`/`prs` carry. The headless CLI sends its toplevel path here so the DAEMON
+   * produces the identity string it then mints and PR-scopes with, never parsing the remote
+   * itself. A pure read of the repo's origin remote; `forgeRepository` is absent for a
+   * local-only repo with no forge remote.
+   */
+  repositoryIdentify(input: { path: string }): Promise<{
+    repository: string;
+    forgeRepository?: ForgeRepoIdentity;
+  }>;
+  /**
    * Open a GitHub pull request into a review (the front door's second source):
    * parse the ref (`owner/repo#123` or a PR URL), fetch + diff the PR against the
    * local clone at `repoPath`, and persist a new review. Returns the created

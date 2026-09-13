@@ -3056,3 +3056,132 @@ describe("session.mint: an explicit base (headless-review-cli D2, tasks.md 1.2/1
     expect(listed.sessions.filter((session) => session.id === first.session?.id)).toHaveLength(1);
   }, 30_000);
 });
+
+describe("repository.identify + repo-precise capture routing (headless-review-cli D11)", () => {
+  const shutdowns: Array<() => void> = [];
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const shutdown of shutdowns.splice(0)) shutdown();
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  const runGitIn =
+    (root: string) =>
+    (...args: string[]): string =>
+      execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+
+  function seedRepo(root: string, origin: string | undefined): void {
+    const runGit = runGitIn(root);
+    runGit("init", "-b", "main");
+    runGit("config", "user.email", "rennet@example.test");
+    runGit("config", "user.name", "Rennet Test");
+    writeFileSync(join(root, "base.ts"), "export const base = true;\n");
+    runGit("add", "base.ts");
+    runGit("commit", "-m", "base");
+    if (origin !== undefined) runGit("remote", "add", "origin", origin);
+    runGit("checkout", "-b", "feature/shared");
+    writeFileSync(join(root, "source.ts"), "export const source = true;\n");
+    runGit("add", "source.ts");
+    runGit("commit", "-m", "review source");
+    runGit("checkout", "main");
+  }
+
+  it("resolves a checkout path to the daemon's own owner/name via the origin remote", async () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-identify-")));
+    const dataDir = realpathSync(mkdtempSync(join(tmpdir(), "rennet-identify-data-")));
+    dirs.push(repo, dataDir);
+    seedRepo(repo, "git@github.com:owner/target.git");
+    const server = await createRennetServer({ dataDir, env: {} });
+    shutdowns.push(server.shutdown);
+
+    const identity = await server.dispatch("repository.identify", { path: repo });
+    expect(identity).toEqual({
+      repository: "owner/target",
+      forgeRepository: { forge: "github", owner: "owner", name: "target" },
+    });
+  }, 30_000);
+
+  it("returns a durable identity with no forgeRepository for a repo with no forge remote", async () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-identify-local-")));
+    const dataDir = realpathSync(mkdtempSync(join(tmpdir(), "rennet-identify-local-data-")));
+    dirs.push(repo, dataDir);
+    seedRepo(repo, undefined);
+    const server = await createRennetServer({ dataDir, env: {} });
+    shutdowns.push(server.shutdown);
+
+    const identity = (await server.dispatch("repository.identify", { path: repo })) as {
+      repository: string;
+      forgeRepository?: unknown;
+    };
+    expect(identity.repository.length).toBeGreaterThan(0);
+    expect(identity.forgeRepository).toBeUndefined();
+  }, 30_000);
+
+  it("routes a workspace branch capture to the repo the row's identity names, not the first included repo", async () => {
+    // Two repos in one workspace project, each carrying `feature/shared`. `openPath` is the
+    // FIRST included repo (repo-a), so a mint that carries NO repository identity captures
+    // repo-a even when the reviewer meant repo-b: the literal pre-D11 bug the CLI hit by minting
+    // a branch with no `repository`. A mint carrying repo-b's daemon-resolved identity must
+    // capture repo-b. Each scenario runs in its OWN server, repos and dataDir: an unstamped claim
+    // and a stamped one share a claim key (`claimingSession`: a caller naming a repository still
+    // matches an unstamped session), so the two mints would cross-reattach in one project and the
+    // isolation is what keeps each measurement about routing rather than claim reuse.
+    const capturedRoot = async (useIdentity: boolean): Promise<{ root: string; repoB: string }> => {
+      const repoA = realpathSync(mkdtempSync(join(tmpdir(), "rennet-ws-a-")));
+      const repoB = realpathSync(mkdtempSync(join(tmpdir(), "rennet-ws-b-")));
+      const dataDir = realpathSync(mkdtempSync(join(tmpdir(), "rennet-ws-data-")));
+      dirs.push(repoA, repoB, dataDir);
+      seedRepo(repoA, "git@github.com:owner/repo-a.git");
+      seedRepo(repoB, "git@github.com:owner/repo-b.git");
+
+      const server = await createRennetServer({ dataDir, env: {} });
+      shutdowns.push(server.shutdown);
+      const added = (await server.dispatch("projects.add", {
+        commandId: randomUUID(),
+        discovery: {
+          path: repoA,
+          kind: "workspace",
+          repos: [
+            { name: "repo-a", path: repoA, branches: 2 },
+            { name: "repo-b", path: repoB, branches: 2 },
+          ],
+          primaryBranch: "main",
+          source: "local",
+        },
+        includedRepos: ["repo-a", "repo-b"],
+        primaryBranch: "main",
+      })) as { project: { id: string } };
+
+      const minted = (await server.dispatch("session.mint", {
+        projectId: added.project.id,
+        commandId: randomUUID(),
+        branch: "feature/shared",
+        ...(useIdentity
+          ? {
+              repository: "owner/repo-b",
+              forgeRepository: { forge: "github", owner: "owner", name: "repo-b" },
+            }
+          : {}),
+      })) as { session: PreparationSession | null };
+      const sessionId = minted.session?.id ?? "";
+      await waitForReviewSession(server, sessionId);
+      const store = new SessionStore(join(dataDir, "sessions"));
+      let root: string | undefined;
+      await vi.waitFor(
+        () => {
+          root = store.load(sessionId)?.repositoryRoot;
+          expect(root).toBeDefined();
+        },
+        { timeout: 15_000, interval: 20 },
+      );
+      return { root: root as string, repoB };
+    };
+
+    // The bug reproduced: no identity → the first included repo (repo-a), the wrong one.
+    const withoutIdentity = await capturedRoot(false);
+    expect(withoutIdentity.root).not.toBe(withoutIdentity.repoB);
+    // The fix: repo-b's daemon-resolved identity → repo-b, not the first included repo.
+    const withIdentity = await capturedRoot(true);
+    expect(withIdentity.root).toBe(withIdentity.repoB);
+  }, 60_000);
+});

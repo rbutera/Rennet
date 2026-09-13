@@ -541,6 +541,9 @@ export function projectProgressEvent(
 /** Command → the input field(s) carrying a HOST path a projected client references. Others are repo-relative. */
 export const INBOUND_HOST_PATH_FIELDS: Readonly<Record<string, readonly string[]>> = {
   "repository.choose": ["path"],
+  // The headless CLI's checkout path, resolved to `owner/name` on the daemon (headless-review-cli
+  // D11); a host-absolute path inbound, exactly like `repository.choose`'s.
+  "repository.identify": ["path"],
   "review.capture": ["repoPath"],
   "review.openPr": ["repoPath"],
   "review.checkFreshness": ["repoPath"],

@@ -783,6 +783,7 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
   ...classified("host-path-projected", [
     "repository.choose.input.path",
     "repository.choose.output.path",
+    "repository.identify.input.path",
     "review.capture.input.repoPath",
     "review.openPr.input.repoPath",
     "review.checkFreshness.input.repoPath",

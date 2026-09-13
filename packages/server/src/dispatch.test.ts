@@ -357,6 +357,7 @@ function harness(
     processProject: () => Promise.resolve({ repos: [] }),
     discoverProject: ({ path, kind }) =>
       Promise.resolve({ path, kind, repos: [], primaryBranch: "main", source: "local" }),
+    repositoryIdentify: ({ path }) => Promise.resolve({ repository: path }),
     listDir: (input) =>
       Promise.resolve({
         path: input.path ?? "/home/rai",
@@ -3231,6 +3232,7 @@ function frontDoorHarness(seed: {
       discoverCalls.push(input);
       return Promise.resolve({ ...discovery, path: input.path, kind: input.kind });
     },
+    repositoryIdentify: ({ path }) => Promise.resolve({ repository: path }),
     listDir: (input) =>
       Promise.resolve({
         path: input.path ?? "/home/rai",

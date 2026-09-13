@@ -106,6 +106,7 @@ const ABSORBED_IDS = [
   "publish.review",
   "publish.submitPr",
   "repository.choose",
+  "repository.identify",
   "review.capture",
   "review.checkFreshness",
   "review.deltaDigest",
@@ -224,7 +225,7 @@ const MENU_INVENTORY: readonly string[] = [];
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(113);
+    expect(ABSORBED_IDS).toHaveLength(114);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

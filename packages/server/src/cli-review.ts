@@ -13,12 +13,77 @@ import {
   type LensDraftEvent,
   type LensKind,
   type LensLane,
+  REVIEW_CLI_FEATURE,
   type Review,
   type SessionPreparation,
 } from "@rennet/protocol";
 
 /** The default review timeout: half an hour, matching the desktop's patience for a generation. */
 export const DEFAULT_REVIEW_TIMEOUT_SECONDS = 1800;
+
+/**
+ * The oldest daemon `rennet review` can drive (headless-review-cli D11): the server semver this
+ * seam ships in. The real gate is the `review-cli` FEATURE FLAG in the handshake, not a version
+ * compare; this string only NAMES the version in the refusal so the reviewer knows what to
+ * update to. Read from `packages/server/package.json` at authoring time.
+ */
+export const MIN_REVIEW_CLI_DAEMON_VERSION = "0.1.5";
+
+/**
+ * The connect-time capability check (headless-review-cli D11). A daemon that predates the
+ * headless review seam never advertises the `review-cli` feature and its `repository.identify`
+ * is an unknown command, so the CLI would review against the wrong repo or base silently. This
+ * returns the refusal body (the caller prefixes `rennet review:`) when the flag is missing, or
+ * `undefined` when the daemon supports the seam. The daemon's own version is named when the
+ * handshake carried one, so `rennet review needs ... this daemon is v0.1.4` reads truthfully.
+ */
+export function reviewCliUnsupportedMessage(
+  features: Readonly<Record<string, boolean>> | undefined,
+  daemonVersion: string | undefined,
+): string | undefined {
+  if (features?.[REVIEW_CLI_FEATURE] === true) return undefined;
+  const seen =
+    daemonVersion === undefined || daemonVersion.length === 0
+      ? "an older build"
+      : `v${daemonVersion}`;
+  return `needs a daemon that supports the headless review CLI (Rennet server >= ${MIN_REVIEW_CLI_DAEMON_VERSION}); this daemon is ${seen}. Update the daemon (stop it and relaunch the newer build), then rerun.`;
+}
+
+/** One project.detail PR row, reduced to the fields PR-target scoping reads (headless-review-cli D11). */
+export interface ScopablePr {
+  readonly number: number;
+  /** The row's canonical `owner/name`, the daemon-produced identity (never CLI-spelled). */
+  readonly repository: string;
+}
+
+/** What `resolvePrTarget` decided: the one standing-repo row, nothing by that number, or a refusal. */
+export type PrTargetResolution<Row extends ScopablePr> =
+  | { readonly kind: "found"; readonly row: Row }
+  | { readonly kind: "not-listed" }
+  | { readonly kind: "ambiguous"; readonly candidates: readonly string[] };
+
+/**
+ * Scope `--pr <n>` to the STANDING repository (headless-review-cli D11). A branch NAME and a PR
+ * NUMBER are each unique only within one repo, so `prs.find(pr => pr.number === n)` project-wide
+ * captures the wrong repo in a workspace. Match on `(number, standingRepository)`: exactly one
+ * standing-repo row is `found`; no row anywhere by that number is `not-listed`; and rows exist by
+ * that number but none is the standing repo's (a cross-repo collision, or a #n that lives only in
+ * a sibling) is `ambiguous`, carrying every `owner/name#number` candidate so the refusal names
+ * them rather than taking a project-wide first hit. `standingRepository` is the daemon's own
+ * identity string for the checkout, so the match cannot drift from what the row carries.
+ */
+export function resolvePrTarget<Row extends ScopablePr>(
+  prs: readonly Row[],
+  prNumber: number,
+  standingRepository: string,
+): PrTargetResolution<Row> {
+  const matches = prs.filter((pr) => pr.number === prNumber);
+  if (matches.length === 0) return { kind: "not-listed" };
+  const scoped = matches.filter((pr) => pr.repository === standingRepository);
+  const only = scoped.length === 1 ? scoped[0] : undefined;
+  if (only !== undefined) return { kind: "found", row: only };
+  return { kind: "ambiguous", candidates: matches.map((pr) => `${pr.repository}#${pr.number}`) };
+}
 
 /** One usage line for every `rennet review` refusal, so the flags cannot drift. */
 export const REVIEW_USAGE =

@@ -144,6 +144,23 @@ const definitions = {
     input: z.object({ path: z.string().optional() }),
     output: z.object({ path: z.string().nullable() }),
   },
+  // Resolve a checkout PATH to its canonical `owner/name` (headless-review-cli D11). The
+  // headless `rennet review` CLI cannot spell `owner/name` itself: a `.git` suffix or a case
+  // difference would fork the `(repository, branch)` claim and mint a second session beside the
+  // one the reviewer has open. So it sends the toplevel path and the DAEMON derives the identity
+  // (the same `repositoryIdentity` that stamps `locals`/`prs`, #580), returning the string the
+  // CLI then mints and PR-scopes with. A read; it grants nothing and mutates nothing.
+  // `forgeRepository` is absent for a local-only repo with no forge remote (then `repository` is
+  // the durable git-common-dir identity). Gated behind the `review-cli` feature flag: a daemon
+  // that predates this command never advertises the flag, so the CLI refuses at connect rather
+  // than reaching an unknown command.
+  "repository.identify": {
+    input: z.object({ path: z.string().min(1) }),
+    output: z.object({
+      repository: z.string().min(1),
+      forgeRepository: forgeRepoIdentitySchema.optional(),
+    }),
+  },
   "review.capture": {
     input: z.object({
       commandId: commandIdSchema,

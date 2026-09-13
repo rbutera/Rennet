@@ -57,6 +57,8 @@ import {
   parseReviewTarget,
   REVIEW_USAGE,
   type ReviewOutcome,
+  resolvePrTarget,
+  reviewCliUnsupportedMessage,
   reviewDocumentPath,
 } from "./cli-review";
 import { defaultDataDir, runDaemon } from "./daemon";
@@ -485,6 +487,10 @@ interface CliSocket {
   invoke(command: string, input: unknown): Promise<unknown>;
   /** Subscribe to every parsed push frame (the CLI is `private`, so frames arrive raw). Returns an unsubscribe. */
   onFrame(listener: (frame: SessionFrame) => void): () => void;
+  /** The handshake's feature flags (headless-review-cli D11), captured from the `serverInfo` frame. */
+  readonly features: Readonly<Record<string, boolean>>;
+  /** The daemon's own version from the `serverInfo` frame, for a truthful capability refusal. */
+  readonly serverVersion: string;
   /** Close the socket. Idempotent from the caller's side. */
   close(): void;
 }
@@ -511,6 +517,10 @@ async function openCliSocket(dataDir: string, deps: CliDeps): Promise<CliSocket>
     >();
     let ready = false;
     let counter = 0;
+    // The handshake facts (headless-review-cli D11), captured from the `serverInfo` frame before
+    // this promise resolves, then read through the getters below so `api` stays a readonly view.
+    let capturedFeatures: Record<string, boolean> = {};
+    let capturedVersion = "";
     const openTimer = setTimeout(() => {
       socket.close();
       rejectSocket(new Error("timed out waiting for the daemon"));
@@ -526,6 +536,12 @@ async function openCliSocket(dataDir: string, deps: CliDeps): Promise<CliSocket>
       onFrame(listener) {
         listeners.add(listener);
         return () => listeners.delete(listener);
+      },
+      get features() {
+        return capturedFeatures;
+      },
+      get serverVersion() {
+        return capturedVersion;
       },
       close() {
         socket.close();
@@ -550,6 +566,10 @@ async function openCliSocket(dataDir: string, deps: CliDeps): Promise<CliSocket>
       }
       if (frame.type === "serverInfo") {
         if (!ready) {
+          // Capture the capability record and version BEFORE resolving, so the driver reading
+          // `socket.features` sees the handshake facts the moment it holds the socket (D11).
+          capturedFeatures = frame.features;
+          capturedVersion = frame.version;
           ready = true;
           clearTimeout(openTimer);
           resolveSocket(api);
@@ -948,6 +968,16 @@ async function driveReview(
   dataDir: string,
   io: CliIo,
 ): Promise<number> {
+  // Connect-time capability gate (headless-review-cli D11). A daemon that predates the review
+  // seam never advertises `review-cli` and its `repository.identify` is an unknown command, so
+  // it would review against the wrong repo or base silently. Refuse loudly, naming the minimum
+  // version, BEFORE resolving the project (which would add a project to that daemon's store).
+  const unsupported = reviewCliUnsupportedMessage(socket.features, socket.serverVersion);
+  if (unsupported !== undefined) {
+    io.err(`rennet review: ${unsupported}`);
+    return 1;
+  }
+
   const repoPath = resolve(target.path ?? process.cwd());
   let toplevel: string;
   try {
@@ -965,18 +995,37 @@ async function driveReview(
 
   const projectId = await resolveProjectId(socket, toplevel, toplevelReal, io);
 
+  // The DAEMON resolves the checkout to its canonical `owner/name` (headless-review-cli D11): the
+  // CLI never parses the origin remote, so a `.git` suffix or a case difference cannot fork the
+  // claim. Both arms use this identity, so a workspace's several repos never collapse onto the
+  // wrong one. Single-repo: it resolves to the one identity the capture already used.
+  const standing = (await socket.invoke("repository.identify", {
+    path: toplevel,
+  })) as CommandOutput<"repository.identify">;
+
   let requestedHead: string;
   let mintInput: MintInput;
   if (target.kind === "range") {
     requestedHead = target.head !== "" ? target.head : resolveCurrentBranch(toplevel);
-    mintInput = { projectId, commandId: newCommandId(), branch: requestedHead, base: target.base };
+    mintInput = {
+      projectId,
+      commandId: newCommandId(),
+      branch: requestedHead,
+      base: target.base,
+      repository: standing.repository,
+      ...(standing.forgeRepository === undefined
+        ? {}
+        : { forgeRepository: standing.forgeRepository }),
+    };
   } else {
     const detail = (await socket.invoke("project.detail", {
       projectId,
       prStates: ["open", "merged", "closed"],
     })) as CommandOutput<"project.detail">;
-    const row = detail.prs.find((pr) => pr.number === target.number);
-    if (row === undefined) {
+    // Scope `--pr <n>` to the standing repository (headless-review-cli D11): a bare number is
+    // unique only within one repo, so a project-wide `prs.find` can open a sibling repo's PR.
+    const resolution = resolvePrTarget(detail.prs, target.number, standing.repository);
+    if (resolution.kind === "not-listed") {
       io.err(
         detail.authUnavailable !== undefined
           ? `rennet review: pull request #${target.number} could not be listed (${detail.authUnavailable})`
@@ -984,6 +1033,13 @@ async function driveReview(
       );
       return 1;
     }
+    if (resolution.kind === "ambiguous") {
+      io.err(
+        `rennet review: pull request #${target.number} is not this checkout's (${standing.repository}); it names ${resolution.candidates.join(", ")}. Run rennet review from the repository whose PR you mean.`,
+      );
+      return 1;
+    }
+    const row = resolution.row;
     requestedHead = row.branch;
     mintInput = {
       projectId,

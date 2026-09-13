@@ -6152,6 +6152,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
     discoverProject: ({ path, kind }) =>
       discoverProject(defaultProjectDiscoveryDeps(gitForRepo(path)), path, kind),
+    // Resolve a checkout path to its canonical `owner/name` (headless-review-cli D11), the SAME
+    // `repositoryIdentity` that stamps `locals`/`prs`. A read of the repo's origin remote so the
+    // headless CLI never spells the identity itself; grants nothing (Rule Zero).
+    repositoryIdentify: ({ path }) => repositoryIdentity(gitForRepo(path), path),
     // Rule Zero: the ungated filesystem browser. No allowedRoots assertion here —
     // it's the picker that produces paths for the gated commands, not one itself.
     listDir: (input) => listDir(input, defaultFsListDirDeps()),
