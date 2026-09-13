@@ -20,6 +20,7 @@ import {
   projectBoardProjection,
   projectCommandOutput,
   projectProgressEvent,
+  projectRepositoryIdentity,
   redactAbsolutePaths,
   resolveCommandInput,
   scrubProjectedValue,
@@ -1217,5 +1218,40 @@ describe("session + project repository-identity projection (the P1, #952)", () =
     ) as { locals: { repository: string }[]; prs: { repository: string }[] };
     expect(out.locals[0]?.repository).toBe("<path>");
     expect(out.prs[0]?.repository).toBe("<path>");
+  });
+});
+
+describe("projectRepositoryIdentity whole-value classification (#952, Codex F1)", () => {
+  // A `repository` identity is structural, so an unlocalizable host path is redacted WHOLE. The
+  // free-text regex under-redacts exactly the spellings that matter on a bare identity.
+  it("redacts a root-level single-segment common-dir the free-text regex would miss", () => {
+    expect(projectRepositoryIdentity("/repo.git", ctx)).toBe("<path>");
+  });
+
+  it("redacts a path with spaces whole, never leaving the suffix (no `<path> NVMe/x.git`)", () => {
+    const out = projectRepositoryIdentity("/Volumes/External NVMe/shared.git", ctx);
+    expect(out).toBe("<path>");
+    expect(out).not.toContain("NVMe");
+    expect(out).not.toContain("shared");
+  });
+
+  it("redacts a UNC share the drive-letter regex would miss", () => {
+    const out = projectRepositoryIdentity("\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo\\.git", ctx);
+    expect(out).toBe("<path>");
+    expect(out).not.toContain("wsl.localhost");
+  });
+
+  it("redacts a Windows drive path in either slash spelling", () => {
+    expect(projectRepositoryIdentity("C:\\Git Repos\\shared.git", ctx)).toBe("<path>");
+    expect(projectRepositoryIdentity("C:/Git/shared.git", ctx)).toBe("<path>");
+  });
+
+  it("keeps a common-dir under a known root as that root's display token", () => {
+    expect(projectRepositoryIdentity(`${REPO}/.git`, ctx)).toBe("<rennet>/.git");
+  });
+
+  it("leaves a forge owner/name slug (incl. a GitLab subgroup) byte-identical", () => {
+    expect(projectRepositoryIdentity("acme/widget", ctx)).toBe("acme/widget");
+    expect(projectRepositoryIdentity("group/subgroup/project", ctx)).toBe("group/subgroup/project");
   });
 });
