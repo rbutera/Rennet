@@ -1254,4 +1254,31 @@ describe("projectRepositoryIdentity whole-value classification (#952, Codex F1)"
     expect(projectRepositoryIdentity("acme/widget", ctx)).toBe("acme/widget");
     expect(projectRepositoryIdentity("group/subgroup/project", ctx)).toBe("group/subgroup/project");
   });
+
+  it("never attributes a root-PREFIX sibling to that root's token (`<rennet>-secret`)", () => {
+    // `/home/rai/dev/rennet-secret` is NOT under `/home/rai/dev/rennet`; a bare substring scrub
+    // produced `<rennet>-secret/.git`, falsely tagging a different repo as this one. Boundary match
+    // must not do that. Here it is still under HOME, so it anchors to `~` (home hidden), never to
+    // the rennet root token, and never as a raw absolute path.
+    const out = projectRepositoryIdentity(`${REPO}-secret/.git`, ctx);
+    expect(out).toBe("~/dev/rennet-secret/.git");
+    expect(out).not.toContain("<rennet>-secret");
+    expect(out).not.toContain("/home/rai");
+  });
+
+  it("redacts a root-PREFIX sibling outside home WHOLE (pure prefix collision)", () => {
+    // A root NOT under home, so the collision cannot fall through to the `~` anchor.
+    const offHome = buildProjectionContext(["/srv/repos/rennet"], "/other/home");
+    const out = projectRepositoryIdentity("/srv/repos/rennet-secret/.git", offHome);
+    expect(out).toBe("<path>");
+    expect(out).not.toContain("rennet-secret");
+  });
+
+  it("redacts a sibling that only shares the HOME prefix, not a `~ssa` disclosure", () => {
+    // `/home/raissa/...` shares the `/home/rai` prefix but is a different home; boundary match only.
+    const out = projectRepositoryIdentity("/home/raissa/private/repo.git", ctx);
+    expect(out).toBe("<path>");
+    expect(out).not.toContain("raissa");
+    expect(out).not.toContain("private");
+  });
 });

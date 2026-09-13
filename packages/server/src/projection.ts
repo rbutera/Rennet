@@ -286,24 +286,35 @@ export function redactAbsolutePathsDeep(value: unknown, ctx: ProjectionContext):
  * session/PR row can leak).
  *
  * A `repository` identity is a STRUCTURAL value, not prose, so it gets WHOLE-value classification
- * rather than the free-text `redactAbsolutePaths` regex: an absolute host path outside every known
- * root is redacted OUTRIGHT to `<path>`. The regex is deliberately conservative (it must not maul
- * prose), so on a bare identity it under-redacts in exactly the ways that matter here — it leaves a
- * root-level `/repo.git` untouched, misses a UNC share, and partial-matches a path with spaces
- * (`/Volumes/External NVMe/x.git` → `<path> NVMe/x.git`, suffix disclosed). Neither `scrubRoots` nor
- * the classifier touches an `owner/name` slug, so the single-repo / forge-slug wire is byte-identical.
- * This is the ONE place a repository identity is scrubbed; every carrier routes through it.
+ * with a BOUNDARY-AWARE root match, not the free-text `scrubRoots`/`redactAbsolutePaths` pair.
+ * `scrubRoots` does unrestricted substring replacement, which both under-redacts a bare identity
+ * (leaving a root-level `/repo.git`, a UNC share, or the suffix of a spaced path) AND over-trusts a
+ * prefix collision (`/…/rennet-secret/.git` would become `<rennet>-secret/.git`, disclosing the
+ * sibling). Here a path is localized to a root ONLY when it equals that root or sits under it at a
+ * separator boundary (the `matchRoot` contract `toRepoReference` uses); anything else absolute is
+ * redacted OUTRIGHT to `<path>`. A forge `owner/name` slug matches nothing and crosses unchanged, so
+ * the single-repo / forge-slug wire is byte-identical. The ONE place a repository identity is scrubbed.
  */
 export function projectRepositoryIdentity(repository: string, ctx: ProjectionContext): string {
   // A forge `owner/name` slug (or any non-absolute reference) is off-machine-meaningful and crosses
   // unchanged — exactly what the CLI mints and PR-scopes with.
   if (!isAbsoluteHostPath(repository)) return repository;
-  // A common-dir UNDER a known root becomes that root's display token; `scrubRoots` also maps the
-  // home dir to `~`, so the result is no longer an absolute host path.
-  const scrubbed = scrubRoots(repository, ctx);
-  // A path OUTSIDE every known root and the home dir is unlocalizable — redact it WHOLE so no host
-  // spelling (root-level, spaced, or UNC) ever survives on the wire (R19).
-  return isAbsoluteHostPath(scrubbed) ? "<path>" : scrubbed;
+  // Under a known root (equal, or at a `sep` boundary) → that root's display token + repo-relative
+  // tail, the same localization `toRepoReference` performs for a path.
+  for (const entry of ctx.roots) {
+    const root = matchRoot(repository, entry);
+    if (root === null) continue;
+    return repository === root
+      ? `<${entry.displayName}>`
+      : `<${entry.displayName}>${repository.slice(root.length)}`;
+  }
+  // The home dir, at the same boundary (never a bare `split`, so `/home/raissa/…` is not a `/home/rai`
+  // match). Mirrors `scrubRoots`' `~`, anchored.
+  const home = ctx.homeDir;
+  if (home === repository) return "~";
+  if (home && repository.startsWith(home + sep)) return `~${repository.slice(home.length)}`;
+  // Outside every known root and the home dir, unlocalizable: redact WHOLE (R19).
+  return "<path>";
 }
 
 /** An absolute host path in any spelling: POSIX (`/…`), a Windows drive (`C:\…` or `C:/…`), or a UNC
