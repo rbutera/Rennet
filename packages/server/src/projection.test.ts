@@ -1104,3 +1104,40 @@ describe("createCachedProjectionContext (perf audit §4 H3)", () => {
     expect(listProjects).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("repository.identify output projection (#952)", () => {
+  it("redacts a local-only git-common-dir identity that lies outside every root and home", () => {
+    // A local-only repo or a linked worktree with no forge remote: the identity IS the durable
+    // git-common-dir, an absolute host path, and forgeRepository is absent. Outside every known
+    // root and the home dir the blanket scrub alone would ship its host spelling to a projected
+    // client. The fixture is a plain host-path identity with nothing else to catch it, so only the
+    // command-specific guard stands between the common-dir and the wire.
+    const out = projectCommandOutput(
+      "repository.identify",
+      { repository: "/srv/git/common/repo-b.git" },
+      ctx,
+    ) as { repository: string };
+    expect(out.repository).not.toContain("/srv/git");
+    expect(out.repository).toBe("<path>");
+  });
+
+  it("scrubs a common-dir under a known root to that root's reference spelling", () => {
+    const out = projectCommandOutput(
+      "repository.identify",
+      { repository: `${REPO}/.git` },
+      ctx,
+    ) as { repository: string };
+    expect(out.repository).not.toContain(REPO);
+    expect(out.repository).toContain("<rennet>");
+  });
+
+  it("leaves an owner/name slug untouched when a forge remote names the repo", () => {
+    // The identity the CLI mints and PR-scopes with — NOT a host path — must cross a projected
+    // connection unchanged, so the guard touches only the path-valued (forgeless) case.
+    const identity = {
+      repository: "acme/widget",
+      forgeRepository: { forge: "github", owner: "acme", name: "widget" },
+    };
+    expect(projectCommandOutput("repository.identify", identity, ctx)).toEqual(identity);
+  });
+});

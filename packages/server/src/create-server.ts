@@ -5823,12 +5823,36 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                 repository: forgeRepositorySlug(legacyPrRef.repo),
                 forgeRepository: legacyPrRef.repo,
               };
+        const entryTarget = identityTarget ?? target;
+        // Resolve the target repository to its root BEFORE the reattach decision, so a workspace
+        // mint is repo-precise (headless-review-cli D11 follow-up, #952). Without a root the New
+        // Chat mint made `claimingSession` return the first live claimant, which in a multi-repo
+        // workspace can be a pre-#580 legacy session on the same branch that belongs to ANOTHER
+        // repo — a cross-match onto the wrong repo's boards. Best-effort: an identity read that
+        // fails falls back to the pre-existing (rootless) behaviour rather than blocking the mint.
+        let resolvedRoot: string | undefined;
+        if (entryTarget !== undefined) {
+          try {
+            resolvedRoot = await resolveProjectRepositoryRoot({
+              project: projectStore.list().find((entry) => entry.id === projectId),
+              target: entryTarget,
+              identityForRoot: (root) => repositoryIdentity(gitForRepo(root), root),
+            });
+          } catch {
+            resolvedRoot = undefined;
+          }
+        }
         const entered =
           target === undefined
             ? { session: mintSession(projectId), reattached: false }
             : replacesSessionId === undefined
-              ? sessionEntry.enter(projectId, identityTarget ?? target)
-              : sessionEntry.enterSuccessor(replacesSessionId, projectId, identityTarget ?? target);
+              ? sessionEntry.enter(projectId, entryTarget ?? target, resolvedRoot)
+              : sessionEntry.enterSuccessor(
+                  replacesSessionId,
+                  projectId,
+                  entryTarget ?? target,
+                  resolvedRoot,
+                );
         if (!entered.reattached) sessionStore.save(entered.session);
         const current = sessionStore.load(entered.session.id) ?? entered.session;
         const prepared =

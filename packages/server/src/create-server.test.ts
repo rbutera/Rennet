@@ -1689,6 +1689,80 @@ describe("session.mint — provider-qualified PR dispatch", () => {
     const listed = (await server.dispatch("session.list", {})) as { sessions: unknown[] };
     expect(listed.sessions).toHaveLength(1);
   });
+
+  it("a workspace mint reattaches to its OWN stamped session over a legacy cross-match (#952)", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-xrepo-legacy-data-"));
+    const workspace = mkdtempSync(join(tmpdir(), "rennet-xrepo-legacy-ws-"));
+    const repoA = mkdtempSync(join(workspace, "repo-a-"));
+    const repoB = mkdtempSync(join(workspace, "repo-b-"));
+    dirs.push(dataDir, workspace);
+
+    for (const [repo, remote] of [
+      [repoA, "git@github.com:acme/repo-a.git"],
+      [repoB, "git@github.com:acme/repo-b.git"],
+    ] as const) {
+      execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+      execFileSync("git", ["remote", "add", "origin", remote], { cwd: repo });
+    }
+
+    const server = await createRennetServer({ dataDir, env: {} });
+    shutdowns.push(server.shutdown);
+    const added = (await server.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: workspace,
+        kind: "workspace",
+        repos: [
+          { name: "repo-a", path: repoA, branches: 1 },
+          { name: "repo-b", path: repoB, branches: 1 },
+        ],
+        primaryBranch: "main",
+      },
+      includedRepos: ["repo-a", "repo-b"],
+      primaryBranch: "main",
+    })) as { project: { id: string; includedRepoPaths?: string[] } };
+    // The repo-b root exactly as the project stored it — the string `resolveProjectRepositoryRoot`
+    // returns, so the stamped session below is a true exact-repo match for the resolved root.
+    const storedRepoB = (added.project.includedRepoPaths ?? []).find((p) => p.includes("repo-b-"));
+    if (storedRepoB === undefined) throw new Error("repo-b root missing from the added project");
+
+    // Two sessions on the same branch in one workspace, seeded into the durable store the server
+    // reads (per-session file, disk-live). One is repo B's OWN session, already stamped with its
+    // root. The other is a PRE-#580 legacy session (branch only, no repository, no root) and is
+    // NEWER, so it sorts first (`live[0]`); being identity-SILENT, the owner/name tiebreak never
+    // excludes it (#597). Without a resolved root the mint would take that `live[0]` legacy.
+    const store = new SessionStore(join(dataDir, "sessions"));
+    store.save({
+      id: "stamped-repo-b",
+      projectId: added.project.id,
+      claim: { branch: "feat/x" },
+      repository: "acme/repo-b",
+      repositoryRoot: storedRepoB,
+      threads: [],
+      createdAt: 1,
+    });
+    store.save({
+      id: "legacy-pre-580",
+      projectId: added.project.id,
+      claim: { branch: "feat/x" },
+      threads: [],
+      createdAt: 2,
+    });
+
+    // The New Chat mint for repo B. `start` now resolves the target's root and passes it to
+    // `enter`, so the exact-repo match wins over the newer identity-silent legacy `live[0]`.
+    const minted = (await server.dispatch("session.mint", {
+      projectId: added.project.id,
+      commandId: randomUUID(),
+      branch: "feat/x",
+      repository: "acme/repo-b",
+      forgeRepository: { forge: "github", owner: "acme", name: "repo-b" },
+    })) as { session: PreparationSession | null; reattached: boolean };
+
+    expect(minted.reattached).toBe(true);
+    expect(minted.session?.id).toBe("stamped-repo-b");
+    expect(minted.session?.id).not.toBe("legacy-pre-580");
+  });
 });
 
 describe("createRennetServer — GitLab submission composition", () => {

@@ -452,6 +452,48 @@ describe("a workspace's per-repo rounds never collapse into one ledger (#580 car
     );
     expect(readA).toBe(only.id);
   });
+
+  it("a workspace mint takes its OWN stamped session over a legacy cross-match once the root is resolved (#952)", () => {
+    // The cross-match the #952 start fix closes. A repo-B session is already stamped with its root;
+    // a PRE-#580 legacy session (branch only, no repository, no root) sits beside it and is NEWER,
+    // so it is `live[0]`. The legacy is identity-SILENT, so the owner/name tiebreak deliberately
+    // never excludes it (#597). Without a resolved root the New Chat mint resolves to `live[0]` —
+    // the legacy — and reattaches repo B's chat onto another repo's session. A resolved root
+    // engages the exact-repo match, which is exactly why `start` now resolves it before this call.
+    const stampedB: SessionModel = {
+      id: "stamped-b",
+      projectId: PROJECT_ID,
+      claim: { branch: "feat/x" },
+      repository: "acme/repo-b",
+      repositoryRoot: REPO_B,
+      threads: [],
+      createdAt: 1,
+    };
+    const legacy: SessionModel = {
+      id: "legacy-pre-580",
+      projectId: PROJECT_ID,
+      claim: { branch: "feat/x" },
+      threads: [],
+      createdAt: 2, // newer ⇒ `live[0]` under the store's created-desc order
+    };
+    sub.sessions.save(stampedB);
+    sub.sessions.save(legacy);
+
+    const withRoot = sub.entry.enter(
+      PROJECT_ID,
+      { branch: "feat/x", repository: "acme/repo-b" },
+      REPO_B,
+    );
+    expect(withRoot.reattached).toBe(true);
+    expect(withRoot.session.id).toBe("stamped-b");
+
+    // The pre-fix mint passed no root: it takes the newer legacy `live[0]` and cross-matches.
+    const withoutRoot = sub.entry.enter(PROJECT_ID, {
+      branch: "feat/x",
+      repository: "acme/repo-b",
+    });
+    expect(withoutRoot.session.id).toBe("legacy-pre-580");
+  });
 });
 
 // ── #573: the detached-HEAD phantom ──────────────────────────────────────────

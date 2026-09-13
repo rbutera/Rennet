@@ -488,6 +488,22 @@ export function projectCommandOutput(
     if (command === "session.landWorkBranch" && typeof o.reason === "string") {
       o.reason = capRefusal(String(redactAbsolutePathsDeep(o.reason, ctx)));
     }
+    // `repository.identify` (headless-review-cli D11) returns the daemon's canonical identity for
+    // a checkout. WITH a forge remote it is an `owner/name` slug — NOT a host path — and crosses a
+    // projected connection unchanged, because that slug is exactly what the CLI mints and PR-scopes
+    // with. WITHOUT one (a local-only repo or a linked worktree with no forge remote) it is the
+    // durable git-common-dir identity, an ABSOLUTE HOST PATH, and a common-dir outside every known
+    // root and the home dir would otherwise ship its host spelling: the blanket scrub below rewrites
+    // only known roots and home. Same answer as the free-text branches — substitute what is known,
+    // then redact any leftover absolute path — applied ONLY to the path-valued case so the slug the
+    // CLI needs is never mangled.
+    if (
+      command === "repository.identify" &&
+      typeof o.repository === "string" &&
+      o.forgeRepository === undefined
+    ) {
+      o.repository = redactAbsolutePaths(scrubRoots(String(o.repository), ctx));
+    }
     // `session.workBranchState` is classified HERE, by having no branch of its own: every
     // field it carries is a ref NAME (`feat/x`, `rennet/feat/x`, `refs/remotes/origin/
     // feat/x`) or a number or a boolean. Ref names cross a projected connection unchanged,
