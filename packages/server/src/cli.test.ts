@@ -17,7 +17,12 @@ import { fileURLToPath } from "node:url";
 import { PROTOCOL_VERSION } from "@rennet/protocol";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
-import { type CliIo, NO_SIDECAR_WARNING, runCli as runSourceCli } from "./cli";
+import {
+  type CliIo,
+  NO_SIDECAR_WARNING,
+  runCli as runSourceCli,
+  writeCaptureFailureDocument,
+} from "./cli";
 import { REVIEW_USAGE } from "./cli-review";
 import { createRennetServer } from "./create-server";
 import { type DaemonInfo, readDaemonFile, removeDaemonFile, writeDaemonFile } from "./daemon-file";
@@ -695,6 +700,47 @@ describe("rennet review: argument and daemon-identity handling", () => {
     expect(captured.err.at(-1)).toBe(REVIEW_USAGE);
   });
 
+  it("writes a findable failure document when the capture stage fails before a review exists (c)", () => {
+    // A capture-stage failure exits before a review id is minted, so `writeReviewDocument` (which
+    // loads a review by id) cannot run. The old path returned a non-zero exit with NO document, so
+    // an automated caller had nothing to parse. The capture-failure path now writes a minimal
+    // document keyed by the session id and prints its absolute path.
+    const dataDir = mkdtempSync(resolve(tmpdir(), "rennet-capture-fail-"));
+    try {
+      const captured = captureIo();
+      const code = writeCaptureFailureDocument({
+        sessionId: "sess-cap-1",
+        projectId: "proj-1",
+        dataDir,
+        outcome: "failed",
+        reason: "could not resolve the repository",
+        startedAtMs: 1_700_000_000_000,
+        settledAtMs: 1_700_000_000_500,
+        io: captured.io,
+      });
+      expect(code).toBe(1);
+      const path = captured.out.at(-1) ?? "";
+      // The document lands at the stable, findable path an automated caller looks for.
+      expect(path).toBe(resolve(dataDir, "reviews", "sess-cap-1.json"));
+      expect(existsSync(path)).toBe(true);
+      const document = JSON.parse(readFileSync(path, "utf8"));
+      expect(document).toMatchObject({
+        schemaVersion: 1,
+        capture: "failed",
+        outcome: "failed",
+        reason: "could not resolve the repository",
+        sessionId: "sess-cap-1",
+        projectId: "proj-1",
+      });
+      // The reason is also on stderr, for a human reading the terminal.
+      expect(captured.err.some((line) => line.includes("could not resolve the repository"))).toBe(
+        true,
+      );
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("reports the daemon-absent message and exits 1, before any other output", async () => {
     const captured = captureIo();
     const code = await runSourceCli(
@@ -919,6 +965,62 @@ describe("rennet review ↔ a real daemon over the wire (#379, headless-review-c
     const rerunPath = second.out.at(-1) ?? "";
     expect(rerunPath).toBe(documentPath);
     expect(JSON.parse(readFileSync(rerunPath, "utf8")).reviewId).toBe(document.reviewId);
+  }, 90_000);
+
+  it("writes a findable failure document when the capture stage fails, through the real CLI (c)", async () => {
+    // The production wiring for (c): a capture that fails BEFORE a review id exists (here a
+    // range whose base ref does not exist, so the daemon's branch capture throws) must still
+    // leave a `<dataDir>/reviews/<id>.json` an automated caller can parse. Exit is non-zero and
+    // the last stdout line is the failure document's absolute path. Red-proof: remove the
+    // capture-failure branch in `driveReview` and this reddens (no path printed, no document).
+    const root = mkdtempSync(resolve(tmpdir(), "rennet-review-capfail-"));
+    dirs.push(root);
+    const home = resolve(root, "home");
+    const dataDir = resolve(root, "data");
+    const repoDir = resolve(root, "repo");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(repoDir, { recursive: true });
+    const repo = realpathSync(repoDir);
+    seedRepo(repo);
+    const { planPath } = writeOwnerLoopScriptedHarnessPlan(root);
+    const scriptedSeats = loadScriptedT3Seats(planPath);
+
+    const server = await createRennetServer({
+      dataDir,
+      serverVersion: "0.0.0-test",
+      env: { ...process.env, HOME: home, RENNET_DISABLE_HARNESS: "1" },
+      testHarnessPort: loadScriptedHarnessPlan(planPath),
+      testT3Seats: scriptedSeats.resolve,
+    });
+    shutdowns.push(server.shutdown);
+    writeDaemonFile(dataDir, {
+      pid: process.pid,
+      wsPort: server.wsPort,
+      host: server.wsHost,
+      protocolVersion: PROTOCOL_VERSION,
+      version: "0.0.0-test",
+      startedAt: new Date().toISOString(),
+    });
+
+    const captured = captureIo();
+    // `no-such-base` does not exist, so the branch capture (merge-base against it) fails at the
+    // capture stage, before any review id is minted.
+    const code = await runSourceCli(
+      ["review", "no-such-base..feature/shared", repo, "--data-dir", dataDir],
+      captured.io,
+      { ...process.env, HOME: home },
+    );
+    expect(code).toBe(1);
+    const path = captured.out.at(-1) ?? "";
+    expect(path.startsWith(resolve(dataDir, "reviews"))).toBe(true);
+    expect(existsSync(path)).toBe(true);
+    const document = JSON.parse(readFileSync(path, "utf8"));
+    expect(document).toMatchObject({ schemaVersion: 1, capture: "failed", outcome: "failed" });
+    expect(typeof document.reason).toBe("string");
+    expect(document.reason.length).toBeGreaterThan(0);
+    // The reason is on stderr too, for a human at the terminal.
+    expect(captured.err.some((line) => line.includes("rennet review:"))).toBe(true);
   }, 90_000);
 
   // A minimal two-branch repo with a distinct origin, for the workspace routing test. No

@@ -472,6 +472,25 @@ export function projectCommandOutput(
     const o = { ...(output as Record<string, unknown>) };
     if (o.review && typeof o.review === "object")
       o.review = projectReview(o.review as Record<string, unknown>, ctx);
+    // `review.handoff.run` with status "ran" returns the newly-captured review NESTED at
+    // `result.review` (wire.ts `handoffRunOutputSchema`), not at the top level. The `o.review`
+    // branch above never reaches it, so `result.review.repositoryRoot` and each
+    // `result.review.patchsets[].repository.commonDir` crossed a projected connection verbatim,
+    // and a common-dir outside every known root is not caught by the blanket root/home scrub
+    // below either. Mirror the review projection onto the nested review, the same treatment its
+    // top-level twin takes. Only the "ran" status carries a `result`; every other status is
+    // free-text `reason` that the blanket scrub already covers.
+    if (
+      command === "review.handoff.run" &&
+      o.result &&
+      typeof o.result === "object" &&
+      !Array.isArray(o.result)
+    ) {
+      const result = { ...(o.result as Record<string, unknown>) };
+      if (result.review && typeof result.review === "object")
+        result.review = projectReview(result.review as Record<string, unknown>, ctx);
+      o.result = result;
+    }
     if (o.project && typeof o.project === "object") {
       o.project = [
         "settings.resetRepoValue",
