@@ -702,6 +702,9 @@ export interface DispatchDeps {
       replacesSessionId?: string;
       target?: {
         branch: string;
+        /** The branch capture's base ref (headless-review-cli D2); branch arm only, not part
+         *  of the claim key. Absent ⇒ the project's primary branch, as before. */
+        base?: string;
         prNumber?: number;
         repository?: string;
         forgeRepository?: ForgeRepoIdentity;

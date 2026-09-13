@@ -241,6 +241,10 @@ export function sessionHandlers(rt: DispatchRuntime) {
           : {
               target: {
                 branch: input.branch,
+                // The branch capture's explicit base (headless-review-cli D2). Carried onto the
+                // preparation target and used as the merge-base's second arg; it never joins the
+                // claim key, so reattach is unaffected. Ignored beside `prNumber` downstream.
+                ...(input.base === undefined ? {} : { base: input.base }),
                 ...(input.prNumber === undefined ? {} : { prNumber: input.prNumber }),
                 // The row's `owner/name` (#580): a workspace's two `main` branches are two
                 // targets, not one — and it is what resolves the capture to the right repo.

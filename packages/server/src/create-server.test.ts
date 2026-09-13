@@ -2919,3 +2919,140 @@ describe("the app-tools listener at daemon launch (session-thread-briefing 3.4)"
     expect(answer.status).toBe(401);
   }, 20_000);
 });
+
+describe("session.mint: an explicit base (headless-review-cli D2, tasks.md 1.2/1.3)", () => {
+  const dirs: string[] = [];
+  const shutdowns: Array<() => void> = [];
+  afterEach(() => {
+    for (const shutdown of shutdowns.splice(0)) shutdown();
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  // main(A) → release/2(A→B) → feat/x branched from release/2(→C). So merge-base(main, feat/x)
+  // is A and merge-base(release/2, feat/x) is B: an explicit base of release/2 must move the
+  // recorded baseOid off the primary branch's A, which is what proves the base is applied.
+  function seedRepo(): { repo: string; baseOidMain: string; baseOidRelease: string } {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-mint-base-repo-")));
+    dirs.push(repo);
+    const runGit = (...args: string[]): string =>
+      execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+    runGit("init", "-b", "main");
+    runGit("config", "user.email", "t@t");
+    runGit("config", "user.name", "t");
+    writeFileSync(join(repo, "a.txt"), "A\n");
+    runGit("add", "a.txt");
+    runGit("commit", "-m", "A");
+    const baseOidMain = runGit("rev-parse", "HEAD");
+    runGit("checkout", "-b", "release/2");
+    writeFileSync(join(repo, "a.txt"), "A\nB\n");
+    runGit("add", "a.txt");
+    runGit("commit", "-m", "B");
+    const baseOidRelease = runGit("rev-parse", "HEAD");
+    runGit("checkout", "-b", "feat/x");
+    writeFileSync(join(repo, "a.txt"), "A\nB\nC\n");
+    runGit("add", "a.txt");
+    runGit("commit", "-m", "C");
+    runGit("checkout", "main");
+    return { repo, baseOidMain, baseOidRelease };
+  }
+
+  async function addProject(server: TestServer, repo: string): Promise<string> {
+    const added = (await server.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: repo,
+        kind: "repo",
+        repos: [{ name: "repo", path: repo, branches: 3 }],
+        primaryBranch: "main",
+      },
+      includedRepos: ["repo"],
+      primaryBranch: "main",
+    })) as { project: { id: string } };
+    return added.project.id;
+  }
+
+  async function baseOfMintedReview(
+    server: TestServer,
+    input: { projectId: string; branch: string; base?: string },
+  ): Promise<{ sessionId: string; baseRef: string; baseOid: string }> {
+    const minted = (await server.dispatch("session.mint", {
+      commandId: randomUUID(),
+      projectId: input.projectId,
+      branch: input.branch,
+      ...(input.base === undefined ? {} : { base: input.base }),
+    })) as { session: PreparationSession | null; reattached: boolean };
+    const sessionId = minted.session?.id ?? "";
+    const prepared = await waitForReviewSession(server, sessionId);
+    const loaded = (await server.dispatch("review.load", {
+      commandId: randomUUID(),
+      reviewId: prepared.reviewId ?? "",
+    })) as { review: Review };
+    const active = loaded.review.patchsets.find(
+      (patchset) => patchset.id === loaded.review.activePatchsetId,
+    );
+    if (active === undefined) throw new Error("the minted review has no active patchset");
+    return { sessionId, baseRef: active.repository.baseRef, baseOid: active.repository.baseOid };
+  }
+
+  it("captures against the explicit base instead of the primary branch", async () => {
+    const { repo, baseOidRelease } = seedRepo();
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-mint-base-data-"));
+    dirs.push(dataDir);
+    const server = await createRennetServer({ dataDir, env: { RENNET_DISABLE_HARNESS: "1" } });
+    shutdowns.push(server.shutdown);
+    const projectId = await addProject(server, repo);
+
+    const withBase = await baseOfMintedReview(server, {
+      projectId,
+      branch: "feat/x",
+      base: "release/2",
+    });
+    expect(withBase.baseRef).toBe("release/2");
+    expect(withBase.baseOid).toBe(baseOidRelease);
+  }, 30_000);
+
+  it("captures against the primary branch when no base is given (byte-for-byte as before)", async () => {
+    const { repo, baseOidMain } = seedRepo();
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-mint-nobase-data-"));
+    dirs.push(dataDir);
+    const server = await createRennetServer({ dataDir, env: { RENNET_DISABLE_HARNESS: "1" } });
+    shutdowns.push(server.shutdown);
+    const projectId = await addProject(server, repo);
+
+    const withoutBase = await baseOfMintedReview(server, { projectId, branch: "feat/x" });
+    expect(withoutBase.baseRef).toBe("main");
+    expect(withoutBase.baseOid).toBe(baseOidMain);
+  }, 30_000);
+
+  it("keeps the (repository, branch) claim: two bases for one branch reattach to one session", async () => {
+    const { repo } = seedRepo();
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-mint-reattach-data-"));
+    dirs.push(dataDir);
+    const server = await createRennetServer({ dataDir, env: { RENNET_DISABLE_HARNESS: "1" } });
+    shutdowns.push(server.shutdown);
+    const projectId = await addProject(server, repo);
+
+    const first = (await server.dispatch("session.mint", {
+      commandId: randomUUID(),
+      projectId,
+      branch: "feat/x",
+      base: "main",
+    })) as { session: PreparationSession | null; reattached: boolean };
+    expect(first.reattached).toBe(false);
+    await waitForReviewSession(server, first.session?.id ?? "");
+
+    const second = (await server.dispatch("session.mint", {
+      commandId: randomUUID(),
+      projectId,
+      branch: "feat/x",
+      base: "release/2",
+    })) as { session: PreparationSession | null; reattached: boolean };
+    expect(second.reattached).toBe(true);
+    expect(second.session?.id).toBe(first.session?.id);
+
+    const listed = (await server.dispatch("session.list", {})) as {
+      sessions: PreparationSession[];
+    };
+    expect(listed.sessions.filter((session) => session.id === first.session?.id)).toHaveLength(1);
+  }, 30_000);
+});

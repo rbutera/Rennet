@@ -5089,6 +5089,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
 
   type PreparationTarget = {
     readonly branch: string;
+    /** The branch capture's base ref (headless-review-cli D2). The branch arm merge-bases
+     *  against it instead of the project's primary branch; ignored on the PR arm; never part
+     *  of the claim. Absent ⇒ the project's primary branch, exactly as before. */
+    readonly base?: string;
     readonly prNumber?: number;
     readonly repository?: string;
     readonly forgeRepository?: ForgeRepoIdentity;
@@ -5180,7 +5184,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             request.commandId,
             root,
             target.branch,
-            project?.primaryBranch ?? "HEAD",
+            // The explicit base (headless-review-cli D2) wins; absent ⇒ the project's primary
+            // branch, then `HEAD`, exactly the resolution this line has always done.
+            target.base ?? project?.primaryBranch ?? "HEAD",
           );
         } else {
           review =

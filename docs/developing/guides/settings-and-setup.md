@@ -535,6 +535,7 @@ every platform, and `RENNET_USER_DATA` or `--data-dir` moves the whole of it.
 ├── transcripts/
 ├── rounds/
 ├── generations/
+├── reviews/                      # `rennet review` documents, keyed by review id
 ├── board-meta/
 ├── worktrees/                    # the builtin worktree location
 └── projects/
@@ -585,8 +586,20 @@ The pool is shared by filesystem work and GitHub name resolution.
 rennet serve
 rennet status
 rennet stop
+rennet review <base>..<head> [path] | --pr <number> [path] [--out <file>] [--timeout <seconds>]
 rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>]
 ```
+
+`review` drives the daemon's own session path, the same `session.mint` front
+door a New Chat row click uses, so a review it opens is a session the app can
+reopen by id, with its boards and transcript where the app expects them. It
+prints one progress line per capture step, lane transition and board write as the
+daemon reports them, then writes the settled boards to one JSON document at
+`<data dir>/reviews/<reviewId>.json` (or `--out <file>`) and prints that absolute
+path as its final stdout line, so a consumer can `tail -1`. Exit `0` means the
+boards settled; `1` means the daemon was absent, the preparation failed or was
+cancelled, or `--timeout` (default 1800s) elapsed, and the document is still
+written with the outcome and reason; `2` is a usage error.
 
 `serve`, `status`, and `stop` operate on the daemon. `stop` asks the verified
 daemon to shut itself down over its own HTTP port (`POST /shutdown`, beside

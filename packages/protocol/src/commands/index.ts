@@ -1583,6 +1583,15 @@ const definitions = {
         commandId: commandIdSchema,
         /** The claimed branch. Absent mints a no-target session (claims nothing). */
         branch: z.string().min(1).optional(),
+        /**
+         * The ref the branch capture takes its merge-base against, instead of the project's
+         * primary branch (headless-review-cli D2). Applies to the BRANCH arm only: beside
+         * `prNumber` it has no effect, because the PR carries its own base, and it is NOT part
+         * of the `(repository, branch)` claim key, so two mints of one branch with different
+         * bases reattach to one session and the second base is not re-applied. Absent ⇒ the
+         * capture is byte-for-byte as before this field existed.
+         */
+        base: z.string().min(1).optional(),
         /** The claimed branch's PR number, when the row was a pull request. */
         prNumber: z.number().int().positive().optional(),
         /**

@@ -59,6 +59,32 @@ flowchart LR
   exit -->|a round returns| boards
 ```
 
+## Review from the terminal
+
+You do not need the window to run a review. With the daemon running (`rennet
+serve`, or the desktop app open), `rennet review` opens one over the same front
+door a New Chat click uses and reads the result back from a path:
+
+```text
+rennet review main..feature/x        # a range in the current repository
+rennet review --pr 128               # a pull request by number
+```
+
+It resolves the repository at the given path (the current directory by default),
+adds it as a project if it is not one yet, and prints the review as the daemon
+produces it: the capture step, each lens lane as it settles, and each board write
+as it lands, one plain line each. When the boards settle it writes a single JSON
+document (the review, the range, and every lens's board or its typed absence)
+to `<data dir>/reviews/<reviewId>.json` (or a path you pass with `--out`), and
+prints that absolute path as its last line, so a script can take `tail -1`.
+
+The exit code carries the outcome: `0` when the boards settled, `1` when the
+daemon was not running or the review failed, was cancelled, or ran past
+`--timeout` (default half an hour, and the document is still written with the
+reason), `2` for a usage mistake. A review opened this way is an ordinary
+session: open it in the app by its id afterwards and its boards and transcript
+are where you left them.
+
 ## Add a project
 
 **Add Project** in the sidebar opens a dialog with two parts: a source picker

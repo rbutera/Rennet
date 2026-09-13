@@ -614,3 +614,51 @@ describe("per-host detection wire shapes reject contradictory states (C17)", () 
     ).toBe(true);
   });
 });
+
+describe("session.mint: optional base for a branch capture (headless-review-cli D2, tasks.md 1.1)", () => {
+  const commandId = "11111111-2222-4333-8444-555555555555";
+
+  it("parses a branch mint unchanged when no base is given", () => {
+    expect(
+      parseCommandInput("session.mint", {
+        projectId: "proj-1",
+        commandId,
+        branch: "feat/x",
+      }),
+    ).toMatchObject({ projectId: "proj-1", branch: "feat/x" });
+  });
+
+  it("accepts an explicit base beside a branch", () => {
+    expect(
+      parseCommandInput("session.mint", {
+        projectId: "proj-1",
+        commandId,
+        branch: "feat/x",
+        base: "release/2",
+      }),
+    ).toMatchObject({ branch: "feat/x", base: "release/2" });
+  });
+
+  it("accepts base beside a prNumber (ignored downstream, never refused; Rule Zero)", () => {
+    expect(
+      parseCommandInput("session.mint", {
+        projectId: "proj-1",
+        commandId,
+        branch: "feat/x",
+        prNumber: 12,
+        base: "release/2",
+      }),
+    ).toMatchObject({ prNumber: 12, base: "release/2" });
+  });
+
+  it("rejects an empty base", () => {
+    expect(() =>
+      parseCommandInput("session.mint", {
+        projectId: "proj-1",
+        commandId,
+        branch: "feat/x",
+        base: "",
+      }),
+    ).toThrow();
+  });
+});
