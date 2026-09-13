@@ -369,7 +369,12 @@ export class SessionEntry {
    * activates the successor before releasing the source claim, so an interruption can leave two
    * visible claimants but can never archive the only reachable review.
    */
-  enterSuccessor(sourceSessionId: string, projectId: string, target: Target): EntryResult {
+  enterSuccessor(
+    sourceSessionId: string,
+    projectId: string,
+    target: Target,
+    repositoryRoot?: string,
+  ): EntryResult {
     const sessions = this.store.list();
     const source = sessions.find((session) => session.id === sourceSessionId);
     if (
@@ -382,10 +387,14 @@ export class SessionEntry {
       throw new Error("The review session no longer owns this target.");
     }
 
+    // The caller may resolve the target's root (a workspace mint does, #952 follow-up); it is the
+    // repo-precise key for both the successor lookup and the stamp. The source's own root is the
+    // fallback, so a caller that names none behaves exactly as before.
+    const effectiveRoot = repositoryRoot ?? source.repositoryRoot;
     const existing = claimingSession(
       sessions.filter((session) => session.id !== source.id),
       projectId,
-      source.repositoryRoot,
+      effectiveRoot,
       target,
     );
     if (existing !== undefined) {
@@ -404,7 +413,7 @@ export class SessionEntry {
     const session = bindTarget(
       {
         ...mintSession(projectId, this.mintDeps),
-        ...(source.repositoryRoot === undefined ? {} : { repositoryRoot: source.repositoryRoot }),
+        ...(effectiveRoot === undefined ? {} : { repositoryRoot: effectiveRoot }),
         ...(repository === undefined ? {} : { repository }),
         ...(forgeRepository === undefined ? {} : { forgeRepository }),
       },

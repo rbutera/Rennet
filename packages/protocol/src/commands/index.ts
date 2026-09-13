@@ -54,6 +54,7 @@ import {
   projectLogoMimeSchema,
   projectLogoSchema,
   projectProcessRunSchema,
+  projectRepositoryAddressSchema,
   projectSchema,
   projectVisibilitySchema,
   prSubmissionSchema,
@@ -143,6 +144,25 @@ const definitions = {
     // its injected chooser. Optional keeps every pre-#379 caller (which sent `{}`) valid.
     input: z.object({ path: z.string().optional() }),
     output: z.object({ path: z.string().nullable() }),
+  },
+  // Resolve a checkout PATH to its canonical `owner/name` (headless-review-cli D11). The
+  // headless `rennet review` CLI cannot spell `owner/name` itself: a `.git` suffix or a case
+  // difference would fork the `(repository, branch)` claim and mint a second session beside the
+  // one the reviewer has open. So it sends the toplevel path and the DAEMON derives the identity
+  // (the same `repositoryIdentity` that stamps `locals`/`prs`, #580), returning the string the
+  // CLI then mints and PR-scopes with. A read; it grants nothing and mutates nothing.
+  // `forgeRepository` is absent for a local-only repo with no forge remote (then `repository` is
+  // the durable git-common-dir identity). Gated behind the `review-cli` feature flag: a daemon
+  // that predates this command never advertises the flag, so the CLI refuses at connect rather
+  // than reaching an unknown command.
+  "repository.identify": {
+    input: z.object({ path: z.string().min(1) }),
+    // The identity the CLI mints and PR-scopes with: `owner/name` with a forge remote, else the
+    // durable git-common-dir string with `forgeRepository` absent. This is exactly the wire-safe
+    // `projectRepositoryAddressSchema` shape (`locals`/`prs` carry the same pair), and reusing it
+    // adds its `forgeRepositoryMatchesLegacy` refine so a slug and a structured identity can never
+    // be returned CONTRADICTING each other (#952 (a)) — a hand-rolled twin here allowed exactly that.
+    output: projectRepositoryAddressSchema,
   },
   "review.capture": {
     input: z.object({
@@ -1583,6 +1603,15 @@ const definitions = {
         commandId: commandIdSchema,
         /** The claimed branch. Absent mints a no-target session (claims nothing). */
         branch: z.string().min(1).optional(),
+        /**
+         * The ref the branch capture takes its merge-base against, instead of the project's
+         * primary branch (headless-review-cli D2). Applies to the BRANCH arm only: beside
+         * `prNumber` it has no effect, because the PR carries its own base, and it is NOT part
+         * of the `(repository, branch)` claim key, so two mints of one branch with different
+         * bases reattach to one session and the second base is not re-applied. Absent ⇒ the
+         * capture is byte-for-byte as before this field existed.
+         */
+        base: z.string().min(1).optional(),
         /** The claimed branch's PR number, when the row was a pull request. */
         prNumber: z.number().int().positive().optional(),
         /**

@@ -5089,6 +5089,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
 
   type PreparationTarget = {
     readonly branch: string;
+    /** The branch capture's base ref (headless-review-cli D2). The branch arm merge-bases
+     *  against it instead of the project's primary branch; ignored on the PR arm; never part
+     *  of the claim. Absent ⇒ the project's primary branch, exactly as before. */
+    readonly base?: string;
     readonly prNumber?: number;
     readonly repository?: string;
     readonly forgeRepository?: ForgeRepoIdentity;
@@ -5180,7 +5184,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             request.commandId,
             root,
             target.branch,
-            project?.primaryBranch ?? "HEAD",
+            // The explicit base (headless-review-cli D2) wins; absent ⇒ the project's primary
+            // branch, then `HEAD`, exactly the resolution this line has always done.
+            target.base ?? project?.primaryBranch ?? "HEAD",
           );
         } else {
           review =
@@ -5817,12 +5823,36 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                 repository: forgeRepositorySlug(legacyPrRef.repo),
                 forgeRepository: legacyPrRef.repo,
               };
+        const entryTarget = identityTarget ?? target;
+        // Resolve the target repository to its root BEFORE the reattach decision, so a workspace
+        // mint is repo-precise (headless-review-cli D11 follow-up, #952). Without a root the New
+        // Chat mint made `claimingSession` return the first live claimant, which in a multi-repo
+        // workspace can be a pre-#580 legacy session on the same branch that belongs to ANOTHER
+        // repo — a cross-match onto the wrong repo's boards. Best-effort: an identity read that
+        // fails falls back to the pre-existing (rootless) behaviour rather than blocking the mint.
+        let resolvedRoot: string | undefined;
+        if (entryTarget !== undefined) {
+          try {
+            resolvedRoot = await resolveProjectRepositoryRoot({
+              project: projectStore.list().find((entry) => entry.id === projectId),
+              target: entryTarget,
+              identityForRoot: (root) => repositoryIdentity(gitForRepo(root), root),
+            });
+          } catch {
+            resolvedRoot = undefined;
+          }
+        }
         const entered =
           target === undefined
             ? { session: mintSession(projectId), reattached: false }
             : replacesSessionId === undefined
-              ? sessionEntry.enter(projectId, identityTarget ?? target)
-              : sessionEntry.enterSuccessor(replacesSessionId, projectId, identityTarget ?? target);
+              ? sessionEntry.enter(projectId, entryTarget ?? target, resolvedRoot)
+              : sessionEntry.enterSuccessor(
+                  replacesSessionId,
+                  projectId,
+                  entryTarget ?? target,
+                  resolvedRoot,
+                );
         if (!entered.reattached) sessionStore.save(entered.session);
         const current = sessionStore.load(entered.session.id) ?? entered.session;
         const prepared =
@@ -6146,6 +6176,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
     discoverProject: ({ path, kind }) =>
       discoverProject(defaultProjectDiscoveryDeps(gitForRepo(path)), path, kind),
+    // Resolve a checkout path to its canonical `owner/name` (headless-review-cli D11), the SAME
+    // `repositoryIdentity` that stamps `locals`/`prs`. A read of the repo's origin remote so the
+    // headless CLI never spells the identity itself; grants nothing (Rule Zero).
+    repositoryIdentify: ({ path }) => repositoryIdentity(gitForRepo(path), path),
     // Rule Zero: the ungated filesystem browser. No allowedRoots assertion here —
     // it's the picker that produces paths for the gated commands, not one itself.
     listDir: (input) => listDir(input, defaultFsListDirDeps()),

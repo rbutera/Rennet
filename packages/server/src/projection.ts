@@ -273,6 +273,67 @@ export function redactAbsolutePathsDeep(value: unknown, ctx: ProjectionContext):
   return value;
 }
 
+// ── Repository identity projection (#952) ─────────────────────────────────────
+
+/**
+ * Project a `repository` IDENTITY string — the field `SessionModel`/`SidebarSession`, `LocalWork`,
+ * `PullRequest`, and `repository.identify` all carry (#580, headless-review-cli D11). WITH a forge
+ * remote it is an `owner/name` slug: off-machine-meaningful, exactly what the headless CLI mints
+ * and PR-scopes with, and it crosses a projected connection unchanged. WITHOUT one it is the
+ * durable `realpath(git-common-dir)` alias, an ABSOLUTE HOST PATH, and a common-dir outside every
+ * known root and the home dir would otherwise ship its host spelling to a paired phone (the
+ * `repositoryRoot` deliberately never leaves the daemon, so this identity is the only path a
+ * session/PR row can leak).
+ *
+ * A `repository` identity is a STRUCTURAL value, not prose, so it gets WHOLE-value classification
+ * with a BOUNDARY-AWARE root match, not the free-text `scrubRoots`/`redactAbsolutePaths` pair.
+ * `scrubRoots` does unrestricted substring replacement, which both under-redacts a bare identity
+ * (leaving a root-level `/repo.git`, a UNC share, or the suffix of a spaced path) AND over-trusts a
+ * prefix collision (`/…/rennet-secret/.git` would become `<rennet>-secret/.git`, disclosing the
+ * sibling). Here a path is localized to a root ONLY when it equals that root or sits under it at a
+ * separator boundary (the `matchRoot` contract `toRepoReference` uses); anything else absolute is
+ * redacted OUTRIGHT to `<path>`. A forge `owner/name` slug matches nothing and crosses unchanged, so
+ * the single-repo / forge-slug wire is byte-identical. The ONE place a repository identity is scrubbed.
+ */
+export function projectRepositoryIdentity(repository: string, ctx: ProjectionContext): string {
+  // A forge `owner/name` slug (or any non-absolute reference) is off-machine-meaningful and crosses
+  // unchanged — exactly what the CLI mints and PR-scopes with.
+  if (!isAbsoluteHostPath(repository)) return repository;
+  // Under a known root (equal, or at a `sep` boundary) → that root's display token + repo-relative
+  // tail, the same localization `toRepoReference` performs for a path.
+  for (const entry of ctx.roots) {
+    const root = matchRoot(repository, entry);
+    if (root === null) continue;
+    return repository === root
+      ? `<${entry.displayName}>`
+      : `<${entry.displayName}>${repository.slice(root.length)}`;
+  }
+  // The home dir, at the same boundary (never a bare `split`, so `/home/raissa/…` is not a `/home/rai`
+  // match). Mirrors `scrubRoots`' `~`, anchored.
+  const home = ctx.homeDir;
+  if (home === repository) return "~";
+  if (home && repository.startsWith(home + sep)) return `~${repository.slice(home.length)}`;
+  // Outside every known root and the home dir, unlocalizable: redact WHOLE (R19).
+  return "<path>";
+}
+
+/** An absolute host path in any spelling: POSIX (`/…`), a Windows drive (`C:\…` or `C:/…`), or a UNC
+ *  share (`\\host\…`). A forge `owner/name` slug matches none of these. */
+function isAbsoluteHostPath(value: string): boolean {
+  return value.startsWith("/") || value.startsWith("\\") || /^[a-zA-Z]:[\\/]/.test(value);
+}
+
+/** Scrub the `repository` identity on one row (a session/sidebar row, a local-work or PR row), if
+ *  it carries a string one; a row without it is returned unchanged. */
+function projectRepositoryOn(
+  row: Record<string, unknown>,
+  ctx: ProjectionContext,
+): Record<string, unknown> {
+  return typeof row.repository === "string"
+    ? { ...row, repository: projectRepositoryIdentity(row.repository, ctx) }
+    : row;
+}
+
 // ── Board projections (B4: board events/state before a projected broadcast) ───
 
 /**
@@ -434,6 +495,25 @@ export function projectCommandOutput(
       o.discovery = projectDiscovery(o.discovery as Record<string, unknown>, ctx);
     if (Array.isArray(o.repos))
       o.repos = (o.repos as Record<string, unknown>[]).map((s) => projectSummary(s, ctx));
+    // The session identity (#580, #952). A `SidebarSession.repository` is an `owner/name` slug WITH
+    // a forge remote and the durable git-common-dir HOST PATH without one (repository.identify's
+    // forgeless case). The slug crosses unchanged; the common-dir must not ship its host spelling
+    // to a projected client. `session.list` returns `sessions`; every `session.*` write returns a
+    // nullable `session`. `repositoryRoot`/`boundRoot` are NOT on the sidebar shape (they stay
+    // server-side), so `repository` is the only identity these rows carry.
+    if (o.session && typeof o.session === "object" && !Array.isArray(o.session))
+      o.session = projectRepositoryOn(o.session as Record<string, unknown>, ctx);
+    if (Array.isArray(o.sessions))
+      o.sessions = (o.sessions as Record<string, unknown>[]).map((s) =>
+        projectRepositoryOn(s, ctx),
+      );
+    // `project.detail`'s rows carry the SAME repository identity string (#580): `owner/name` with a
+    // forge, else the common-dir host path — the very string `repository.identify` returns, scrubbed
+    // the same way. `LocalWork` and `PullRequest` both dedupe on `(repository, branch)`.
+    if (Array.isArray(o.locals))
+      o.locals = (o.locals as Record<string, unknown>[]).map((l) => projectRepositoryOn(l, ctx));
+    if (Array.isArray(o.prs))
+      o.prs = (o.prs as Record<string, unknown>[]).map((p) => projectRepositoryOn(p, ctx));
     if (o.run && typeof o.run === "object" && !Array.isArray(o.run)) {
       const run = { ...(o.run as Record<string, unknown>) };
       if (Array.isArray(run.repos)) {
@@ -488,6 +568,14 @@ export function projectCommandOutput(
     if (command === "session.landWorkBranch" && typeof o.reason === "string") {
       o.reason = capRefusal(String(redactAbsolutePathsDeep(o.reason, ctx)));
     }
+    // `repository.identify` (headless-review-cli D11) returns the daemon's canonical identity for a
+    // checkout: an `owner/name` slug WITH a forge remote, else the durable git-common-dir HOST PATH.
+    // It routes through the ONE identity scrub, which leaves the slug byte-identical (no forge guard
+    // needed) and redacts a leftover absolute common-dir — the same treatment the session/project
+    // carriers above take, so the identity is scrubbed identically wherever it crosses the wire.
+    if (command === "repository.identify" && typeof o.repository === "string") {
+      o.repository = projectRepositoryIdentity(o.repository, ctx);
+    }
     // `session.workBranchState` is classified HERE, by having no branch of its own: every
     // field it carries is a ref NAME (`feat/x`, `rennet/feat/x`, `refs/remotes/origin/
     // feat/x`) or a number or a boolean. Ref names cross a projected connection unchanged,
@@ -541,6 +629,9 @@ export function projectProgressEvent(
 /** Command → the input field(s) carrying a HOST path a projected client references. Others are repo-relative. */
 export const INBOUND_HOST_PATH_FIELDS: Readonly<Record<string, readonly string[]>> = {
   "repository.choose": ["path"],
+  // The headless CLI's checkout path, resolved to `owner/name` on the daemon (headless-review-cli
+  // D11); a host-absolute path inbound, exactly like `repository.choose`'s.
+  "repository.identify": ["path"],
   "review.capture": ["repoPath"],
   "review.openPr": ["repoPath"],
   "review.checkFreshness": ["repoPath"],

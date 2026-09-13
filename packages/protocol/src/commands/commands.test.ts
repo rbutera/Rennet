@@ -106,6 +106,7 @@ const ABSORBED_IDS = [
   "publish.review",
   "publish.submitPr",
   "repository.choose",
+  "repository.identify",
   "review.capture",
   "review.checkFreshness",
   "review.deltaDigest",
@@ -224,7 +225,7 @@ const MENU_INVENTORY: readonly string[] = [];
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(113);
+    expect(ABSORBED_IDS).toHaveLength(114);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {
@@ -570,5 +571,32 @@ describe("command registry invariants (#465)", () => {
     expect(isCommandName("app.bootstrap")).toBe(true);
     expect(isCommandName("canvas.read")).toBe(false);
     expect(isCommandName("ordering.approve")).toBe(false);
+  });
+});
+
+describe("repository.identify output consistency (#952 (a))", () => {
+  // The output now reuses `projectRepositoryAddressSchema`, whose `forgeRepositoryMatchesLegacy`
+  // refine forbids a slug and a structured identity that name different repos. The hand-rolled
+  // twin this replaced allowed exactly that contradiction to be returned.
+  it("accepts a consistent owner/name slug beside its structured forge identity", () => {
+    const consistent = {
+      repository: "acme/widget",
+      forgeRepository: { forge: "github", owner: "acme", name: "widget" },
+    };
+    expect(parseCommandOutput("repository.identify", consistent)).toEqual(consistent);
+  });
+
+  it("accepts a forgeless local-only common-dir identity", () => {
+    const forgeless = { repository: "/srv/git/common/repo-b.git" };
+    expect(parseCommandOutput("repository.identify", forgeless)).toEqual(forgeless);
+  });
+
+  it("rejects a slug that contradicts its structured forge identity", () => {
+    expect(() =>
+      parseCommandOutput("repository.identify", {
+        repository: "acme/widget",
+        forgeRepository: { forge: "github", owner: "other", name: "repo" },
+      }),
+    ).toThrow();
   });
 });

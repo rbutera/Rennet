@@ -1,6 +1,6 @@
 ---
 title: Command exposure
-description: Which of the 113 registered commands the ⌘K menu lists and which the session thread holds as tools, with the rationale for every row.
+description: Which of the 114 registered commands the ⌘K menu lists and which the session thread holds as tools, with the rationale for every row.
 ---
 
 The command registry in `packages/protocol/src/commands/index.ts` carries an
@@ -20,7 +20,7 @@ boolean flag has no input channel, and the dialog has no result surface. So a
 command earns `commandMenu: true` only when all four hold:
 
 1. **Its schema accepts `{}`.** Nothing required that the menu cannot supply.
-   19 of the 113 commands pass this; the rest need a review, session, project,
+   19 of the 114 commands pass this; the rest need a review, session, project,
    span, host, or path the menu has no way to name. A protocol test asserts the
    invariant, so an exposed row can never be one that only fails.
 2. **It is an action, not a read the UI already drives.** `settings.get`,
@@ -57,6 +57,7 @@ still goes through the one seam; only the label is hand-written.
 |---|---|
 | `app.bootstrap` | Boot handshake the client runs itself on mount. |
 | `repository.choose` | The path comes from the in-app directory browser; an empty input reaches the daemon's fallback chooser, not the user's pick. |
+| `repository.identify` | The headless `rennet review` CLI's checkout-to-`owner/name` resolver (D11). It needs a host path the menu cannot name, and it is a CLI-internal read, not agent-exposed either. |
 
 ### review
 

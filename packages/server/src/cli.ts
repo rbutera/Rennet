@@ -18,7 +18,7 @@
 // protocol-compat or claim logic to drift.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { arch, cpus, platform } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,11 +31,36 @@ import {
   queryFileOverview,
   queryProjectMap,
 } from "@rennet/core";
-import type { BenchmarkRun, ProjectSnapshotManifest } from "@rennet/protocol";
-import { PROTOCOL_VERSION, parseSessionFrame } from "@rennet/protocol";
+import type {
+  BenchmarkRun,
+  CommandOutput,
+  LensKind,
+  ProjectSnapshotManifest,
+  SessionFrame,
+  SessionPreparation,
+  SidebarSession,
+} from "@rennet/protocol";
+import {
+  currentGenerationId,
+  LENS_KINDS,
+  newCommandId,
+  PROTOCOL_VERSION,
+  parseSessionFrame,
+} from "@rennet/protocol";
 import { WebSocket } from "ws";
 import { createStageTimer, isMapBenchmarkStage } from "./benchmark-recorder";
 import { createBenchmarkRecording } from "./benchmark-store";
+import {
+  buildReviewDocument,
+  foldPreparationLines,
+  lensDraftLines,
+  parseReviewTarget,
+  REVIEW_USAGE,
+  type ReviewOutcome,
+  resolvePrTarget,
+  reviewCliUnsupportedMessage,
+  reviewDocumentPath,
+} from "./cli-review";
 import { defaultDataDir, runDaemon } from "./daemon";
 import { readDaemonFile, removeDaemonFile } from "./daemon-file";
 import { findHealthyDaemon, requestDaemonShutdown } from "./supervise";
@@ -81,6 +106,7 @@ const HELP = [
   "  rennet stop    [--data-dir <dir>]   stop the running daemon",
   "  rennet pair    [--data-dir <dir>]   mint a device pairing code (5-minute TTL)",
   "  rennet devices [--revoke <id>] [--data-dir <dir>]   list or revoke paired devices",
+  "  rennet review  <base>..<head> [path] | --pr <n> [path] [--out <file>] [--timeout <s>] [--data-dir <dir>]   review a range or PR over the daemon",
   "  rennet map     [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--data-dir <dir>]   build & store the repo map",
   "  rennet benchmarks export [--out <file>] [--data-dir <dir>] [--revision <rev>] [--timestamp <iso>]   write the docs benchmark data",
   "",
@@ -167,6 +193,8 @@ export async function runCli(
       const dataDir = parsed["data-dir"] ?? env.RENNET_USER_DATA ?? defaultDataDir();
       return devices(dataDir, parsed.revoke, io, deps);
     }
+    case "review":
+      return review(rest, io, env, deps);
     case "map": {
       let parsed: {
         values: {
@@ -446,13 +474,145 @@ async function stopDaemon(dataDir: string, io: CliIo, deps: CliDeps): Promise<nu
   return 1;
 }
 
+/** A daemon-not-healthy verdict, put into the words `rennet pair` prints (D9). */
+function unhealthyDaemonMessage(kind: "absent" | "stale" | "incompatible"): string {
+  return kind === "absent"
+    ? "the daemon is not running (start it with `rennet serve`)"
+    : `daemon not usable: ${kind}`;
+}
+
+/** A long-lived loopback socket to the daemon: correlated `invoke`s and every push frame. */
+interface CliSocket {
+  /** Send one command and resolve its output, or reject on an rpcError / closed socket. */
+  invoke(command: string, input: unknown): Promise<unknown>;
+  /** Subscribe to every parsed push frame (the CLI is `private`, so frames arrive raw). Returns an unsubscribe. */
+  onFrame(listener: (frame: SessionFrame) => void): () => void;
+  /** The handshake's feature flags (headless-review-cli D11), captured from the `serverInfo` frame. */
+  readonly features: Readonly<Record<string, boolean>>;
+  /** The daemon's own version from the `serverInfo` frame, for a truthful capability refusal. */
+  readonly serverVersion: string;
+  /** Close the socket. Idempotent from the caller's side. */
+  close(): void;
+}
+
+/**
+ * Open ONE loopback WS connection to the running daemon and keep it open (design D10). The
+ * CLI is a LOOPBACK client, so it is `private` (full contract, no token) and it receives
+ * the raw push frames (`lensDraft`, `roundProgress`) a review streams. `cliInvoke` is one
+ * `invoke` + `close` over this; the review driver keeps the socket for the whole run so the
+ * frames arrive on it. Rejects if no healthy daemon answers within 10 s.
+ */
+async function openCliSocket(dataDir: string, deps: CliDeps): Promise<CliSocket> {
+  const verdict = await deps.probe(dataDir);
+  if (verdict.kind !== "healthy") {
+    throw new Error(unhealthyDaemonMessage(verdict.kind));
+  }
+  const url = `ws://127.0.0.1:${verdict.identity.wsPort}`;
+  return await new Promise<CliSocket>((resolveSocket, rejectSocket) => {
+    const socket = new WebSocket(url);
+    const listeners = new Set<(frame: SessionFrame) => void>();
+    const pending = new Map<
+      string,
+      { resolve: (value: unknown) => void; reject: (error: Error) => void }
+    >();
+    let ready = false;
+    let counter = 0;
+    // The handshake facts (headless-review-cli D11), captured from the `serverInfo` frame before
+    // this promise resolves, then read through the getters below so `api` stays a readonly view.
+    let capturedFeatures: Record<string, boolean> = {};
+    let capturedVersion = "";
+    const openTimer = setTimeout(() => {
+      socket.close();
+      rejectSocket(new Error("timed out waiting for the daemon"));
+    }, 10_000);
+    const api: CliSocket = {
+      invoke(command, input) {
+        return new Promise<unknown>((resolveCall, rejectCall) => {
+          const requestId = `cli-${Date.now()}-${counter++}`;
+          pending.set(requestId, { resolve: resolveCall, reject: rejectCall });
+          socket.send(JSON.stringify({ type: "request", requestId, command, input }));
+        });
+      },
+      onFrame(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      get features() {
+        return capturedFeatures;
+      },
+      get serverVersion() {
+        return capturedVersion;
+      },
+      close() {
+        socket.close();
+      },
+    };
+    socket.on("open", () => {
+      socket.send(
+        JSON.stringify({
+          type: "hello",
+          clientId: `cli-${Date.now()}`,
+          clientType: "rennet-cli",
+          protocolVersion: PROTOCOL_VERSION,
+        }),
+      );
+    });
+    socket.on("message", (data) => {
+      let frame: SessionFrame;
+      try {
+        frame = parseSessionFrame(JSON.parse(data.toString()));
+      } catch {
+        return;
+      }
+      if (frame.type === "serverInfo") {
+        if (!ready) {
+          // Capture the capability record and version BEFORE resolving, so the driver reading
+          // `socket.features` sees the handshake facts the moment it holds the socket (D11).
+          capturedFeatures = frame.features;
+          capturedVersion = frame.version;
+          ready = true;
+          clearTimeout(openTimer);
+          resolveSocket(api);
+        }
+        return;
+      }
+      if (frame.type === "response") {
+        const call = pending.get(frame.requestId);
+        if (call) {
+          pending.delete(frame.requestId);
+          call.resolve(frame.output);
+        }
+        return;
+      }
+      if (frame.type === "rpcError") {
+        const call = pending.get(frame.requestId);
+        if (call) {
+          pending.delete(frame.requestId);
+          call.reject(new Error(frame.message));
+        }
+        return;
+      }
+      for (const listener of listeners) listener(frame);
+    });
+    socket.on("error", (error) => {
+      if (!ready) {
+        clearTimeout(openTimer);
+        rejectSocket(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+    socket.on("close", () => {
+      clearTimeout(openTimer);
+      for (const call of pending.values()) call.reject(new Error("the daemon connection closed"));
+      pending.clear();
+    });
+  });
+}
+
 /**
  * Invoke ONE command on the running daemon over a short-lived loopback WS connection
- * (issue #380). The CLI is a LOOPBACK client, so it is `private` — full contract, no
- * token — even when the daemon also binds a remote interface. A daemon bound to a
- * specific non-loopback host only (not `0.0.0.0`) is unreachable here; that is honest
- * (local admin then happens over that interface). Resolves the command output, or
- * throws on an rpcError / closed socket / timeout.
+ * (issue #380), keeping `cliInvoke`'s original signature and its 10 s ceiling. It is
+ * `openCliSocket` + one `invoke` + `close`; `pair` and `devices` are unchanged callers.
+ * Resolves the command output, or throws on an rpcError / closed socket / timeout.
  */
 async function cliInvoke(
   dataDir: string,
@@ -460,61 +620,27 @@ async function cliInvoke(
   command: string,
   input: unknown,
 ): Promise<unknown> {
-  const verdict = await deps.probe(dataDir);
-  if (verdict.kind !== "healthy") {
-    throw new Error(
-      verdict.kind === "absent"
-        ? "the daemon is not running (start it with `rennet serve`)"
-        : `daemon not usable: ${verdict.kind}`,
-    );
-  }
-  const url = `ws://127.0.0.1:${verdict.identity.wsPort}`;
-  return await new Promise<unknown>((resolve, reject) => {
-    const socket = new WebSocket(url);
-    const requestId = `cli-${Date.now()}`;
-    const timer = setTimeout(() => {
-      socket.close();
-      reject(new Error("timed out waiting for the daemon"));
-    }, 10_000);
-    const done = (fn: () => void): void => {
-      clearTimeout(timer);
-      socket.close();
-      fn();
-    };
-    socket.on("open", () => {
-      socket.send(
-        JSON.stringify({
-          type: "hello",
-          clientId: requestId,
-          clientType: "rennet-cli",
-          protocolVersion: PROTOCOL_VERSION,
-        }),
+  const socket = await openCliSocket(dataDir, deps);
+  try {
+    return await new Promise<unknown>((resolveCall, rejectCall) => {
+      const timer = setTimeout(
+        () => rejectCall(new Error("timed out waiting for the daemon")),
+        10_000,
+      );
+      socket.invoke(command, input).then(
+        (output) => {
+          clearTimeout(timer);
+          resolveCall(output);
+        },
+        (error) => {
+          clearTimeout(timer);
+          rejectCall(error instanceof Error ? error : new Error(String(error)));
+        },
       );
     });
-    socket.on("message", (data) => {
-      let frame: ReturnType<typeof parseSessionFrame>;
-      try {
-        frame = parseSessionFrame(JSON.parse(data.toString()));
-      } catch {
-        return;
-      }
-      if (frame.type === "serverInfo") {
-        socket.send(JSON.stringify({ type: "request", requestId, command, input }));
-        return;
-      }
-      if (frame.type === "response" && frame.requestId === requestId) {
-        done(() => resolve(frame.output));
-        return;
-      }
-      if (frame.type === "rpcError" && frame.requestId === requestId) {
-        done(() => reject(new Error(frame.message)));
-      }
-    });
-    socket.on("error", (error) => done(() => reject(error)));
-    socket.on("close", () => {
-      clearTimeout(timer);
-    });
-  });
+  } finally {
+    socket.close();
+  }
 }
 
 /** Mint a pairing code from the running daemon and print it. The code is single-use, 5-minute TTL. */
@@ -562,6 +688,501 @@ async function devices(
     io.err(`rennet devices: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
   }
+}
+
+// ── `rennet review` (headless-review-cli, issue #379 / #71) ──────────────────
+// The daemon's second client for the review path: open a session over the same `session.mint`
+// front door the desktop uses, print the preparation as the daemon reports it, and write the
+// settled boards to a stable path a `tail -1` can read.
+
+/** The desktop's preparation-poll cadence (`PREPARATION_POLL_MS`); the record is small (D6). */
+const PREPARATION_POLL_MS = 400;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+}
+
+function gitTrim(cwd: string, args: string[]): string {
+  return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
+}
+
+/** The head the range's empty head resolves to: the checked-out branch, else the literal HEAD (D3). */
+function resolveCurrentBranch(toplevel: string): string {
+  try {
+    const branch = gitTrim(toplevel, ["symbolic-ref", "--short", "-q", "HEAD"]);
+    return branch === "" ? "HEAD" : branch;
+  } catch {
+    return "HEAD";
+  }
+}
+
+/** Does this project contain the repository at `toplevelReal` (by path / openPath / included repos)? */
+function projectContains(
+  project: { path: string; openPath: string; includedRepoPaths?: readonly string[] },
+  toplevelReal: string,
+): boolean {
+  const candidates = [project.path, project.openPath, ...(project.includedRepoPaths ?? [])];
+  return candidates.some((candidate) => {
+    try {
+      return realpathSync(candidate) === toplevelReal;
+    } catch {
+      return candidate === toplevelReal;
+    }
+  });
+}
+
+/**
+ * Resolve the project the repository belongs to, adding it with the daemon's own discover +
+ * add flow when nothing contains it yet (D5), and saying so on stdout. Returns its id.
+ */
+async function resolveProjectId(
+  socket: CliSocket,
+  toplevel: string,
+  toplevelReal: string,
+  io: CliIo,
+): Promise<string> {
+  const listed = (await socket.invoke("projects.list", {})) as CommandOutput<"projects.list">;
+  const existing = listed.projects.find((project) => projectContains(project, toplevelReal));
+  if (existing !== undefined) return existing.id;
+  // Grant read-only access to the toplevel before discovering it: the same grant the
+  // desktop's picker makes, exposed to a headless client by `repository.choose`'s explicit
+  // `path` (#379). This is the daemon's access rule, not a gate the CLI is inventing.
+  await socket.invoke("repository.choose", { path: toplevel });
+  const discovered = (await socket.invoke("project.discover", {
+    commandId: newCommandId(),
+    path: toplevel,
+    kind: "repo",
+    source: "local",
+  })) as CommandOutput<"project.discover">;
+  const added = (await socket.invoke("projects.add", {
+    commandId: newCommandId(),
+    discovery: discovered.discovery,
+    includedRepos: discovered.discovery.repos.map((repo) => repo.name),
+    primaryBranch: discovered.discovery.primaryBranch,
+  })) as CommandOutput<"projects.add">;
+  io.out(`added ${added.project.name} as a project`);
+  return added.project.id;
+}
+
+interface PollResult {
+  readonly outcome: ReviewOutcome;
+  readonly reviewId: string | undefined;
+  readonly reason?: string;
+  readonly settledAtMs: number;
+}
+
+function terminalResult(
+  preparation: SessionPreparation | undefined,
+  reviewId: string | undefined,
+): PollResult | null {
+  if (preparation === undefined) {
+    return { outcome: "settled", reviewId, settledAtMs: Date.now() };
+  }
+  if (preparation.status === "failed") {
+    return {
+      outcome: "failed",
+      reviewId: preparation.reviewId ?? reviewId,
+      reason: preparation.reason,
+      settledAtMs: Date.now(),
+    };
+  }
+  if (preparation.status === "cancelled") {
+    return {
+      outcome: "cancelled",
+      reviewId: preparation.reviewId ?? reviewId,
+      reason: "the preparation was cancelled",
+      settledAtMs: Date.now(),
+    };
+  }
+  return null;
+}
+
+/**
+ * Watch a session's preparation to a settled/failed/cancelled state (or the timeout), printing
+ * one line per record transition and one per `lensDraft` write, each stamped with the seconds
+ * since `startedAtMs` (D6). A timeout does NOT cancel the daemon's preparation (D9): the loop
+ * just stops and the caller writes what settled.
+ */
+async function pollPreparation(
+  socket: CliSocket,
+  sessionId: string,
+  initial: SessionPreparation | undefined,
+  initialReviewId: string | undefined,
+  startedAtMs: number,
+  timeoutMs: number,
+  io: CliIo,
+): Promise<PollResult> {
+  let reviewId = initialReviewId;
+  const unsubscribe = socket.onFrame((frame) => {
+    if (frame.type !== "lensDraft") return;
+    if (reviewId !== undefined && frame.reviewId !== reviewId) return;
+    for (const line of lensDraftLines(frame.event, Date.now() - startedAtMs)) io.out(line);
+  });
+  try {
+    let previous = initial;
+    if (previous?.status === "drafting") reviewId = previous.reviewId;
+    for (const line of foldPreparationLines(undefined, previous, Date.now() - startedAtMs)) {
+      io.out(line);
+    }
+    const deadline = startedAtMs + timeoutMs;
+    while (true) {
+      const done = terminalResult(previous, reviewId);
+      if (done) return done;
+      if (Date.now() > deadline) {
+        return {
+          outcome: "timeout",
+          reviewId,
+          reason: `timed out after ${Math.round(timeoutMs / 1000)}s; the daemon is still preparing this review`,
+          settledAtMs: Date.now(),
+        };
+      }
+      await sleep(PREPARATION_POLL_MS);
+      const listed = (await socket.invoke("session.list", {})) as CommandOutput<"session.list">;
+      const row = listed.sessions.find((session) => session.id === sessionId);
+      if (row?.reviewId !== undefined) reviewId = row.reviewId;
+      const next = row?.preparation;
+      if (next?.status === "drafting") reviewId = next.reviewId;
+      for (const line of foldPreparationLines(previous, next, Date.now() - startedAtMs)) {
+        io.out(line);
+      }
+      previous = next;
+    }
+  } finally {
+    unsubscribe();
+  }
+}
+
+/**
+ * Read the settled review and write its document (D7). Prints the reason on stderr for a
+ * non-`settled` outcome, then the document's absolute path as the final stdout line. Returns
+ * `0` on `settled`, `1` otherwise; `1` too if the document could not be written.
+ */
+async function writeReviewDocument(input: {
+  socket: CliSocket;
+  reviewId: string;
+  sessionId: string;
+  projectId: string;
+  dataDir: string;
+  out?: string;
+  requestedHead: string;
+  outcome: ReviewOutcome;
+  reason?: string;
+  startedAtMs: number;
+  settledAtMs: number;
+  io: CliIo;
+}): Promise<number> {
+  const { socket, reviewId, io } = input;
+  const loaded = (await socket.invoke("review.load", {
+    commandId: newCommandId(),
+    reviewId,
+  })) as CommandOutput<"review.load">;
+  const rounds = (await socket.invoke("session.rounds", {
+    reviewId,
+  })) as CommandOutput<"session.rounds">;
+  const generation = currentGenerationId(rounds.records, loaded.review.activePatchsetId);
+  const boards = {} as Record<LensKind, CommandOutput<"board.read">>;
+  for (const lens of LENS_KINDS) {
+    boards[lens] = (await socket.invoke("board.read", {
+      reviewId,
+      generation,
+      lens,
+    })) as CommandOutput<"board.read">;
+  }
+  const document = buildReviewDocument({
+    review: loaded.review,
+    sessionId: input.sessionId,
+    projectId: input.projectId,
+    requestedHead: input.requestedHead,
+    rounds: rounds.records,
+    boards,
+    outcome: input.outcome,
+    reason: input.reason,
+    startedAtMs: input.startedAtMs,
+    settledAtMs: input.settledAtMs,
+  });
+  const path =
+    input.out !== undefined ? resolve(input.out) : reviewDocumentPath(input.dataDir, reviewId);
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+  } catch (error) {
+    io.err(
+      `rennet review: could not write the document: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return 1;
+  }
+  if (input.reason !== undefined) io.err(`rennet review: ${input.reason}`);
+  io.out(path);
+  return input.outcome === "settled" ? 0 : 1;
+}
+
+/** The mint input for a resolved target: the branch/base for a range, or the PR row's fields. */
+type MintInput = {
+  projectId: string;
+  commandId: string;
+  branch: string;
+  base?: string;
+  prNumber?: number;
+  repository?: string;
+  forgeRepository?: CommandOutput<"project.detail">["prs"][number]["forgeRepository"];
+  replacesSessionId?: string;
+};
+
+/**
+ * `rennet review`: open a session for the target over the daemon, print the preparation as it
+ * happens, and write the settled boards. See headless-review-cli's design for the reattach,
+ * exit-code and document rules.
+ */
+async function review(
+  argv: readonly string[],
+  io: CliIo,
+  env: NodeJS.ProcessEnv,
+  deps: CliDeps,
+): Promise<number> {
+  const target = parseReviewTarget(argv);
+  if (target.kind === "usage") {
+    io.err(`rennet review: ${target.message}`);
+    io.err(REVIEW_USAGE);
+    return 2;
+  }
+  const dataDir = target.dataDir ?? env.RENNET_USER_DATA ?? defaultDataDir();
+
+  // Probe + connect FIRST, so the daemon-absent message is the first output (D9).
+  let socket: CliSocket;
+  try {
+    socket = await openCliSocket(dataDir, deps);
+  } catch (error) {
+    io.err(`rennet review: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+  try {
+    return await driveReview(socket, target, dataDir, io);
+  } finally {
+    socket.close();
+  }
+}
+
+async function driveReview(
+  socket: CliSocket,
+  target: Exclude<ReturnType<typeof parseReviewTarget>, { kind: "usage" }>,
+  dataDir: string,
+  io: CliIo,
+): Promise<number> {
+  // Connect-time capability gate (headless-review-cli D11). A daemon that predates the review
+  // seam never advertises `review-cli` and its `repository.identify` is an unknown command, so
+  // it would review against the wrong repo or base silently. Refuse loudly, naming the minimum
+  // version, BEFORE resolving the project (which would add a project to that daemon's store).
+  const unsupported = reviewCliUnsupportedMessage(socket.features, socket.serverVersion);
+  if (unsupported !== undefined) {
+    io.err(`rennet review: ${unsupported}`);
+    return 1;
+  }
+
+  const repoPath = resolve(target.path ?? process.cwd());
+  let toplevel: string;
+  try {
+    toplevel = gitTrim(repoPath, ["rev-parse", "--show-toplevel"]);
+  } catch (error) {
+    io.err(`rennet review: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+  let toplevelReal: string;
+  try {
+    toplevelReal = realpathSync(toplevel);
+  } catch {
+    toplevelReal = toplevel;
+  }
+
+  const projectId = await resolveProjectId(socket, toplevel, toplevelReal, io);
+
+  // The DAEMON resolves the checkout to its canonical `owner/name` (headless-review-cli D11): the
+  // CLI never parses the origin remote, so a `.git` suffix or a case difference cannot fork the
+  // claim. Both arms use this identity, so a workspace's several repos never collapse onto the
+  // wrong one. Single-repo: it resolves to the one identity the capture already used.
+  const standing = (await socket.invoke("repository.identify", {
+    path: toplevel,
+  })) as CommandOutput<"repository.identify">;
+
+  let requestedHead: string;
+  let mintInput: MintInput;
+  if (target.kind === "range") {
+    requestedHead = target.head !== "" ? target.head : resolveCurrentBranch(toplevel);
+    mintInput = {
+      projectId,
+      commandId: newCommandId(),
+      branch: requestedHead,
+      base: target.base,
+      repository: standing.repository,
+      ...(standing.forgeRepository === undefined
+        ? {}
+        : { forgeRepository: standing.forgeRepository }),
+    };
+  } else {
+    const detail = (await socket.invoke("project.detail", {
+      projectId,
+      prStates: ["open", "merged", "closed"],
+    })) as CommandOutput<"project.detail">;
+    // Scope `--pr <n>` to the standing repository (headless-review-cli D11): a bare number is
+    // unique only within one repo, so a project-wide `prs.find` can open a sibling repo's PR.
+    // The full standing identity (with forgeRepository) is passed so a same-slug cross-forge
+    // collision is decided by forge, not name.
+    const resolution = resolvePrTarget(detail.prs, target.number, standing);
+    if (resolution.kind === "not-listed") {
+      io.err(
+        detail.authUnavailable !== undefined
+          ? `rennet review: pull request #${target.number} could not be listed (${detail.authUnavailable})`
+          : `rennet review: pull request #${target.number} is not listed for this project`,
+      );
+      return 1;
+    }
+    if (resolution.kind === "ambiguous") {
+      io.err(
+        `rennet review: pull request #${target.number} is not this checkout's (${standing.repository}); it names ${resolution.candidates.join(", ")}. Run rennet review from the repository whose PR you mean.`,
+      );
+      return 1;
+    }
+    const row = resolution.row;
+    requestedHead = row.branch;
+    mintInput = {
+      projectId,
+      commandId: newCommandId(),
+      branch: row.branch,
+      prNumber: row.number,
+      repository: row.repository,
+      ...(row.forgeRepository === undefined ? {} : { forgeRepository: row.forgeRepository }),
+    };
+  }
+
+  const minted = (await socket.invoke("session.mint", mintInput)) as CommandOutput<"session.mint">;
+  let startedAtMs = Date.now();
+  if (minted.session === null) {
+    io.err("rennet review: the daemon minted no session");
+    return 1;
+  }
+  let row: SidebarSession = minted.session;
+
+  if (minted.reattached) {
+    const preparation = row.preparation;
+    // A live preparation: attach to it exactly as if this run had minted it.
+    if (preparation?.status !== "capturing" && preparation?.status !== "drafting") {
+      const settled = await resolveReattach(socket, row, requestedHead, toplevel, mintInput, io);
+      if (settled.kind === "fast") {
+        return writeReviewDocument({
+          socket,
+          reviewId: settled.reviewId,
+          sessionId: row.id,
+          projectId,
+          dataDir,
+          out: target.out,
+          requestedHead,
+          outcome: "settled",
+          startedAtMs,
+          settledAtMs: Date.now(),
+          io,
+        });
+      }
+      if (settled.kind === "error") return 1;
+      row = settled.row;
+      startedAtMs = Date.now();
+    }
+  }
+
+  const result = await pollPreparation(
+    socket,
+    row.id,
+    row.preparation,
+    row.reviewId,
+    startedAtMs,
+    target.timeoutMs,
+    io,
+  );
+  if (result.reviewId === undefined) {
+    io.err(`rennet review: ${result.reason ?? "the preparation produced no review"}`);
+    return 1;
+  }
+  return writeReviewDocument({
+    socket,
+    reviewId: result.reviewId,
+    sessionId: row.id,
+    projectId,
+    dataDir,
+    out: target.out,
+    requestedHead,
+    outcome: result.outcome,
+    reason: result.reason,
+    startedAtMs,
+    settledAtMs: result.settledAtMs,
+    io,
+  });
+}
+
+type ReattachResolution =
+  | { kind: "fast"; reviewId: string }
+  | { kind: "poll"; row: SidebarSession }
+  | { kind: "error" };
+
+/**
+ * Decide what a reattach to a NON-running session means (D8): a settled review at the requested
+ * head is a fast exit; a boards-stage failure with a review is retried; a moved head or a
+ * failed capture mints a successor with `replacesSessionId`, saying which session was archived.
+ */
+async function resolveReattach(
+  socket: CliSocket,
+  row: SidebarSession,
+  requestedHead: string,
+  toplevel: string,
+  mintInput: MintInput,
+  io: CliIo,
+): Promise<ReattachResolution> {
+  const preparation = row.preparation;
+  if (row.reviewId !== undefined) {
+    const loaded = (await socket.invoke("review.load", {
+      commandId: newCommandId(),
+      reviewId: row.reviewId,
+    })) as CommandOutput<"review.load">;
+    const active = loaded.review.patchsets.find(
+      (patchset) => patchset.id === loaded.review.activePatchsetId,
+    );
+    const currentHeadOid = active?.repository.headOid;
+    let requestedHeadOid: string | undefined;
+    try {
+      requestedHeadOid = gitTrim(toplevel, ["rev-parse", "--verify", `${requestedHead}^{commit}`]);
+    } catch {
+      requestedHeadOid = undefined;
+    }
+    const headMatches =
+      requestedHeadOid !== undefined &&
+      currentHeadOid !== undefined &&
+      currentHeadOid === requestedHeadOid;
+    if (headMatches && preparation === undefined) {
+      io.out(`already reviewed at ${requestedHead}; reusing the settled boards`);
+      return { kind: "fast", reviewId: row.reviewId };
+    }
+    if (headMatches && preparation?.status === "failed" && preparation.reviewId !== undefined) {
+      const retried = (await socket.invoke("session.retryPreparation", {
+        sessionId: row.id,
+        commandId: newCommandId(),
+      })) as CommandOutput<"session.retryPreparation">;
+      if (retried.session === null) {
+        io.err("rennet review: the daemon could not retry the preparation");
+        return { kind: "error" };
+      }
+      return { kind: "poll", row: retried.session };
+    }
+  }
+  // A moved head, a failed capture, or a cancelled preparation: mint a successor that archives
+  // this session and captures the requested range afresh (D8).
+  const successor = (await socket.invoke("session.mint", {
+    ...mintInput,
+    commandId: newCommandId(),
+    replacesSessionId: row.id,
+  })) as CommandOutput<"session.mint">;
+  if (successor.session === null) {
+    io.err("rennet review: the daemon minted no successor session");
+    return { kind: "error" };
+  }
+  io.out(`archived ${row.id}; captured a fresh review`);
+  return { kind: "poll", row: successor.session };
 }
 
 /**

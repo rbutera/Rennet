@@ -1689,6 +1689,80 @@ describe("session.mint — provider-qualified PR dispatch", () => {
     const listed = (await server.dispatch("session.list", {})) as { sessions: unknown[] };
     expect(listed.sessions).toHaveLength(1);
   });
+
+  it("a workspace mint reattaches to its OWN stamped session over a legacy cross-match (#952)", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-xrepo-legacy-data-"));
+    const workspace = mkdtempSync(join(tmpdir(), "rennet-xrepo-legacy-ws-"));
+    const repoA = mkdtempSync(join(workspace, "repo-a-"));
+    const repoB = mkdtempSync(join(workspace, "repo-b-"));
+    dirs.push(dataDir, workspace);
+
+    for (const [repo, remote] of [
+      [repoA, "git@github.com:acme/repo-a.git"],
+      [repoB, "git@github.com:acme/repo-b.git"],
+    ] as const) {
+      execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+      execFileSync("git", ["remote", "add", "origin", remote], { cwd: repo });
+    }
+
+    const server = await createRennetServer({ dataDir, env: {} });
+    shutdowns.push(server.shutdown);
+    const added = (await server.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: workspace,
+        kind: "workspace",
+        repos: [
+          { name: "repo-a", path: repoA, branches: 1 },
+          { name: "repo-b", path: repoB, branches: 1 },
+        ],
+        primaryBranch: "main",
+      },
+      includedRepos: ["repo-a", "repo-b"],
+      primaryBranch: "main",
+    })) as { project: { id: string; includedRepoPaths?: string[] } };
+    // The repo-b root exactly as the project stored it — the string `resolveProjectRepositoryRoot`
+    // returns, so the stamped session below is a true exact-repo match for the resolved root.
+    const storedRepoB = (added.project.includedRepoPaths ?? []).find((p) => p.includes("repo-b-"));
+    if (storedRepoB === undefined) throw new Error("repo-b root missing from the added project");
+
+    // Two sessions on the same branch in one workspace, seeded into the durable store the server
+    // reads (per-session file, disk-live). One is repo B's OWN session, already stamped with its
+    // root. The other is a PRE-#580 legacy session (branch only, no repository, no root) and is
+    // NEWER, so it sorts first (`live[0]`); being identity-SILENT, the owner/name tiebreak never
+    // excludes it (#597). Without a resolved root the mint would take that `live[0]` legacy.
+    const store = new SessionStore(join(dataDir, "sessions"));
+    store.save({
+      id: "stamped-repo-b",
+      projectId: added.project.id,
+      claim: { branch: "feat/x" },
+      repository: "acme/repo-b",
+      repositoryRoot: storedRepoB,
+      threads: [],
+      createdAt: 1,
+    });
+    store.save({
+      id: "legacy-pre-580",
+      projectId: added.project.id,
+      claim: { branch: "feat/x" },
+      threads: [],
+      createdAt: 2,
+    });
+
+    // The New Chat mint for repo B. `start` now resolves the target's root and passes it to
+    // `enter`, so the exact-repo match wins over the newer identity-silent legacy `live[0]`.
+    const minted = (await server.dispatch("session.mint", {
+      projectId: added.project.id,
+      commandId: randomUUID(),
+      branch: "feat/x",
+      repository: "acme/repo-b",
+      forgeRepository: { forge: "github", owner: "acme", name: "repo-b" },
+    })) as { session: PreparationSession | null; reattached: boolean };
+
+    expect(minted.reattached).toBe(true);
+    expect(minted.session?.id).toBe("stamped-repo-b");
+    expect(minted.session?.id).not.toBe("legacy-pre-580");
+  });
 });
 
 describe("createRennetServer — GitLab submission composition", () => {
@@ -2918,4 +2992,270 @@ describe("the app-tools listener at daemon launch (session-thread-briefing 3.4)"
     });
     expect(answer.status).toBe(401);
   }, 20_000);
+});
+
+describe("session.mint: an explicit base (headless-review-cli D2, tasks.md 1.2/1.3)", () => {
+  const dirs: string[] = [];
+  const shutdowns: Array<() => void> = [];
+  afterEach(() => {
+    for (const shutdown of shutdowns.splice(0)) shutdown();
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  // main(A) → release/2(A→B) → feat/x branched from release/2(→C). So merge-base(main, feat/x)
+  // is A and merge-base(release/2, feat/x) is B: an explicit base of release/2 must move the
+  // recorded baseOid off the primary branch's A, which is what proves the base is applied.
+  function seedRepo(): { repo: string; baseOidMain: string; baseOidRelease: string } {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-mint-base-repo-")));
+    dirs.push(repo);
+    const runGit = (...args: string[]): string =>
+      execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+    runGit("init", "-b", "main");
+    runGit("config", "user.email", "t@t");
+    runGit("config", "user.name", "t");
+    writeFileSync(join(repo, "a.txt"), "A\n");
+    runGit("add", "a.txt");
+    runGit("commit", "-m", "A");
+    const baseOidMain = runGit("rev-parse", "HEAD");
+    runGit("checkout", "-b", "release/2");
+    writeFileSync(join(repo, "a.txt"), "A\nB\n");
+    runGit("add", "a.txt");
+    runGit("commit", "-m", "B");
+    const baseOidRelease = runGit("rev-parse", "HEAD");
+    runGit("checkout", "-b", "feat/x");
+    writeFileSync(join(repo, "a.txt"), "A\nB\nC\n");
+    runGit("add", "a.txt");
+    runGit("commit", "-m", "C");
+    runGit("checkout", "main");
+    return { repo, baseOidMain, baseOidRelease };
+  }
+
+  async function addProject(server: TestServer, repo: string): Promise<string> {
+    const added = (await server.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: repo,
+        kind: "repo",
+        repos: [{ name: "repo", path: repo, branches: 3 }],
+        primaryBranch: "main",
+      },
+      includedRepos: ["repo"],
+      primaryBranch: "main",
+    })) as { project: { id: string } };
+    return added.project.id;
+  }
+
+  async function baseOfMintedReview(
+    server: TestServer,
+    input: { projectId: string; branch: string; base?: string },
+  ): Promise<{ sessionId: string; baseRef: string; baseOid: string }> {
+    const minted = (await server.dispatch("session.mint", {
+      commandId: randomUUID(),
+      projectId: input.projectId,
+      branch: input.branch,
+      ...(input.base === undefined ? {} : { base: input.base }),
+    })) as { session: PreparationSession | null; reattached: boolean };
+    const sessionId = minted.session?.id ?? "";
+    const prepared = await waitForReviewSession(server, sessionId);
+    const loaded = (await server.dispatch("review.load", {
+      commandId: randomUUID(),
+      reviewId: prepared.reviewId ?? "",
+    })) as { review: Review };
+    const active = loaded.review.patchsets.find(
+      (patchset) => patchset.id === loaded.review.activePatchsetId,
+    );
+    if (active === undefined) throw new Error("the minted review has no active patchset");
+    return { sessionId, baseRef: active.repository.baseRef, baseOid: active.repository.baseOid };
+  }
+
+  it("captures against the explicit base instead of the primary branch", async () => {
+    const { repo, baseOidRelease } = seedRepo();
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-mint-base-data-"));
+    dirs.push(dataDir);
+    const server = await createRennetServer({ dataDir, env: { RENNET_DISABLE_HARNESS: "1" } });
+    shutdowns.push(server.shutdown);
+    const projectId = await addProject(server, repo);
+
+    const withBase = await baseOfMintedReview(server, {
+      projectId,
+      branch: "feat/x",
+      base: "release/2",
+    });
+    expect(withBase.baseRef).toBe("release/2");
+    expect(withBase.baseOid).toBe(baseOidRelease);
+  }, 30_000);
+
+  it("captures against the primary branch when no base is given (byte-for-byte as before)", async () => {
+    const { repo, baseOidMain } = seedRepo();
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-mint-nobase-data-"));
+    dirs.push(dataDir);
+    const server = await createRennetServer({ dataDir, env: { RENNET_DISABLE_HARNESS: "1" } });
+    shutdowns.push(server.shutdown);
+    const projectId = await addProject(server, repo);
+
+    const withoutBase = await baseOfMintedReview(server, { projectId, branch: "feat/x" });
+    expect(withoutBase.baseRef).toBe("main");
+    expect(withoutBase.baseOid).toBe(baseOidMain);
+  }, 30_000);
+
+  it("keeps the (repository, branch) claim: two bases for one branch reattach to one session", async () => {
+    const { repo } = seedRepo();
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-mint-reattach-data-"));
+    dirs.push(dataDir);
+    const server = await createRennetServer({ dataDir, env: { RENNET_DISABLE_HARNESS: "1" } });
+    shutdowns.push(server.shutdown);
+    const projectId = await addProject(server, repo);
+
+    const first = (await server.dispatch("session.mint", {
+      commandId: randomUUID(),
+      projectId,
+      branch: "feat/x",
+      base: "main",
+    })) as { session: PreparationSession | null; reattached: boolean };
+    expect(first.reattached).toBe(false);
+    await waitForReviewSession(server, first.session?.id ?? "");
+
+    const second = (await server.dispatch("session.mint", {
+      commandId: randomUUID(),
+      projectId,
+      branch: "feat/x",
+      base: "release/2",
+    })) as { session: PreparationSession | null; reattached: boolean };
+    expect(second.reattached).toBe(true);
+    expect(second.session?.id).toBe(first.session?.id);
+
+    const listed = (await server.dispatch("session.list", {})) as {
+      sessions: PreparationSession[];
+    };
+    expect(listed.sessions.filter((session) => session.id === first.session?.id)).toHaveLength(1);
+  }, 30_000);
+});
+
+describe("repository.identify + repo-precise capture routing (headless-review-cli D11)", () => {
+  const shutdowns: Array<() => void> = [];
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const shutdown of shutdowns.splice(0)) shutdown();
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  const runGitIn =
+    (root: string) =>
+    (...args: string[]): string =>
+      execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+
+  function seedRepo(root: string, origin: string | undefined): void {
+    const runGit = runGitIn(root);
+    runGit("init", "-b", "main");
+    runGit("config", "user.email", "rennet@example.test");
+    runGit("config", "user.name", "Rennet Test");
+    writeFileSync(join(root, "base.ts"), "export const base = true;\n");
+    runGit("add", "base.ts");
+    runGit("commit", "-m", "base");
+    if (origin !== undefined) runGit("remote", "add", "origin", origin);
+    runGit("checkout", "-b", "feature/shared");
+    writeFileSync(join(root, "source.ts"), "export const source = true;\n");
+    runGit("add", "source.ts");
+    runGit("commit", "-m", "review source");
+    runGit("checkout", "main");
+  }
+
+  it("resolves a checkout path to the daemon's own owner/name via the origin remote", async () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-identify-")));
+    const dataDir = realpathSync(mkdtempSync(join(tmpdir(), "rennet-identify-data-")));
+    dirs.push(repo, dataDir);
+    seedRepo(repo, "git@github.com:owner/target.git");
+    const server = await createRennetServer({ dataDir, env: {} });
+    shutdowns.push(server.shutdown);
+
+    const identity = await server.dispatch("repository.identify", { path: repo });
+    expect(identity).toEqual({
+      repository: "owner/target",
+      forgeRepository: { forge: "github", owner: "owner", name: "target" },
+    });
+  }, 30_000);
+
+  it("returns a durable identity with no forgeRepository for a repo with no forge remote", async () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-identify-local-")));
+    const dataDir = realpathSync(mkdtempSync(join(tmpdir(), "rennet-identify-local-data-")));
+    dirs.push(repo, dataDir);
+    seedRepo(repo, undefined);
+    const server = await createRennetServer({ dataDir, env: {} });
+    shutdowns.push(server.shutdown);
+
+    const identity = (await server.dispatch("repository.identify", { path: repo })) as {
+      repository: string;
+      forgeRepository?: unknown;
+    };
+    expect(identity.repository.length).toBeGreaterThan(0);
+    expect(identity.forgeRepository).toBeUndefined();
+  }, 30_000);
+
+  it("routes a workspace branch capture to the repo the row's identity names, not the first included repo", async () => {
+    // Two repos in one workspace project, each carrying `feature/shared`. `openPath` is the
+    // FIRST included repo (repo-a), so a mint that carries NO repository identity captures
+    // repo-a even when the reviewer meant repo-b: the literal pre-D11 bug the CLI hit by minting
+    // a branch with no `repository`. A mint carrying repo-b's daemon-resolved identity must
+    // capture repo-b. Each scenario runs in its OWN server, repos and dataDir: an unstamped claim
+    // and a stamped one share a claim key (`claimingSession`: a caller naming a repository still
+    // matches an unstamped session), so the two mints would cross-reattach in one project and the
+    // isolation is what keeps each measurement about routing rather than claim reuse.
+    const capturedRoot = async (useIdentity: boolean): Promise<{ root: string; repoB: string }> => {
+      const repoA = realpathSync(mkdtempSync(join(tmpdir(), "rennet-ws-a-")));
+      const repoB = realpathSync(mkdtempSync(join(tmpdir(), "rennet-ws-b-")));
+      const dataDir = realpathSync(mkdtempSync(join(tmpdir(), "rennet-ws-data-")));
+      dirs.push(repoA, repoB, dataDir);
+      seedRepo(repoA, "git@github.com:owner/repo-a.git");
+      seedRepo(repoB, "git@github.com:owner/repo-b.git");
+
+      const server = await createRennetServer({ dataDir, env: {} });
+      shutdowns.push(server.shutdown);
+      const added = (await server.dispatch("projects.add", {
+        commandId: randomUUID(),
+        discovery: {
+          path: repoA,
+          kind: "workspace",
+          repos: [
+            { name: "repo-a", path: repoA, branches: 2 },
+            { name: "repo-b", path: repoB, branches: 2 },
+          ],
+          primaryBranch: "main",
+          source: "local",
+        },
+        includedRepos: ["repo-a", "repo-b"],
+        primaryBranch: "main",
+      })) as { project: { id: string } };
+
+      const minted = (await server.dispatch("session.mint", {
+        projectId: added.project.id,
+        commandId: randomUUID(),
+        branch: "feature/shared",
+        ...(useIdentity
+          ? {
+              repository: "owner/repo-b",
+              forgeRepository: { forge: "github", owner: "owner", name: "repo-b" },
+            }
+          : {}),
+      })) as { session: PreparationSession | null };
+      const sessionId = minted.session?.id ?? "";
+      await waitForReviewSession(server, sessionId);
+      const store = new SessionStore(join(dataDir, "sessions"));
+      let root: string | undefined;
+      await vi.waitFor(
+        () => {
+          root = store.load(sessionId)?.repositoryRoot;
+          expect(root).toBeDefined();
+        },
+        { timeout: 15_000, interval: 20 },
+      );
+      return { root: root as string, repoB };
+    };
+
+    // The bug reproduced: no identity → the first included repo (repo-a), the wrong one.
+    const withoutIdentity = await capturedRoot(false);
+    expect(withoutIdentity.root).not.toBe(withoutIdentity.repoB);
+    // The fix: repo-b's daemon-resolved identity → repo-b, not the first included repo.
+    const withIdentity = await capturedRoot(true);
+    expect(withIdentity.root).toBe(withIdentity.repoB);
+  }, 60_000);
 });

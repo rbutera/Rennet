@@ -51,6 +51,17 @@ export const ATTENTION_FEATURE = "attention";
  */
 export const ACT_FEATURE = "act";
 
+/**
+ * COMPAT (handshake feature, additive, headless-review-cli D11). The `serverInfo.features` key a
+ * daemon sets when it wires the headless `rennet review` seam: the `repository.identify` read
+ * that resolves a checkout PATH to its canonical `owner/name`, so the CLI mints and PR-scopes
+ * against the right repository in a multi-repo workspace without ever spelling the identity
+ * itself. A daemon that predates this seam never advertises it, and the CLI refuses at connect
+ * (naming the minimum daemon version) rather than reviewing silently against the wrong repo or
+ * base. Absent ⇒ pre-review-cli daemon; `repository.identify` would be refused as unknown.
+ */
+export const REVIEW_CLI_FEATURE = "review-cli";
+
 // ── Handshake ────────────────────────────────────────────────────────────────
 
 /** Client → server: who is connecting and which protocol version it speaks. */

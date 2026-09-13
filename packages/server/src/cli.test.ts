@@ -1,4 +1,5 @@
-import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { type ChildProcess, execFile, execFileSync, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   cpSync,
   existsSync,
@@ -6,6 +7,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -14,9 +16,18 @@ import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROTOCOL_VERSION } from "@rennet/protocol";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { WebSocket } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 import { type CliIo, NO_SIDECAR_WARNING, runCli as runSourceCli } from "./cli";
+import { REVIEW_USAGE } from "./cli-review";
+import { createRennetServer } from "./create-server";
 import { type DaemonInfo, readDaemonFile, removeDaemonFile, writeDaemonFile } from "./daemon-file";
+import {
+  OWNER_LOOP_SOURCE,
+  OWNER_LOOP_SPEC,
+  OWNER_LOOP_UNCITED,
+  writeOwnerLoopScriptedHarnessPlan,
+} from "./owner-loop-proof-fixture";
+import { loadScriptedHarnessPlan, loadScriptedT3Seats } from "./scripted-harness-plan";
 import { resolveSidecarBundle } from "./t3/sidecar";
 
 // End-to-end proof of the `rennet` CLI managing a REAL out-of-process daemon (#379, task
@@ -662,4 +673,337 @@ describe("rennet benchmarks export — the byte-identity claim is exactly true (
     );
     expect(await exportTo(dataDir, out, ["--timestamp", "not a date"])).toBe(2);
   });
+});
+
+// ── rennet review (headless-review-cli, issue #379 / #71) ────────────────────
+
+describe("rennet review: argument and daemon-identity handling", () => {
+  function captureIo(): { io: CliIo; out: string[]; err: string[] } {
+    const out: string[] = [];
+    const err: string[] = [];
+    return { io: { out: (line) => out.push(line), err: (line) => err.push(line) }, out, err };
+  }
+
+  it.each([
+    ["no target", ["review"]],
+    ["a range with no ..", ["review", "main"]],
+    ["a non-numeric --pr", ["review", "--pr", "abc"]],
+  ])("refuses %s with exit 2 and the usage line", async (_label, argv) => {
+    const captured = captureIo();
+    const code = await runSourceCli(argv, captured.io, {}, { probe: vi.fn(), kill: vi.fn() });
+    expect(code).toBe(2);
+    expect(captured.err.at(-1)).toBe(REVIEW_USAGE);
+  });
+
+  it("reports the daemon-absent message and exits 1, before any other output", async () => {
+    const captured = captureIo();
+    const code = await runSourceCli(
+      ["review", "main..feat/x", "--data-dir", "/nonexistent"],
+      captured.io,
+      {},
+      { probe: async () => ({ kind: "absent" }), kill: vi.fn() },
+    );
+    expect(code).toBe(1);
+    expect(captured.out).toEqual([]);
+    expect(captured.err.some((line) => line.includes("the daemon is not running"))).toBe(true);
+  });
+
+  it("refuses a daemon that does not advertise the review-cli feature, naming the minimum version", async () => {
+    // A pre-D11 daemon completes the handshake but never advertises `review-cli`; its
+    // `repository.identify` is an unknown command, so a review would resolve against the wrong
+    // repo or base silently. A fake WS server sends exactly that handshake (version 0.1.4, no
+    // `review-cli` flag), and the CLI must refuse at connect with exit 1, naming both the minimum
+    // version and the daemon's own version, BEFORE it resolves a project or touches git.
+    const captured = captureIo();
+    const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+    await new Promise<void>((ready) => wss.on("listening", () => ready()));
+    const port = (wss.address() as { port: number }).port;
+    wss.on("connection", (socket) => {
+      socket.on("message", () => {
+        socket.send(
+          JSON.stringify({
+            type: "serverInfo",
+            version: "0.1.4",
+            protocolVersion: PROTOCOL_VERSION,
+            minCompatibleProtocolVersion: PROTOCOL_VERSION,
+            features: { serverRequests: true },
+          }),
+        );
+      });
+    });
+    try {
+      const code = await runSourceCli(
+        ["review", "main..feat/x", "--data-dir", "/nonexistent-review-cli-gate"],
+        captured.io,
+        {},
+        {
+          probe: async () => ({
+            kind: "healthy",
+            identity: {
+              pid: process.pid,
+              wsPort: port,
+              host: "127.0.0.1",
+              version: "0.1.4",
+              protocolVersion: PROTOCOL_VERSION,
+              minCompatibleProtocolVersion: PROTOCOL_VERSION,
+            },
+            claim: {
+              pid: process.pid,
+              wsPort: port,
+              host: "127.0.0.1",
+              version: "0.1.4",
+              protocolVersion: PROTOCOL_VERSION,
+              startedAt: new Date().toISOString(),
+            },
+          }),
+          kill: vi.fn(),
+        },
+      );
+      expect(code).toBe(1);
+      expect(captured.err.some((line) => line.includes("0.1.5"))).toBe(true);
+      expect(captured.err.some((line) => line.includes("v0.1.4"))).toBe(true);
+      // Refused at CONNECT: no project was resolved, so nothing was added to any store.
+      expect(captured.out.some((line) => line.startsWith("added "))).toBe(false);
+    } finally {
+      await new Promise<void>((closed) => wss.close(() => closed()));
+    }
+  });
+});
+
+describe("rennet review ↔ a real daemon over the wire (#379, headless-review-cli 4.3)", () => {
+  const shutdowns: Array<() => void> = [];
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const shutdown of shutdowns.splice(0)) shutdown();
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function git(root: string, ...args: string[]): void {
+    execFileSync("git", args, { cwd: root });
+  }
+  function writeRepoFile(root: string, path: string, contents: string): void {
+    const target = resolve(root, path);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, contents);
+  }
+
+  // A single-repo copy of the owner-loop fixture repo: `main` plus a two-commit `feature/shared`
+  // with one cited source change and one uncited modification (the Noise lane's material), so the
+  // scripted seat plan drafts all five boards.
+  function seedRepo(root: string): void {
+    git(root, "init", "-q", "-b", "main");
+    git(root, "config", "user.email", "rennet@example.test");
+    git(root, "config", "user.name", "Rennet Test");
+    git(root, "config", "core.excludesFile", "/dev/null");
+    writeRepoFile(root, ".gitignore", ".rennet/\n");
+    writeRepoFile(root, OWNER_LOOP_SOURCE, "export const ownerValue = 'base';\n");
+    writeRepoFile(root, OWNER_LOOP_UNCITED, "export const generatedAt = 'base';\n");
+    writeRepoFile(
+      root,
+      OWNER_LOOP_SPEC,
+      [
+        "## ADDED Requirements",
+        "",
+        "### Requirement: Keep the owner-loop value source-backed",
+        "The system SHALL keep the owner-loop value source-backed.",
+        "",
+        "#### Scenario: Review the owner loop",
+        "WHEN the owner loop is reviewed",
+        "THEN the current value remains source-backed.",
+        "",
+        `Implementation: \`${OWNER_LOOP_SOURCE}\``,
+        "",
+      ].join("\n"),
+    );
+    git(root, "add", ".gitignore", OWNER_LOOP_SOURCE, OWNER_LOOP_UNCITED, OWNER_LOOP_SPEC);
+    git(root, "commit", "-qm", "base");
+    git(root, "remote", "add", "origin", "git@github.com:owner/target.git");
+    git(root, "checkout", "-qb", "feature/shared");
+    writeRepoFile(root, OWNER_LOOP_SOURCE, "export const ownerValue = 'reviewed';\n");
+    writeRepoFile(root, OWNER_LOOP_UNCITED, "export const generatedAt = 'reviewed';\n");
+    git(root, "add", OWNER_LOOP_SOURCE, OWNER_LOOP_UNCITED);
+    git(root, "commit", "-qm", "reviewed owner value");
+    git(root, "checkout", "-q", "main");
+  }
+
+  function captureIo(): { io: CliIo; out: string[]; err: string[] } {
+    const out: string[] = [];
+    const err: string[] = [];
+    return { io: { out: (line) => out.push(line), err: (line) => err.push(line) }, out, err };
+  }
+
+  it("reviews a range, streams progress, writes the document, and exits fast on a rerun", async () => {
+    const root = mkdtempSync(resolve(tmpdir(), "rennet-review-cli-"));
+    dirs.push(root);
+    const home = resolve(root, "home");
+    const dataDir = resolve(root, "data");
+    const repoDir = resolve(root, "repo");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(repoDir, { recursive: true });
+    const repo = realpathSync(repoDir);
+    seedRepo(repo);
+    const { planPath } = writeOwnerLoopScriptedHarnessPlan(root);
+    const scriptedSeats = loadScriptedT3Seats(planPath);
+
+    const server = await createRennetServer({
+      dataDir,
+      serverVersion: "0.0.0-test",
+      env: {
+        ...process.env,
+        HOME: home,
+        RENNET_DISABLE_HARNESS: "1",
+        // Hold the capture record at `capturing-change` long enough for the CLI's poll to
+        // observe it: that line comes ONLY from the poll, so it is the poll's red-proof.
+        RENNET_TEST_CAPTURE_SETTLEMENT_DELAY_MS: "800",
+      },
+      testHarnessPort: loadScriptedHarnessPlan(planPath),
+      testT3Seats: scriptedSeats.resolve,
+    });
+    shutdowns.push(server.shutdown);
+
+    // Publish the claim so the CLI's real probe (findHealthyDaemon) finds this in-process daemon.
+    const claim: DaemonInfo = {
+      pid: process.pid,
+      wsPort: server.wsPort,
+      host: server.wsHost,
+      protocolVersion: PROTOCOL_VERSION,
+      version: "0.0.0-test",
+      startedAt: new Date().toISOString(),
+    };
+    writeDaemonFile(dataDir, claim);
+
+    const first = captureIo();
+    const code = await runSourceCli(
+      ["review", "main..feature/shared", repo, "--data-dir", dataDir],
+      first.io,
+      { ...process.env, HOME: home },
+    );
+    expect(code).toBe(0);
+
+    const transcript = first.out.join("\n");
+    // The capture step from the mint's own returned record, and the NEXT step from a poll.
+    expect(transcript).toContain("capturing  resolving repository");
+    expect(transcript).toContain("capturing  capturing change");
+    // At least one board write, folded from a `lensDraft` frame over the open socket.
+    expect(first.out.some((line) => /wrote \d+ element/.test(line))).toBe(true);
+    // The project was added by the CLI (D5), and the daemon added it.
+    expect(first.out.some((line) => line.startsWith("added "))).toBe(true);
+
+    // The final stdout line is the document's absolute path, and nothing follows it.
+    const documentPath = first.out.at(-1) ?? "";
+    expect(documentPath.startsWith(resolve(dataDir, "reviews"))).toBe(true);
+    expect(existsSync(documentPath)).toBe(true);
+    const document = JSON.parse(readFileSync(documentPath, "utf8"));
+    expect(document.schemaVersion).toBe(1);
+    expect(document.range).toMatchObject({ base: "main", head: "feature/shared" });
+    // Five lens keys, each carrying its board.read answer.
+    expect(Object.keys(document.boards).sort()).toEqual(
+      ["decisions", "design", "flagged", "noise", "sequence"].sort(),
+    );
+    for (const lens of ["design", "sequence", "decisions", "flagged"]) {
+      expect(document.boards[lens].board, `${lens} board`).toBeTruthy();
+    }
+
+    // A second run over an unchanged head is a fast exit: no mint of a new preparation, no
+    // drafting, and the same review.
+    const second = captureIo();
+    const rerun = await runSourceCli(
+      ["review", "main..feature/shared", repo, "--data-dir", dataDir],
+      second.io,
+      { ...process.env, HOME: home },
+    );
+    expect(rerun).toBe(0);
+    expect(second.out.some((line) => /wrote \d+ element/.test(line))).toBe(false);
+    expect(second.out.some((line) => line.includes("already reviewed"))).toBe(true);
+    const rerunPath = second.out.at(-1) ?? "";
+    expect(rerunPath).toBe(documentPath);
+    expect(JSON.parse(readFileSync(rerunPath, "utf8")).reviewId).toBe(document.reviewId);
+  }, 90_000);
+
+  // A minimal two-branch repo with a distinct origin, for the workspace routing test. No
+  // owner-loop fixture: this test measures WHICH repo was captured, not the board content.
+  function seedWorkspaceRepo(root: string, origin: string): string {
+    mkdirSync(root, { recursive: true });
+    git(root, "init", "-q", "-b", "main");
+    git(root, "config", "user.email", "rennet@example.test");
+    git(root, "config", "user.name", "Rennet Test");
+    git(root, "config", "core.excludesFile", "/dev/null");
+    writeRepoFile(root, ".gitignore", ".rennet/\n");
+    writeRepoFile(root, "base.ts", "export const base = 'base';\n");
+    git(root, "add", ".gitignore", "base.ts");
+    git(root, "commit", "-qm", "base");
+    git(root, "remote", "add", "origin", origin);
+    git(root, "checkout", "-qb", "feature/shared");
+    writeRepoFile(root, "base.ts", "export const base = 'reviewed';\n");
+    git(root, "add", "base.ts");
+    git(root, "commit", "-qm", "reviewed");
+    git(root, "checkout", "-q", "main");
+    return realpathSync(root);
+  }
+
+  it("branch arm captures the checkout's OWN repo in a workspace, not the first included repo (D11)", async () => {
+    // Two repos in one workspace project, each with `feature/shared`. `openPath` is the first
+    // included repo (repo-a), so a branch mint carrying NO repository captures repo-a even when
+    // the reviewer ran `rennet review` in repo-b: the literal pre-D11 bug. The CLI must resolve
+    // repo-b's identity via `repository.identify` and pass it on the mint, so the captured
+    // document names repo-b. Red-proof: drop `repository: standing.repository` from the branch
+    // mint and the captured `repositoryRoot` becomes repo-a, reddening this test.
+    const root = mkdtempSync(resolve(tmpdir(), "rennet-review-ws-"));
+    dirs.push(root);
+    const home = resolve(root, "home");
+    const dataDir = resolve(root, "data");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(dataDir, { recursive: true });
+    const repoA = seedWorkspaceRepo(resolve(root, "repo-a"), "git@github.com:owner/repo-a.git");
+    const repoB = seedWorkspaceRepo(resolve(root, "repo-b"), "git@github.com:owner/repo-b.git");
+
+    const server = await createRennetServer({
+      dataDir,
+      serverVersion: "0.0.0-test",
+      env: { ...process.env, HOME: home, RENNET_DISABLE_HARNESS: "1" },
+    });
+    shutdowns.push(server.shutdown);
+    const claim: DaemonInfo = {
+      pid: process.pid,
+      wsPort: server.wsPort,
+      host: server.wsHost,
+      protocolVersion: PROTOCOL_VERSION,
+      version: "0.0.0-test",
+      startedAt: new Date().toISOString(),
+    };
+    writeDaemonFile(dataDir, claim);
+
+    // Pre-register the WORKSPACE project (both repos) so the CLI's resolveProjectId finds it and
+    // does not add repo-b as its own single-repo project. openPath resolves to repo-a (first).
+    await invokeOverWire(claim.wsPort, "projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: repoA,
+        kind: "workspace",
+        repos: [
+          { name: "repo-a", path: repoA, branches: 2 },
+          { name: "repo-b", path: repoB, branches: 2 },
+        ],
+        primaryBranch: "main",
+        source: "local",
+      },
+      includedRepos: ["repo-a", "repo-b"],
+      primaryBranch: "main",
+    });
+
+    const captured = captureIo();
+    // A short timeout bounds board drafting (no seats wired here); the capture, and so the
+    // document's repositoryRoot, is written whatever the drafting outcome.
+    await runSourceCli(
+      ["review", "main..feature/shared", repoB, "--data-dir", dataDir, "--timeout", "30"],
+      captured.io,
+      { ...process.env, HOME: home },
+    );
+    const documentPath = captured.out.at(-1) ?? "";
+    expect(existsSync(documentPath)).toBe(true);
+    const document = JSON.parse(readFileSync(documentPath, "utf8"));
+    expect(document.repositoryRoot).toBe(repoB);
+    expect(document.repositoryRoot).not.toBe(repoA);
+  }, 90_000);
 });
