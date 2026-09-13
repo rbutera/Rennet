@@ -95,11 +95,14 @@ path is always absolute, even when `--data-dir` is relative.
 
 The exit code carries the outcome: `0` when the boards settled, `1` when the
 daemon was not running or the review failed, was cancelled, or ran past
-`--timeout` (default half an hour). A document is still written on any of those,
-so a script always has something to parse: even a capture-stage failure (before
-a review id exists) writes a small failure document, keyed by the session id,
-carrying `capture: "failed"`, the outcome, and the reason. `2` is a usage
-mistake. A review opened this way is an ordinary
+`--timeout` (default half an hour). Once a session exists, a document is written
+whichever way it ends, so a script always has something to parse: a failure,
+cancellation, or timeout writes the review document with its reason, and even a
+capture-stage failure (before a review id exists) writes a small failure
+document, keyed by the session id, carrying `capture: "failed"`, the outcome,
+and the reason. The exceptions write nothing because there is no session to key
+a document on: a missing daemon and a usage mistake (`2`) both print only to
+stderr. A review opened this way is an ordinary
 session: open it in the app by its id afterwards and its boards and transcript
 are where you left them.
 
