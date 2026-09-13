@@ -2,11 +2,38 @@
 
 <p align="center"><img src="brand/exports/sphere/working-loop-256.webp" width="192" height="192" alt="The Rennet mark: a warm gradient sphere rippling while it works"></p>
 
+**Make code digestible.** Rennet is a local-first review app that turns a large, agent-written change into something you can read: grouped by intent, ordered for comprehension, with every claim tied to its source.
+
+**For agentic engineers who stopped writing the code but still have to answer for it.** Not for vibe coders.
+
+Coding agents now write changes faster than anyone can read them. Rennet spends machine effort to save your attention, running the review through the Claude Code and Codex you already have installed.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="apps/marketing/public/product/lens-design-dark.png">
+    <img src="apps/marketing/public/product/lens-design-light.png" width="820" alt="Rennet's Design lens: a requirement stated as one SHALL sentence with its trigger-and-outcome scenarios, trace chips for the spec, middleware, and test files, and the cited source revealed beneath, while the reviewer's questions sit in the conversation pane on the left.">
+  </picture>
+</p>
+
+**Website:** [rennet.dev](https://rennet.dev). **Documentation:** [docs.rennet.dev](https://docs.rennet.dev).
+
+## Quickstart
+
+Download the macOS app from [rennet.dev](https://rennet.dev), or run it from source:
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+Choose a Git repository in the desktop app. Rennet captures committed feature-branch changes, staged and unstaged changes, and nonignored untracked files without writing to the source repository.
+
+## What Rennet does
+
 Rennet is a **local-first** code review application. It turns local changes and GitHub pull requests into an ordered review with source evidence. The reviewer remains responsible for anything posted in their name.
 
 The local daemon captures immutable patchsets, builds deterministic project context, and runs reviews through installed coding agents. Desktop and browser clients connect to the same daemon, and a native mobile client is in progress ([#383](https://github.com/rbutera/rennet/issues/383)). Team work can become a GitHub review. Your own branch can become an agent work order, a reviewed delta, and a pull request.
-
-**Website:** [rennet.dev](https://rennet.dev). **Documentation:** [docs.rennet.dev](https://docs.rennet.dev).
 
 ## Start here
 
@@ -32,15 +59,6 @@ prototypes/    Non-authoritative interface experiments
 site/          Frozen pre-launch site kept as design history, not deployed
 spikes/        Isolated evidence probes, excluded from the workspace
 ```
-
-## Run Rennet
-
-```sh
-pnpm install --frozen-lockfile
-pnpm dev
-```
-
-Choose a Git repository in the desktop app. Rennet captures committed feature-branch changes, staged and unstaged changes, and nonignored untracked files without writing to the source repository.
 
 ## Current checks
 
