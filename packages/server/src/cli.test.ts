@@ -175,7 +175,7 @@ describe("rennet CLI ↔ real daemon lifecycle (#379)", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// #875 — `rennet serve` and the T3 Code sidecar.
+// #875 — `rennet serve` and the chat sidecar.
 //
 // `serve` used to build its `DaemonConfig` without `t3BundlePath` at all, so the daemon it
 // started came up with a `degraded` sidecar. Board seats have that sidecar as their only
@@ -340,7 +340,7 @@ describe("`rennet serve` brings up the sidecar its board seats need (#875)", () 
     expect(bootstrap).toHaveProperty("repositoryPresent");
 
     // And it said so, in the terminal, before a review could discover it.
-    await poll(() => (stderr.includes("no T3 Code server bundle found") ? stderr : null));
+    await poll(() => (stderr.includes("no chat sidecar server bundle found") ? stderr : null));
     expect(stderr).toContain(NO_SIDECAR_WARNING);
     expect(stderr).toContain("RENNET_T3_BUNDLE");
     expect(child.exitCode).toBeNull();

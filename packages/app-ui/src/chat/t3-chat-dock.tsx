@@ -1,9 +1,30 @@
+import { Skeleton } from "@rennet/ui";
 import { type ReactNode, Suspense } from "react";
 import { useCommand } from "../data/query";
 import { useOpenCapturedPath } from "../review/code-destination";
 import { useChatTrail, useRouteChatTarget } from "./chat-data";
 import { ChatHeader } from "./chat-header";
 import { useT3ChatSlot } from "./t3-chat-slot";
+
+/**
+ * The bring-up wait, shown while the sidecar session opens or the thread view loads. A
+ * skeleton, not a sentence: a wait reads as a wait without a label the reviewer has to parse
+ * (Rai, 2026-09-14). The sr-only line keeps the state honest for a screen reader.
+ */
+function ChatPaneSkeleton({ label }: { readonly label: string }) {
+  return (
+    <div
+      data-slot="t3-chat-starting"
+      role="status"
+      aria-label={label}
+      className="flex flex-col gap-2.5 p-3"
+    >
+      <Skeleton className="h-3 w-2/3" />
+      <Skeleton className="h-3 w-1/2" />
+      <Skeleton className="h-3 w-4/5" />
+    </div>
+  );
+}
 
 /**
  * The chat slot: T3's own thread view, mounted natively by the host through
@@ -56,20 +77,12 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
         </p>
       ) : error ? (
         <p data-slot="t3-chat-error" className="p-3 text-xs text-ink-soft">
-          T3 Code sidecar unavailable: {error instanceof Error ? error.message : String(error)}
+          Chat sidecar unavailable: {error instanceof Error ? error.message : String(error)}
         </p>
       ) : pending || !data ? (
-        <p data-slot="t3-chat-starting" className="p-3 text-xs text-ink-soft">
-          Starting the T3 Code sidecar…
-        </p>
+        <ChatPaneSkeleton label="Starting the chat sidecar" />
       ) : slot ? (
-        <Suspense
-          fallback={
-            <p data-slot="t3-chat-starting" className="p-3 text-xs text-ink-soft">
-              Loading the thread view…
-            </p>
-          }
-        >
+        <Suspense fallback={<ChatPaneSkeleton label="Loading the thread view" />}>
           <slot.session session={data} onOpenFile={openFileInDiff} />
         </Suspense>
       ) : (

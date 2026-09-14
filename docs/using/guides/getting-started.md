@@ -425,7 +425,7 @@ chat — a comment made on one surface is the same object everywhere. Diff line
 comments key to new-side line numbers, so a requested change carries a real
 diff position.
 
-**Say it in chat.** The chat column beside the surface is the review's T3 Code
+**Say it in chat.** The chat column beside the surface is the review's chat
 thread, and it travels with you across every board. It is **open when you arrive**
 — it holds the conversation about this review, not an optional extra panel — and
 `⌘J` closes it if you want the room. A close is yours: it stays shut, through every
@@ -438,11 +438,10 @@ Nothing the thread says stages anything: you stage an ask yourself, from the boa
 a line, or a highlighted span.
 
 If the thread is not there yet, the column says which kind of "not there" it is,
-and it never claims something is coming when nothing is. *Connecting to the T3 Code
-sidecar…* is a real wait — the thread exists and is arriving. *This review has no
-thread, and none is being opened* is settled, and carries the reason Rennet could
-not open one. *This review's thread is no longer in the T3 Code sidecar* means it
-was deleted. On a chat-only session — a new chat before its capture attaches — the
+and it never claims something is coming when nothing is. A skeleton placeholder is a
+real wait — the thread exists and is arriving. *This review has no thread, and none
+is being opened* is settled, and carries the reason Rennet could not open one. *This
+review's thread is no longer in the chat sidecar* means it was deleted. On a chat-only session — a new chat before its capture attaches — the
 column simply says no review is attached, because there is nothing to open a thread
 for yet.
 

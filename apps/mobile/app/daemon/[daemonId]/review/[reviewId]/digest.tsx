@@ -82,8 +82,8 @@ export default function Digest(): ReactNode {
 
         <SectionLabel>Act</SectionLabel>
         <Text style={{ color: t.muted, fontSize: type.control }}>
-          The conversation is the review&apos;s T3 Code thread, which the phone cannot open yet —
-          watch it, and answer an ask, on the desktop.
+          The conversation is the review&apos;s chat thread, which the phone cannot open yet — watch
+          it, and answer an ask, on the desktop.
         </Text>
         <Card onPress={() => router.push(`${base}/publish`)}>
           <Text style={{ color: t.text, fontSize: type.body, fontWeight: "600" }}>Publish</Text>

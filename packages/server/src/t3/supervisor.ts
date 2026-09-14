@@ -129,7 +129,7 @@ export function createT3SidecarSupervisor(
   const bringUp = async (): Promise<RunningSidecar> => {
     if (!options.bundlePath) {
       throw new Error(
-        "the vendored T3 Code server bundle is not built (vendor/t3code/apps/server/dist/bin.mjs)",
+        "the chat sidecar server bundle is not built (vendor/t3code/apps/server/dist/bin.mjs)",
       );
     }
     const adopted = await adoptSidecar(options.dataDir, upstreamCommit);
@@ -172,7 +172,7 @@ export function createT3SidecarSupervisor(
       .catch((error: unknown) => {
         const detail = error instanceof Error ? error.message : String(error);
         status = { state: "degraded", detail, upstreamCommit, telemetry: "off" };
-        warn(`rennet: T3 sidecar unavailable: ${detail}`);
+        warn(`rennet: chat sidecar unavailable: ${detail}`);
         throw error;
       })
       .finally(() => {
@@ -244,7 +244,7 @@ export function createT3SidecarSupervisor(
             } catch (error) {
               unreachable = error;
               warn(
-                `rennet: T3 sidecar unavailable, deferring thread deletions: ${describe(error)}`,
+                `rennet: chat sidecar unavailable, deferring thread deletions: ${describe(error)}`,
               );
               throw error;
             }

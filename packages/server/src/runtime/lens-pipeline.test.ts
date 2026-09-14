@@ -5846,7 +5846,7 @@ describe("runLensPipeline — the real drafting path (fake harness, no live mode
     const noiseLane = result.boards.find((outcome) => outcome.lens === "noise");
     for (const outcome of core) {
       expect(outcome.board).toBeUndefined();
-      expect(outcome.failure).toContain("T3 sidecar");
+      expect(outcome.failure).toContain("chat sidecar");
     }
     expect(noiseLane?.board).toBeUndefined();
     expect(noiseLane?.failure).toContain("the remainder cannot be taken");

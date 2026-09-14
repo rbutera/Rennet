@@ -85,7 +85,7 @@ const HELP = [
   "  rennet benchmarks export [--out <file>] [--data-dir <dir>] [--revision <rev>] [--timestamp <iso>]   write the docs benchmark data",
   "",
   "The data dir defaults to $RENNET_USER_DATA, then the platform user-data path.",
-  "`rennet serve` resolves the T3 Code sidecar the board lenses run on from --t3-bundle,",
+  "`rennet serve` resolves the chat sidecar the board lenses run on from --t3-bundle,",
   "then $RENNET_T3_BUNDLE, then the vendored build; it warns and serves on without one.",
   "`rennet map` needs no daemon: it builds the Repo Map for the repository at <path>",
   "(default: the current directory) and stores it under ~/.rennet/projects/.",
@@ -306,7 +306,7 @@ function defaultUiDist(): string | undefined {
  * at, naming the two ways to fix it. `daemon.status` carries the same reason to a client.
  */
 export const NO_SIDECAR_WARNING = [
-  "warning: no T3 Code server bundle found, so this daemon has no chat sidecar.",
+  "warning: no chat sidecar server bundle found, so this daemon has no chat sidecar.",
   "         Board lenses run on it and nothing else, so every review this daemon captures",
   "         will finish with failed lanes. Point at a built bundle with --t3-bundle <file>",
   "         or RENNET_T3_BUNDLE, or build it with `pnpm nx build t3code-server`.",
@@ -338,7 +338,7 @@ async function serve(
     `rennet daemon listening on ${daemon.info.host ?? "127.0.0.1"}:${daemon.info.wsPort} (pid ${daemon.info.pid}, v${daemon.info.version})`,
   );
   io.out(`data dir: ${config.dataDir}`);
-  if (config.t3BundlePath) io.out(`T3 sidecar bundle: ${config.t3BundlePath}`);
+  if (config.t3BundlePath) io.out(`chat sidecar bundle: ${config.t3BundlePath}`);
   else io.err(NO_SIDECAR_WARNING);
   // Hold the process open: the WS listener + watchers keep the event loop alive, and the
   // SIGTERM/SIGINT handlers runDaemon installed call process.exit(0) on stop. The executor
@@ -380,15 +380,15 @@ async function stop(dataDir: string, io: CliIo, deps: CliDeps): Promise<number> 
   // shutdown already signalled its child; this reaps a survivor and clears its claim.
   try {
     const sidecar = await (deps.stopSidecar ?? stopSidecar)(dataDir);
-    if (sidecar.kind === "stopped") io.out("stopped T3 sidecar");
+    if (sidecar.kind === "stopped") io.out("stopped chat sidecar");
     if (sidecar.kind === "timeout") {
       io.err(
-        `sent SIGTERM to T3 sidecar pid ${sidecar.pid} but it is still running; the next start will reap it`,
+        `sent SIGTERM to chat sidecar pid ${sidecar.pid} but it is still running; the next start will reap it`,
       );
     }
   } catch (error) {
     io.err(
-      `failed to stop the T3 sidecar: ${error instanceof Error ? error.message : String(error)}`,
+      `failed to stop the chat sidecar: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   return code;
