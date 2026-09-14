@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 2,
+  "components": [
+    {
+      "name": "Primary download",
+      "kind": "button",
+      "description": "Primary download",
+      "html": "<a class=\"ds-primary\" href=\"#\">Download for macOS or Windows</a>",
+      "css": ".ds-primary{display:inline-flex;padding:14px 23px;border-radius:10px;background:#f3b437;color:#171006;font:560 15px \"Geist Variable\",sans-serif;text-decoration:none}.ds-primary:hover{background:#ffd17a} :focus-visible{outline:3px solid #f3b437;outline-offset:5px}",
+      "refersTo": "button-primary"
+    },
+    {
+      "name": "Header download",
+      "kind": "button",
+      "description": "Header download",
+      "html": "<a class=\"ds-download\" href=\"#\">Download</a>",
+      "css": ".ds-download{display:inline-flex;padding:8px 16px;border-radius:10px;background:#f4dfb5;color:#21160e;font:560 13px \"Geist Variable\",sans-serif;text-decoration:none}.ds-download:hover{background:white} :focus-visible{outline:3px solid #f3b437;outline-offset:5px}"
+    },
+    {
+      "name": "Reading panel",
+      "kind": "card",
+      "description": "Reading panel",
+      "html": "<section class=\"ds-panel\">Your agents read the repo. So do ours.</section>",
+      "css": ".ds-panel{padding:32px;border:1px solid rgb(219 173 107 / 19%);border-radius:26px;color:#faf3e9;background:linear-gradient(145deg,rgb(237 161 66 / 6%),transparent 65%),rgb(19 15 11 / 90%);backdrop-filter:blur(16px);box-shadow:inset 0 1px 0 rgb(255 210 140 / 10%),0 24px 80px rgb(0 0 0 / 24%);font:540 24px \"Geist Variable\",sans-serif} :focus-visible{outline:3px solid #f3b437;outline-offset:5px}",
+      "refersTo": "reading-panel"
+    },
+    {
+      "name": "Product disclosure",
+      "kind": "custom",
+      "description": "Product disclosure",
+      "html": "<details class=\"ds-detail\"><summary>Design</summary><p>Shipped-app fixture capture and its description.</p></details>",
+      "css": ".ds-detail{background:rgb(19 15 11 / 90%);color:#faf3e9;font:17px \"Geist Variable\",sans-serif}.ds-detail summary{padding:22px 36px;cursor:pointer}.ds-detail summary:hover{background:rgb(238 177 94 / 7%)}.ds-detail[open] summary{color:#f3cc90}.ds-detail p{padding:12px 36px 36px;color:#c9bfb2} :focus-visible{outline:3px solid #f3b437;outline-offset:5px}"
+    },
+    {
+      "name": "Navigation",
+      "kind": "nav",
+      "description": "Navigation",
+      "html": "<nav class=\"ds-nav\"><a href=\"#\">Workflows</a><a href=\"#\">Lenses</a><a href=\"#\">Docs</a></nav>",
+      "css": ".ds-nav{display:flex;gap:28px;background:#100d0b;padding:20px}.ds-nav a{font:14px \"Geist Variable\",sans-serif;color:#d8cbb9;text-decoration:none;padding-block:10px}.ds-nav a:hover{color:white} :focus-visible{outline:3px solid #f3b437;outline-offset:5px}"
+    }
+  ],
+  "extensions": {
+    "breakpoints": [
+      {
+        "name": "compact",
+        "value": "900px"
+      },
+      {
+        "name": "mobile",
+        "value": "600px"
+      }
+    ],
+    "readingBackings": {
+      "footer": {
+        "background": "rgb(16 13 11 / 97%)",
+        "boxShadow": "0 0 40px 24px rgb(16 13 11 / 97%)"
+      },
+      "closing": {
+        "background": "rgb(16 13 11 / 96%)",
+        "blur": "38px",
+        "mobileBlur": "24px",
+        "inset": "-32px -12px",
+        "mobileInset": "-40px -80px"
+      },
+      "hero": {
+        "background": "none",
+        "textShadow": "0 1px 3px #100d0b, 0 0 12px #100d0b",
+        "composition": "Code at desktop margins and above mobile headline; intro geometry scrolls with document."
+      }
+    }
+  },
+  "title": "Rennet marketing design system",
+  "generatedAt": "2026-09-14T16:48:46.434590+00:00",
+  "narrative": {
+    "northStar": "A body of code becomes a constellation",
+    "overview": "This is the visual authority for `apps/marketing` only. The product UI and documentation retain the [root design authority](../../DESIGN.md). Warm charcoal space and amber/copper points surround readable glass panels; the final scene becomes the warm Rennet sphere. Self-hosted Geist carries headings and prose.\n\nThe six-scene concept was authored and approved by Rai. It replaces the earlier gold-wave compositions; no new image composition is the implementation authority. The [surface brief](.impeccable/surfaces/apps-marketing-src-pages-index-astro.md) owns the page's sequence and persuasion strategy. Tokens above describe the current stylesheet, not the product app's palette.",
+    "keyCharacteristics": [],
+    "rules": [],
+    "dos": [
+      "Keep product claims and fixture captions readable without the animated canvas.",
+      "Preserve original brand assets and opaque shipped-app captures.",
+      "Keep constellation materials scoped to marketing."
+    ],
+    "donts": [
+      "Do not import the glass treatment into the product app.",
+      "Do not present illustrative conversation or repository counts as measured product results."
+    ]
+  }
+}

@@ -1,17 +1,20 @@
 ---
 version: 1
 slug: "apps-marketing-src-pages-index-astro"
-primary_target: "apps/marketing/src/pages/index.astro"
-related_targets: ["apps/marketing/src/styles/global.css"]
+primary_target: "src/pages/index.astro"
+related_targets: ["src/styles/global.css", "src/animation/experience.ts", "src/animation/models.ts", "src/components/Capture.astro"]
 ---
 
 # Marketing home
 
-- Scope: `apps/marketing/src/pages/index.astro`; mode: Persuade.
+- Scope: marketing home; mode: Persuade. Visual authority: `apps/marketing/DESIGN.md`.
 - Audience: agentic engineers accountable for their own branches and teammates' agent-driven pull requests.
-- Job: understand why Rennet exists, see how it preserves code-level judgment while reducing context-window pressure, and download the macOS app.
-- Proof: semantic digestion sequence, conversational diff, installed Claude Code and Codex, independent dual review, living repo intelligence, product wireframe, and local-first facts.
-- Direction: extend the Breaking Edge identity through editorial light/dark fields, light neo-grotesk display type, calm reading type, and product-native evidence. Never use the mark as decomposition geometry.
-- Memorable moment: two independent provider reads split on one grounded finding, making disagreement the place the human looks.
-- Responsive rule: preserve one narrative DOM order; the digestion sequence is horizontal only when every stage fits and vertical everywhere else.
-- Unresolved decisions: replace the current wireframe with a final product capture when one exists.
+- Job: understand why Rennet exists, inspect product evidence, and download the desktop app.
+- Approved concept: six scroll-driven constellation scenes, following Rai's code, workstation, spyglass lenses, gavel council, connected machines, and dotted warm Rennet mark sequence. The user-authored concept supersedes the earlier gold-wave image compositions.
+- Material: warm charcoal space, amber/copper procedural points across all scenes, glass reading panels, self-hosted Geist, and a warm final mark. This replacement applies only to marketing.
+- Reading contrast: 90% dark glass contains the main copy; hero copy has no overlay, with code composed at desktop margins and above mobile text, closing copy has a 96% charcoal feathered backing, and the footer has a 97% charcoal backing. Preserve these layers when tuning the animated scene.
+- Narrative: accountability and download; human attention and both workflows; digestion and lens evidence; conversation and independent council; repository intelligence and connected local clients; final download.
+- Evidence: retain existing copy and seven shipped-app fixture captures in native disclosures. Illustrative conversation, model disagreement, and repository data stay labelled as illustrations.
+- Interaction: normal document scrolling drives the backdrop. Pause stops ambient motion and uses discrete scene changes; reduced motion starts paused. Light reading panels switch capture sources while the scene remains dark. Static branding and readable content remain when WebGL is unavailable.
+- Responsive rule: preserve narrative DOM order; collapse workflows and the digest sequence as width decreases. Keep scene space between reading panels.
+- Assets: original procedural geometry; no external point-cloud assets. Existing brand lockups and capture files remain authoritative.
