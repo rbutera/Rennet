@@ -63,7 +63,7 @@ export async function resolveProviderBinaries(
       result = await discover();
     } catch (error) {
       warn(
-        `rennet: ${harness} discovery failed: ${describeDiscoveryFailure(error)} — the T3 sidecar starts without ${harness}.`,
+        `rennet: ${harness} discovery failed: ${describeDiscoveryFailure(error)} — the chat sidecar starts without ${harness}.`,
       );
       return undefined;
     }
@@ -76,7 +76,7 @@ export async function resolveProviderBinaries(
         ? health.detail
         : "discovery chose no binary.";
     warn(
-      `rennet: ${harness} unavailable (${reason}): ${detail} — the T3 sidecar starts without ${harness}.`,
+      `rennet: ${harness} unavailable (${reason}): ${detail} — the chat sidecar starts without ${harness}.`,
     );
     return undefined;
   };

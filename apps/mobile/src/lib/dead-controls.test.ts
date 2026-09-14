@@ -119,9 +119,9 @@ describe("review digest offers no dead controls (absent-not-disabled)", () => {
   it("states the missing conversation on the digest rather than routing to a dead screen", () => {
     // The Act card pointed at `turn.tsx`, which is deleted (t3-lens-threads 4.2). Removing it
     // without saying why would leave a user hunting for the ask they were pushed about, so
-    // the digest names the T3 thread and where to open it. LOAD-BEARING: re-adding the card
+    // the digest names the chat thread and where to open it. LOAD-BEARING: re-adding the card
     // reddens the route assertion above, and dropping this sentence reddens here.
-    expect(digest).toMatch(/T3 Code thread/i);
+    expect(digest).toMatch(/chat thread/i);
     expect(digest).toMatch(/on the desktop/i);
   });
 

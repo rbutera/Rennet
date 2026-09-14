@@ -1450,14 +1450,14 @@ describe("a board seat has one backend (review finding 1)", () => {
   it("fails every lane with the sidecar's reason and opens no ephemeral board session", async () => {
     const opened: string[] = [];
     const { events, error } = await runWith(opened, () =>
-      Promise.reject(new Error("the vendored T3 Code server bundle is not built")),
+      Promise.reject(new Error("the chat sidecar server bundle is not built")),
     );
 
     // The load-bearing half: the ephemeral leg was RESOLVED (the port is real and the
     // council still routes to it), and no board seat ever asked it for a session.
     expect(opened).toEqual([]);
     // A generation with no boards at all is a failed round, and it says why.
-    expect(String(error)).toContain("T3 sidecar unavailable");
+    expect(String(error)).toContain("chat sidecar unavailable");
     const lanes = settledLanes(events);
     expect(lanes.map((lane) => lane.id)).toEqual([
       "design",
@@ -1476,7 +1476,7 @@ describe("a board seat has one backend (review finding 1)", () => {
       expect(reason, lane.id).toContain(
         lane.id === "noise"
           ? "the remainder cannot be taken"
-          : "T3 sidecar unavailable: the vendored T3 Code server bundle is not built",
+          : "chat sidecar unavailable: the chat sidecar server bundle is not built",
       );
     }
   });

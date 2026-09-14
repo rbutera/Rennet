@@ -49,7 +49,7 @@ export async function bindReviewThread(
   reviewId: string,
 ): Promise<ThreadBinding> {
   const sidecar = rt.deps.t3Sidecar;
-  if (!sidecar) throw new Error("this daemon has no T3 Code sidecar composed");
+  if (!sidecar) throw new Error("this daemon has no chat sidecar composed");
   const review = rt.requireReviewById(reviewId);
   const workspace = await boundWorkspaceInput(rt, reviewId);
   // Minted HERE, before the create, because the app-tools url names the thread in its path
@@ -222,7 +222,7 @@ export function chatHandlers(rt: DispatchRuntime) {
       // composed without a vendored bundle; say so.
       const input = parseCommandInput(name, rawInput);
       if (!deps.t3Sidecar) {
-        throw new Error("chat.t3Session: this daemon has no T3 Code sidecar composed");
+        throw new Error("chat.t3Session: this daemon has no chat sidecar composed");
       }
       const session = await deps.t3Sidecar.session();
       if (input.reviewId === undefined) return parseCommandOutput(name, session);
@@ -232,7 +232,7 @@ export function chatHandlers(rt: DispatchRuntime) {
       // A FAILED BIND IS A REPORTED STATE, NOT A REJECTION (#872). The environment and the
       // bearer above are good whatever the bind does, and throwing here threw them away
       // too: an unknown review id, or a bound workspace that has been deleted, surfaced in
-      // the dock as "T3 Code sidecar unavailable" over a perfectly healthy sidecar, and the
+      // the dock as "Chat sidecar unavailable" over a perfectly healthy sidecar, and the
       // mount never rendered. The reviewer gets the session, plus the reason in the arm.
       try {
         const binding = await bindReviewThread(rt, input.reviewId);
@@ -259,7 +259,7 @@ export function chatHandlers(rt: DispatchRuntime) {
       const name = "chat.t3Send" as const;
       const input = parseCommandInput(name, rawInput);
       if (!deps.t3Sidecar) {
-        throw new Error("chat.t3Send: this daemon has no T3 Code sidecar composed");
+        throw new Error("chat.t3Send: this daemon has no chat sidecar composed");
       }
       // A FAILED ASK IS A REPORTED STATE, NOT A REJECTION — the #872 ruling `chat.t3Session`
       // already follows twenty lines up, applied to the send. It threw here, so the IDENTICAL

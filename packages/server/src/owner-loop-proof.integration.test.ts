@@ -1023,7 +1023,7 @@ describe("#685 owner loop through a real server", () => {
       (error: unknown) => String(error),
     );
     for (const lens of LENS_KINDS) expect(reason, lens).toContain(`${lens}:`);
-    expect(reason).toContain("T3 sidecar unavailable");
+    expect(reason).toContain("chat sidecar unavailable");
     // The CAUSE, not the composition: the path the reader has to build.
     expect(reason).toContain("vendor/t3code/apps/server/dist/bin.mjs");
     expect(reason).not.toContain("composed no sidecar seam");
