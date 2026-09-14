@@ -110,10 +110,11 @@ function LensStop({ cut, active }: { readonly cut: SeatCut; readonly active: boo
       )}
     >
       {cut === "open" && (
-        // The affineur's lamp, at rail scale. `motion-reduce:hidden`, not `animate-none`:
-        // parked at the left it is a static band that reads as a mark of its own, and the
-        // dashed rule under it already says "under way".
-        <span className="pointer-events-none block h-0.5 w-1/3 rounded-full bg-lens animate-lens-stop-scan motion-reduce:hidden" />
+        // The affineur's attention, at rail scale: a soft lens-hue band that breathes in
+        // place over the dashed rule. `motion-reduce:hidden`, not `animate-none` — parked
+        // at full opacity it would read as a solid ("clean") rule, and the dashed rule
+        // underneath already says "under way".
+        <span className="pointer-events-none absolute inset-0 block rounded-full bg-lens animate-lens-breathe motion-reduce:hidden" />
       )}
     </span>
   );

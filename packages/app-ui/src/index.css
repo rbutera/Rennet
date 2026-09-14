@@ -192,29 +192,59 @@
    * away. Its keyframe still belongs here (keyframes declared in `@theme` are emitted
    * whether or not a utility references them) and the pseudo names it directly. */
   --animate-processing-pulse: processing-pulse 1.6s ease-in-out infinite;
-  /* The lamp on the lens rail's stop: a band of that lens's own colour travelling along
-   * it while the seat is writing. The band is `w-1/3` of the stop and the track is the
-   * stop, so the run is expressed in percent — a stop's width is its tab's, and a tab's
-   * width is the container query's.
+  /* The affineur's attention on the lens rail's stop: a soft band of that lens's own
+   * colour that BREATHES over the dashed rule while the seat is writing — swelling and
+   * settling in place, never travelling. A moving band shuttling along a rule reads as a
+   * scanner (Cylon/KITT/"SCANNING…"); a breath reads as someone attending. The dashed rule
+   * beneath is the static tell, so this layer is pure motion.
    *
-   * The call site pairs this with `motion-reduce:hidden`, NOT `animate-none`: parked at
-   * the left the band is a mark of its own, and the dashed stop underneath already says
-   * "under way" without it. Removing it is the honest reduced-motion state; freezing it
-   * is not. */
-  --animate-lens-stop-scan: rn-lens-stop-scan 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+   * The call site pairs it with `motion-reduce:hidden`, NOT `animate-none`: parked, a
+   * full-opacity band would read as a solid rule (i.e. "clean"), and the dashed rule under
+   * it already says "under way" without it. Removing it is the honest reduced-motion state.
+   *
+   * The curve is a symmetric sine ease (in-out) so the swell has no hard edge in time the
+   * way a linear travel does — the whole point is to stop reading as machine telemetry. */
+  --animate-lens-breathe: rn-lens-breathe 2.6s cubic-bezier(0.37, 0, 0.63, 1) infinite;
+  /* The per-seat working mark's breath: a core dot that swells and dims on the same sine
+   * curve. This replaces a spinning dashed arc (a generic loading spinner) — one calm
+   * idiom for "working" across the whole app instead of three mechanical ones. Scale AND
+   * opacity together give it more life than opacity alone without any rotation or travel. */
+  --animate-seat-breathe: rn-seat-breathe 2.2s cubic-bezier(0.37, 0, 0.63, 1) infinite;
+  /* The halo behind the seat's core dot: warms and settles at faint opacity, in phase with
+   * the core, so the whole ring glows rather than a lone dot pulsing in a dead frame. Its
+   * own keyframe (not seat-breathe) keeps it a soft wash — a filled disc breathing to full
+   * opacity would be a second mark, not a halo. */
+  --animate-seat-halo: rn-seat-halo 2.2s cubic-bezier(0.37, 0, 0.63, 1) infinite;
 
-  @keyframes rn-lens-stop-scan {
-    0% {
-      opacity: 0;
-      transform: translateX(-100%);
-    }
-    18%,
-    82% {
-      opacity: 1;
-    }
+  @keyframes rn-lens-breathe {
+    0%,
     100% {
-      opacity: 0;
-      transform: translateX(300%);
+      opacity: 0.25;
+    }
+    50% {
+      opacity: 0.9;
+    }
+  }
+  @keyframes rn-seat-breathe {
+    0%,
+    100% {
+      opacity: 0.5;
+      transform: scale(0.7);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  @keyframes rn-seat-halo {
+    0%,
+    100% {
+      opacity: 0.05;
+      transform: scale(0.6);
+    }
+    50% {
+      opacity: 0.22;
+      transform: scale(1);
     }
   }
   @keyframes rn-welcome-step-in {
