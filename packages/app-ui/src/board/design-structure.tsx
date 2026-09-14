@@ -166,7 +166,7 @@ function countLabel(count: number, singular: string): string {
  *  (prototype `lens-board.tsx:670-675`). It labels a block; it is not a heading in it. */
 function SmallLabel({ children }: { readonly children: ReactNode }) {
   return (
-    <p className="font-medium text-muted-foreground text-xs uppercase tracking-wide">{children}</p>
+    <p className="font-medium text-muted-foreground text-2xs uppercase tracking-wide">{children}</p>
   );
 }
 

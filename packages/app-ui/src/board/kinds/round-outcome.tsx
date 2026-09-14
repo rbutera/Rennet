@@ -56,7 +56,7 @@ export function RoundOutcomeElement({ element }: { readonly element: RoundOutcom
     >
       <div className="flex items-baseline gap-2">
         <Icon icon={mark.icon} className={cn("size-3.5 shrink-0 self-center", mark.tint)} />
-        <span className={cn("shrink-0 font-semibold text-2xs uppercase tracking-wide", mark.tint)}>
+        <span className={cn("shrink-0 font-medium text-2xs uppercase tracking-wide", mark.tint)}>
           {status}
         </span>
         <span

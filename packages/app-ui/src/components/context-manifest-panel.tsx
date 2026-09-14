@@ -57,7 +57,7 @@ export function ContextManifestPanel({
       data-testid="context-manifest"
       aria-label={panelLabel}
     >
-      <p className="context-manifest-eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+      <p className="context-manifest-eyebrow m-0 text-2xs font-medium uppercase tracking-wide text-ink-faint">
         {panelLabel}
       </p>
 

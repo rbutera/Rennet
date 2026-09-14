@@ -158,7 +158,7 @@ export function LensActivity({
           </p>
         ) : null}
         {running ? (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground tabular-nums">
             Following for {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}
           </p>
         ) : null}

@@ -39,7 +39,7 @@ export function SourceSwitcher({
 
   return (
     <div className="source-switcher mt-1 rounded-control border border-line overflow-hidden bg-surface">
-      <p className="eyebrow source-switcher-eyebrow m-0 px-3.5 py-2.5 border-b border-line bg-raised text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+      <p className="eyebrow source-switcher-eyebrow m-0 px-3.5 py-2.5 border-b border-line bg-raised text-2xs font-medium uppercase tracking-wide text-ink-faint">
         SOURCE
       </p>
       {ordered.map((source) => {

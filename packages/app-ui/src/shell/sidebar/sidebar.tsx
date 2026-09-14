@@ -760,7 +760,7 @@ function SidebarTree() {
                         <button
                           type="button"
                           onClick={() => navigate(newChatPath(project.id))}
-                          className="group/newchat flex h-7 items-center gap-1.5 rounded-chip px-2 text-left text-xs text-muted-foreground/60 transition-colors hover:bg-primary/10 hover:text-primary"
+                          className="group/newchat flex h-7 items-center gap-1.5 rounded-chip px-2 text-left text-13 text-muted-foreground/60 transition-colors hover:bg-primary/10 hover:text-primary"
                         >
                           <Icon
                             icon={Plus}

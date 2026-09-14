@@ -75,7 +75,7 @@ export function SuccessorAccountPanel({
       data-testid="successor-account"
       aria-label="Delta re-review account"
     >
-      <p className="successor-account-eyebrow m-0 text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+      <p className="successor-account-eyebrow m-0 text-2xs font-medium uppercase tracking-wide text-ink-faint">
         Since you last reviewed
       </p>
 

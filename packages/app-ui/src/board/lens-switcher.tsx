@@ -248,7 +248,7 @@ export function LensSwitcher({
                 <span
                   data-testid="lens-open-count"
                   aria-hidden="true"
-                  className="-right-2 -top-2 absolute flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 font-semibold text-10 text-destructive-foreground leading-none"
+                  className="-right-2 -top-2 absolute flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 font-semibold text-10 text-destructive-foreground leading-none tabular-nums"
                 >
                   {openCount}
                 </span>

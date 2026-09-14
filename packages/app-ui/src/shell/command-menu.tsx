@@ -126,7 +126,7 @@ export function CommandMenu() {
                 keywords={[entry.title, ...entry.keywords]}
                 onSelect={() => execute(entry.action)}
               >
-                <span className="min-w-[72px] text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+                <span className="min-w-[72px] text-2xs font-medium uppercase tracking-wide text-ink-faint">
                   {group}
                 </span>
                 <span className="flex-1">{entry.title}</span>
