@@ -184,8 +184,11 @@ request. The word sits in a fixed leading lane you read straight down, so a row'
 kind and your relationship to it are never something you hunt for beside the
 title. A single gold left edge marks the rows that **need you** — your review was
 requested, or your own open pull request has failing CI — and nothing else carries
-it, so gold means one thing here. The edge never stands alone: those rows also
-show the `review` word and the request icon.
+it, so gold means one thing here. The edge never stands alone. Where your review
+was requested, the row also shows the `review` word and the request icon; where
+it is your own pull request with failing CI, it shows the `your PR` word and the
+failing-CI mark. Either way a screen reader hears why the row needs you, so the
+edge always has a spoken companion.
 
 The middle columns are the same for every row: the change (a pull request's title
 and number, a local branch's name), the author with their forge avatar (your local

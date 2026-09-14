@@ -554,8 +554,10 @@ export function ChangeTable({
                 starting && "bg-secondary/60",
                 // The single gold accent (DESIGN.md), spent once: a 2px left edge on the
                 // rows that need you, drawn as an inset shadow so it never shifts the cell
-                // box. Colour never stands alone — these rows also carry the `review` word
-                // and the accent request icon in the identity column.
+                // box. Colour never stands alone — every edged row carries an sr-only
+                // attention label naming WHY (see `attentionLabel`), plus its case-specific
+                // visible signal: the `review` word and accent request icon for a review
+                // request, or the failing-CI mark and `your PR` word for your own red PR.
                 target.needsYou && "shadow-[inset_2px_0_0_0_var(--color-accent)]",
                 // Merged is done: it stays legible (the retrospective path reads it) but
                 // recedes behind the open work.
@@ -687,18 +689,35 @@ function identityOf(row: SmartRow): {
     if (row.mine) return { icon: GitPullRequest, word: "your PR", iconClass: "text-ink-soft" };
     return { icon: GitPullRequest, word: "PR", iconClass: "text-ink-faint" };
   }
-  // Local: copper icon when the checkout is dirty (a flag to weigh), else faint.
+  // Local: a constant faint icon. Dirty is NOT encoded here — it is owned entirely by the
+  // Local column's copper dot + `dirty` word, which folds below 54rem. Tinting this
+  // always-visible icon by dirty would leave dirty signalled by colour alone at narrow
+  // widths (DESIGN.md: colour never stands alone).
   return {
     icon: GitBranch,
     word: "local",
-    iconClass: row.local?.dirty ? "text-warn" : "text-ink-faint",
+    iconClass: "text-ink-faint",
   };
+}
+
+/** Why a `needsYou` row needs the viewer, spelled out for assistive tech. The gold edge is
+ *  the sighted signal; below 54rem the CI mark folds away and its aria-label is `aria-hidden`
+ *  on the `Icon` wrapper anyway, so without this the edge would stand alone for a screen
+ *  reader (DESIGN.md: colour never stands alone). Derived from the same fields as `needsYou`
+ *  (`smart-list.ts`): review requested outranks the own-failing-CI case. */
+function attentionLabel(row: SmartRow): string | null {
+  if (!row.needsYou) return null;
+  if (row.pr?.reviewRequested) return "Review requested";
+  if (row.mine && row.pr?.ci === "failing") return "Your pull request, CI failing";
+  return null;
 }
 
 function IdentityCell({ row }: { readonly row: SmartRow }) {
   const { icon, word, iconClass } = identityOf(row);
+  const attention = attentionLabel(row);
   return (
     <span className="flex items-center gap-1.5 whitespace-nowrap">
+      {attention ? <span className="sr-only">{attention}</span> : null}
       <Icon icon={icon} className={cn("size-3.5 shrink-0", iconClass)} />
       <span className="text-xs font-medium text-ink-soft">{word}</span>
     </span>

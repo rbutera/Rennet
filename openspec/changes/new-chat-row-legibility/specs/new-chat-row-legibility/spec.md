@@ -26,12 +26,17 @@ The New Chat list SHALL carry a leading, always-visible column that renders, for
 
 ### Requirement: The single gold accent marks the rows that need the viewer
 
-The list SHALL draw a gold left edge on a row when and only when the row needs the viewer — the viewer's review was requested, or it is the viewer's own open PR whose CI is failing — and SHALL draw no such edge on any other row. The edge SHALL NOT be the only signal of that state: a row that carries the edge SHALL also carry the `review` identity word and the accent request icon.
+The list SHALL draw a gold left edge on a row when and only when the row needs the viewer — the viewer's review was requested, or it is the viewer's own open PR whose CI is failing — and SHALL draw no such edge on any other row. The edge SHALL NOT be the only signal of that state. Every edged row SHALL carry a screen-reader-only attention label naming why it needs the viewer — `Review requested` for a requested review, `Your pull request, CI failing` for the viewer's own failing-CI PR — so the edge never stands alone for assistive technology at any width. In addition, each case SHALL carry its own visible signal: a review-requested PR reads the `review` identity word and the accent request icon; the viewer's own failing-CI PR reads the `your PR` identity word and the failing-CI mark.
 
 #### Scenario: A review-requested row carries the edge
 
 - **WHEN** the list renders a PR whose review was requested from the viewer
-- **THEN** the row shows the gold left edge and the `review` word
+- **THEN** the row shows the gold left edge, the sr-only label `Review requested`, and the visible `review` word
+
+#### Scenario: The viewer's own failing-CI PR carries the edge
+
+- **WHEN** the list renders the viewer's own open PR whose CI is failing and whose review was not requested from them
+- **THEN** the row shows the gold left edge, the sr-only label `Your pull request, CI failing`, and the visible `your PR` word with the failing-CI mark
 
 #### Scenario: A plain teammate PR carries no edge
 

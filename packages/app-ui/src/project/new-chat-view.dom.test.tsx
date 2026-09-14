@@ -603,6 +603,56 @@ describe("NewChatView", () => {
     expect(within(cell(bare, "local")).getByText("3 behind")).toBeTruthy();
   });
 
+  // Fix 1: the always-visible identity `GitBranch` icon carries a CONSTANT faint colour and
+  // never encodes dirty — the Local column (which folds below 54rem) owns dirty as a copper
+  // dot + the word `dirty`. If the identity icon were tinted by dirty, then below 54rem
+  // (where the Local column is gone) dirty would be signalled by colour alone (DESIGN.md:
+  // colour never stands alone). This is proved with a positive-control pair: a dirty and a
+  // clean worktree whose identity icons must be the SAME colour, so the icon can't be the
+  // dirty signal; and the dirty signal is carried instead by the `dirty` word.
+  it("keeps the identity local icon a constant colour regardless of dirty; the word carries dirty", async () => {
+    const detail = detailP1();
+    // Add a CLEAN worktree beside the existing dirty one, so the two identity icons can be
+    // compared directly. If dirty ever re-tinted the icon, these two would diverge.
+    detail.locals.push({
+      id: "local-clean",
+      branch: "feat/local-clean",
+      repository: "rbutera/rennet",
+      forgeRepository: GITHUB_RENNET,
+      author: "rai",
+      dirty: false,
+      worktree: true,
+      ahead: 1,
+      behind: 0,
+      stage: "captured",
+      lastActivityAt: "2026-08-26T06:00:00.000Z",
+    });
+    renderView("p1", { p1: detail });
+    await screen.findByText("feat/local-x");
+
+    const identityIcon = (name: RegExp) => {
+      const svg = cell(rowButton(name), "identity").querySelector("svg");
+      if (!svg) throw new Error(`no identity icon for ${name}`);
+      return svg.getAttribute("class") ?? "";
+    };
+    const dirtyIcon = identityIcon(/feat\/local-x/); // dirty: true
+    const cleanIcon = identityIcon(/feat\/local-clean/); // dirty: false
+
+    // The identity icon is faint on BOTH, and copper (the dirty flag hue) on NEITHER — so
+    // the icon's colour is not the dirty signal at any width.
+    expect(dirtyIcon).toContain("text-ink-faint");
+    expect(cleanIcon).toContain("text-ink-faint");
+    expect(dirtyIcon).not.toContain("text-warn");
+    // Positive control: dirty and clean share the identity icon colour class exactly. A
+    // regression that re-tints the icon by dirty makes these diverge and this assertion fail.
+    expect(dirtyIcon).toBe(cleanIcon);
+
+    // Dirty is not colour-only: the Local column carries the word `dirty` for the dirty row
+    // and `clean` for the clean one.
+    expect(within(cell(rowButton(/feat\/local-x/), "local")).getByText("dirty")).toBeTruthy();
+    expect(within(cell(rowButton(/feat\/local-clean/), "local")).getByText("clean")).toBeTruthy();
+  });
+
   // D3: a PR that is also checked out locally says so in the Local column (with a dirty
   // dot when the checkout is dirty), replacing the old "checked out locally" change-cell
   // subline. A PR with no checkout shows an em dash there.
@@ -697,7 +747,10 @@ describe("NewChatView", () => {
     for (const name of [/Teammate span fix/, /My open change/, /Someone else's change/]) {
       expect(cell(rowButton(name), "change").querySelector(".rounded-full")).toBeNull();
     }
-    expect(screen.queryByText("Review requested")).toBeNull();
+    // "Review requested" survives ONLY as the sr-only attention companion to the gold edge
+    // (Fix 2), never as a visible pill: the element carrying it is sr-only. The old "Your PR"
+    // pill copy is gone entirely (the identity word is the lowercase `your PR`).
+    expect(screen.getByText("Review requested").className).toContain("sr-only");
     expect(screen.queryByText("Your PR")).toBeNull();
   });
 
@@ -719,10 +772,28 @@ describe("NewChatView", () => {
     const review = rowButton(/Teammate span fix/);
     expect(review.className).toContain(edge);
     expect(within(cell(review, "identity")).getByText("review")).toBeTruthy();
-    // Own PR with red CI → edged.
-    expect(rowButton(/My open change/).className).toContain(edge);
-    // A plain merged PR and a local branch → no edge (positive control: the class flips).
-    expect(rowButton(/Old merged work/).className).not.toContain(edge);
+    // …and an sr-only attention label names WHY, so the edge never stands alone for a
+    // screen reader (Fix 2). It is sr-only, never a visible pill.
+    const reviewLabel = within(cell(review, "identity")).getByText("Review requested");
+    expect(reviewLabel.className).toContain("sr-only");
+
+    // Own PR with red CI → edged. Its edge is NOT review-requested, so its companion label
+    // names the own-failing-CI case; the CI mark folds below 54rem and is aria-hidden, so
+    // this sr-only label is what keeps the edge from standing alone.
+    const mine = rowButton(/My open change/);
+    expect(mine.className).toContain(edge);
+    const mineLabel = within(cell(mine, "identity")).getByText("Your pull request, CI failing");
+    expect(mineLabel.className).toContain("sr-only");
+    // The own-PR case reads its `your PR` word, never `review` — the two edged cases differ.
+    expect(within(cell(mine, "identity")).getByText("your PR")).toBeTruthy();
+    expect(within(cell(mine, "identity")).queryByText("review")).toBeNull();
+
+    // A plain merged PR and a local branch → no edge (positive control: the class flips),
+    // and no attention label rides a row that does not need you.
+    const merged = rowButton(/Old merged work/);
+    expect(merged.className).not.toContain(edge);
+    expect(within(merged).queryByText("Review requested")).toBeNull();
+    expect(within(merged).queryByText("Your pull request, CI failing")).toBeNull();
     expect(rowButton(/feat\/local-x/).className).not.toContain(edge);
   });
 

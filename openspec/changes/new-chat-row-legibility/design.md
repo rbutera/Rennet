@@ -17,7 +17,7 @@ A new leftmost column `identity`, always visible (it never folds; it is the prim
 | PR, open, not `mine`, not review-requested | `GitPullRequest` (faint) | `PR` |
 | PR, `merged` | `GitMerge` | `merged` |
 | PR, `closed` | `GitPullRequest` (faint) | `closed` |
-| local | `GitBranch` (copper when `dirty`, else faint) | `local` |
+| local | `GitBranch` (constant faint — dirty is owned by the Local column, never this always-visible icon) | `local` |
 
 One row yields exactly one token because the conditions are ordered and disjoint: review-requested outranks `mine` outranks plain PR, and a non-open PR is `merged`/`closed` before any of them. The word is a `<span>`, not a pill — no fill, no border, no rounded chrome. It reads down the column as a lane; the eye learns the six words once and never hunts.
 
@@ -25,7 +25,7 @@ One row yields exactly one token because the conditions are ordered and disjoint
 
 ### D2 — The one gold accent marks the rows that need you
 
-The row gains a 2px left edge (an inset box-shadow so it does not shift the cell box), coloured `accent` only when `row.needsYou`, and drawn as nothing otherwise. `needsYou` is already the derived "your review was requested, or your own open PR's CI is red" (`smart-list.ts`), so the edge needs no new predicate. This is the single gold accent DESIGN.md permits, spent once, on the one question a reviewer opens this list to ask. Colour never stands alone: the same rows carry the `review` word and the accent `GitPullRequestArrow`, so the edge is redundant reinforcement for a sighted reviewer and adds nothing a screen reader must decode.
+The row gains a 2px left edge (an inset box-shadow so it does not shift the cell box), coloured `accent` only when `row.needsYou`, and drawn as nothing otherwise. `needsYou` is already the derived "your review was requested, or your own open PR's CI is red" (`smart-list.ts`), so the edge needs no new predicate. This is the single gold accent DESIGN.md permits, spent once, on the one question a reviewer opens this list to ask. Colour never stands alone: every edged row carries a screen-reader-only attention label naming why it needs the viewer (`Review requested`, or `Your pull request, CI failing`), so the edge never stands alone for assistive technology at any width. A review-requested row also reinforces with the visible `review` word and accent `GitPullRequestArrow`; the own-failing-CI row reads `your PR` with the failing-CI mark — the CI mark folds below 54rem and its aria-label is `aria-hidden` on the `Icon` wrapper, which is exactly why the sr-only label, not the CI icon, is what guarantees the edge has a spoken companion.
 
 *Rejected:* a second edge colour for `mine`, or for "someone else's." Two accents is the confetti problem back in a thinner disguise; the identity word already carries `your PR`, and a neutral row needs no mark.
 
@@ -58,4 +58,4 @@ The table opens with no active column sort. The input rows are ordered by `defau
 
 - **Two more columns on an already-folding table.** Both new columns are narrow (an icon plus a short word). The identity column never folds; the Local column folds with CI. The change cell stays `w-full` and absorbs the remaining width. The fold points are re-balanced in the same file, and the `@container` comment block is updated to match.
 - **The default-order change is a visible behaviour change.** The list no longer opens sorted purely by activity. This is the intended improvement, and it is reversible by clicking the Activity header. Documented in the getting-started guide.
-- **Screen-reader parity.** Every colour and icon signal has a word: the identity token, the CI aria-labels (unchanged), and the ahead/behind screen-reader spans (relocated, unchanged). The gold edge is decorative reinforcement only.
+- **Screen-reader parity.** Every colour and icon signal has a word: the identity token, the CI aria-labels (unchanged), the ahead/behind screen-reader spans (relocated, unchanged), and — for the gold edge — an sr-only attention label on every edged row naming why it needs the viewer. The gold edge is decorative reinforcement for a sighted reviewer; the sr-only label is what carries its meaning to assistive technology, so the edge never stands alone at any width.

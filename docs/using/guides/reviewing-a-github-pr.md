@@ -25,7 +25,8 @@ was detected on each machine and which review roles run on which model.
 Start a **New Chat** in the project and pick the pull request from the list. A
 teammate PR whose review is requested of you reads `review` in the leading
 identity column and carries the single gold left edge that marks the rows needing
-you. Your own pull requests read `your PR` in that same column, with no edge. The
+you. Your own pull requests read `your PR` in that same column, with no edge —
+unless one has failing CI, which also needs you, so it carries the edge too. The
 session claims that pull request as its review target, and the claimed row leaves
 the list.
 
