@@ -161,8 +161,12 @@ takes the width; beside it sit the facets and **Refresh**. A facet (**Author**,
 **CI**, **Repository**) is a multi-select over that column's values, drawn only
 when the list holds more than one, so a single-author project shows no author
 facet and a single-repository workspace shows no repository facet. **Author**,
-**Lines**, **Files**, **Created**, and **Activity** are sortable column headers;
-the sorted one carries its arrow. The rail, the facets, the search, and the sort
+**Lines**, **Files**, **Created**, and **Activity** are sortable column headers.
+The list opens with none of them active: its rows are ordered by what **needs
+you** first, then the ones you own, then the most recently active, so what is
+waiting on you clusters at the top instead of scattering through an activity sort.
+Clicking a header takes over with that column's own sort, and the sorted one
+carries its arrow. The rail, the facets, the search, and the sort
 compose into one list, and when any of them narrows it a line under the table
 says how many of the rows are showing, with **Clear filters** beside it.
 **Refresh** re-reads the project's branches and pull requests in the background;
@@ -172,23 +176,37 @@ open rows stay on screen while the merged pages load, with a line in the list
 saying so, because a repository with history takes several seconds to page
 through.
 
-Every row carries the same columns, whether it is a pull request or a local
-branch: the author with their forge avatar (your local branches wear your own),
-CI as a green check, red cross, or copper dashed ring, lines added and removed,
-files touched, and when the change was created. A pull request's numbers come
-from the forge. A local branch's are measured on your machine: its committed
-diff against the project's primary branch, and the date of its first commit past
-it. A branch that is not ahead of the primary branch has nothing to review yet,
-so those cells read "—" rather than zero. A local branch also shows how many
-commits it is ahead of and behind the primary branch. A checked-out worktree
-says **clean** or **dirty** beside its name; a bare branch with no checkout says
-nothing about it, because there is nothing to measure. Uncommitted edits are not
-counted in the lines; **dirty** is how the list says they exist. GitLab does not
-report line counts in its merge-request list, so GitLab rows show "—" there.
-**Review requested** and **Your PR** sit beside a pull request's title rather than
-in a column of their own. As the canvas narrows the list folds from the right:
-files and created go first, then CI and the author's name, leaving the change,
-the author's face, the lines, and the activity.
+Every row leads with an **identity** column: the row's icon and one lowercase
+word naming what it is and how it touches you — `review` for a pull request whose
+review is requested of you, `your PR` for one you opened, `PR` for a teammate's,
+`merged` or `closed` for a settled one, and `local` for a branch with no pull
+request. The word sits in a fixed leading lane you read straight down, so a row's
+kind and your relationship to it are never something you hunt for beside the
+title. A single gold left edge marks the rows that **need you** — your review was
+requested, or your own open pull request has failing CI — and nothing else carries
+it, so gold means one thing here. The edge never stands alone: those rows also
+show the `review` word and the request icon.
+
+The middle columns are the same for every row: the change (a pull request's title
+and number, a local branch's name), the author with their forge avatar (your local
+branches wear your own), CI as a green check, red cross, or copper dashed ring,
+lines added and removed, files touched, and when the change was created. A pull
+request's numbers come from the forge. A local branch's are measured on your
+machine: its committed diff against the project's primary branch, and the date of
+its first commit past it. A branch that is not ahead of the primary branch has
+nothing to review yet, so those cells read "—" rather than zero. Uncommitted edits
+are not counted in the lines. GitLab does not report line counts in its
+merge-request list, so GitLab rows show "—" there.
+
+A **Local** column states what is on your disk. A checked-out worktree says
+**clean** or **dirty** and how many commits it is ahead of and behind the primary
+branch; a bare branch with no checkout says only ahead and behind, because there
+is nothing to measure for cleanliness. A pull request you also have checked out
+locally reads **checked out** here, with a copper dot when that checkout is dirty;
+one you have not shows an em dash. As the canvas narrows the list folds from the
+right: files and created go first, then CI, the Local column, and the author's
+name, leaving the identity, the change, the author's face, the lines, and the
+activity.
 The back arrow or Escape leaves New Chat for the surface you came from. When the
 filter contains text, the first Escape clears it and the next leaves.
 
