@@ -1,10 +1,7 @@
 ---
-import "@fontsource-variable/fraunces/wght.css";
 import "@fontsource-variable/geist/wght.css";
-import "@fontsource-variable/newsreader/wght.css";
 import logoWhite from "../../../../brand/exports/logo/svg/lockup-horizontal-white.svg?url";
 import Capture from "../components/Capture.astro";
-import CategoryStatement from "../components/CategoryStatement.astro";
 import "../styles/global.css";
 
 const githubUrl = "https://github.com/rbutera/rennet";
@@ -24,7 +21,7 @@ const diffLines = [
 ---
 
 <!doctype html>
-<html lang="en">
+<html lang="en" data-scheme="dark" data-reading="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -32,7 +29,7 @@ const diffLines = [
       name="description"
       content="Rennet is a free, local-first desktop review harness for macOS and Windows: understand, question, and refine large AI-generated code changes."
     />
-    <meta id="theme-color" name="theme-color" content="#fbfaf7" />
+    <meta id="theme-color" name="theme-color" content="#070b13" />
     <meta property="og:title" content="Rennet — Make code digestible" />
     <meta
       property="og:description"
@@ -45,52 +42,24 @@ const diffLines = [
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="canonical" href="https://rennet.dev" />
     <title>Rennet — Make code digestible</title>
-    <script is:inline>
-      (() => {
-        const saved = localStorage.getItem("rennet-scheme");
-        const scheme = saved === "light" || saved === "dark"
-          ? saved
-          : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-        document.documentElement.dataset.scheme = scheme;
-        document.querySelector("#theme-color")?.setAttribute(
-          "content",
-          scheme === "dark" ? "#0a0a0a" : "#fbfaf7",
-        );
-      })();
-    </script>
-  </head>
-  <body>
-    <!--
-      THESIS: AI expanded the diff faster than the human context window; Rennet restores accountable judgment without hiding the code.
-      OWN-WORLD: editorial light and dark fields, precise rules, neo-grotesk display type, calm reading type, and product-native evidence.
-      STORY: feel the review bottleneck, choose your workflow, see the roll-up and the conversation, then how Rennet puts your coding agents to work reading the change.
-      FIRST VIEWPORT: the accountability headline faces the review sequence; the download action remains immediate.
-      FORM: established-world narrative rebuild; no concept seed because this extends the approved Breaking Edge identity.
-      FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
-    -->
-    <a class="skip-link" href="#main">Skip to content</a>
-    <header class="site-header shell">
-      <a class="brand" href="#top" aria-label="Rennet home">
-        <img class="logo-light" src="/brand/rennet-lockup.svg" alt="Rennet" width="160" height="32" />
-        <img class="logo-dark" src={logoWhite} alt="Rennet" width="160" height="32" />
-      </a>
-      <nav aria-label="Primary navigation">
-        <a href="#workflows">Workflows</a>
-        <a href="#lenses">Lenses</a>
-        <a href="https://docs.rennet.dev">Docs</a>
-        <a href={githubUrl}>GitHub</a>
-        <a class="button nav-download" href={downloadUrl} aria-label="Download Rennet for macOS or Windows">Download</a>
-        <button class="scheme-toggle" type="button" aria-label="Switch to dark theme" aria-pressed="false">
-          <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"></path></svg>
-          <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.4 15.4A8.5 8.5 0 0 1 8.6 3.6 8.5 8.5 0 1 0 20.4 15.4Z"></path></svg>
-        </button>
-      </nav>
-    </header>
 
-    <main id="main">
-      <section class="hero shell" id="top">
-        <div class="hero-copy">
-          <h1>You stopped writing the code.<br />You still have to answer for it.</h1>
+  </head>
+<body>
+<!--
+THESIS: A body of code becomes something a person can understand. Six chapters share one living constellation.
+OWN-WORLD: warm charcoal, amber-orange points, the warm Rennet mark, dark optical glass and self-hosted Geist.
+STORY: code, workstation, spyglass, deliberation, connected local tools, then a resolved pulsing mark and download.
+FIRST VIEWPORT: oversized accountability headline over receding code; immediate download, clear navigation and motion control.
+FORM: user-pinned six-scene scroll narrative, approved by "ok wanna give it a go?"; supersedes warm-wave comps; seed 60942409.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+--><a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header"><a class="brand" href="#top" aria-label="Rennet home"><img src={logoWhite} alt="Rennet" width="164" height="34" /></a>
+<nav aria-label="Primary navigation"><a href="#workflows">Workflows</a><a href="#lenses">Lenses</a><a href="#council">Council</a><a href="https://docs.rennet.dev">Docs</a><a href={githubUrl}>GitHub</a></nav>
+<div class="header-actions"><button class="motion-toggle icon-button" type="button" aria-label="Pause background animation" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="pause-icon" d="M8 5v14M16 5v14"/><path class="play-icon" d="m8 5 11 7-11 7Z"/></svg></button><button class="scheme-toggle icon-button" type="button" aria-label="Use light reading panels" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.4 1.4M17.6 17.6 19 19M5 19l1.4-1.4M17.6 6.4 19 5"/></svg></button><a class="button nav-download" href={downloadUrl}>Download<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a></div></header>
+<div class="constellation" aria-hidden="true"><canvas id="constellation-canvas"></canvas><div class="scene-fallback"></div></div>
+<main id="main">
+<section class="chapter opening" id="top" data-scene="0"><div class="hero shell">        <div class="hero-copy">
+          <h1><span>You stopped<br class="desktop-break" /> writing the code.</span><span>You still have to<br class="desktop-break" /> answer for it.</span></h1>
           <p class="hero-deck">
             Rennet turns large changes into a review you can understand, question, refine, and
             stand behind.
@@ -108,7 +77,21 @@ const diffLines = [
           <p class="reassurance">macOS on Apple silicon, signed and notarized. Windows installer, not yet signed, so SmartScreen warns once. Both update themselves.</p>
         </div>
 
-        <figure class="digest" aria-labelledby="digest-caption">
+</div></section>
+<div class="chapter" data-scene="1"><div class="scene-space" aria-hidden="true"></div><div class="chapter-content">      <section class="pressure section glass ">
+        <h2>AI can produce more code than a human can hold in their head.</h2>
+        <div>
+          <p>
+            Pull requests have ballooned. The old file-by-file reading ritual now asks the human
+            context window to keep pace with machines that never get tired.
+          </p>
+          <p>
+            Rennet does the structural reading work: grouping, ordering, narrating, and surfacing
+            decisions. You still read the code. Your attention goes where engineering judgment is
+            actually required.
+          </p>
+        </div>
+      </section><div class="digest-panel glass">        <figure class="digest" aria-labelledby="digest-caption">
         <ol class="digest-stages">
           <li class="digest-stage raw-stage">
             <div class="stage-label"><span>Raw change</span><strong>1,872 lines</strong></div>
@@ -152,27 +135,14 @@ const diffLines = [
           </li>
         </ol>
         <figcaption id="digest-caption">From raw change to accountable judgment. Illustrative review data.</figcaption>
-        </figure>
-      </section>
+        </figure></div><section class="category-statement section glass" aria-labelledby="category-statement-title">
 
-      <section class="pressure section shell">
-        <h2>AI can produce more code than a human can hold in their head.</h2>
-        <div>
-          <p>
-            Pull requests have ballooned. The old file-by-file reading ritual now asks the human
-            context window to keep pace with machines that never get tired.
-          </p>
-          <p>
-            Rennet does the structural reading work: grouping, ordering, narrating, and surfacing
-            decisions. You still read the code. Your attention goes where engineering judgment is
-            actually required.
-          </p>
-        </div>
-      </section>
-
-      <CategoryStatement />
-
-      <section class="workflows section shell" id="workflows">
+  <h2 id="category-statement-title">
+    A coding harness points a model at your codebase so it can write. A review harness points
+    models at a change so you can read. The harness does the structural work. You do the deciding.
+  </h2>
+</section>
+      <section class="workflows section glass " id="workflows">
         <div class="section-heading">
           <h2>Two sides of the same responsibility.</h2>
           <p>Whether the code is yours or a teammate’s, the job is to understand what carries your name.</p>
@@ -205,9 +175,48 @@ const diffLines = [
             </ol>
           </article>
         </div>
-      </section>
+      </section></div></div>
+<div class="chapter" data-scene="2"><div class="scene-space" aria-hidden="true"></div><div class="chapter-content">      <section class="lenses section glass " id="lenses">
+        <div class="section-heading">
+          <h2>Five angles.<br />One complete review.</h2>
+          <p>Four lens boards carry the reading: what the branch promised, how it builds, what it decided, and what the models flagged. A fifth, Noise, keeps lockfile and import-order churn out of your way. Every board cites the lines it read, and the cited code opens right under the sentence that cites it. Below, the shipped app reviewing a fixture branch that adds per-organisation rate limiting to a small service called atlas.</p>
+        </div>
+      </section><div class="product-tour glass"><details class="lens-detail" id="design" name="product-tour" open><summary>Design<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary><div class="tour-content">
+        <div class="showcase-copy">
 
-      <section class="conversation section shell">
+          <h2>Start from what the branch promised.</h2>
+          <p>The Design lens reads the branch against its spec. On atlas it finds the OpenSpec change for rate limiting and lays out each requirement as the SHALL, its trigger-and-outcome scenarios, and trace chips into the code and tests that answer it. Open a chip and the cited span opens beneath the requirement, so the promise and the lines that keep it sit together on one screen.</p>
+        </div>
+        <Capture name="lens-design" label="Design" alt="The Design lens showing the requirement 'Requests are limited per organisation': the SHALL sentence, two trigger-and-outcome scenarios, trace chips for the spec, bucket, middleware and test files, and the cited take function from src/rate-limit/bucket.ts revealed beneath them. The conversation pane on the left holds the reviewer's questions about the branch." />
+      </div></details><details class="lens-detail" id="sequence" name="product-tour"><summary>Sequence<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary><div class="tour-content">
+        <div class="showcase-copy">
+
+          <h2>Read the work in the order it builds.</h2>
+          <p>The Sequence lens walks the change as steps, each a paragraph over the code it explains. Step two here is the token bucket: <code>take</code> is a pure function over the bucket, the policy and the clock, refilled from elapsed time on every read, which is why there is no timer anywhere in the branch. The annotation under the span names the clamps that keep it silent, the burst cap and the guard against a clock that went backwards. You still read the code; the board tells you which part to read next.</p>
+        </div>
+        <Capture name="lens-sequence" label="Sequence" alt="The Sequence lens at its second step, 'The bucket: refill on read, then take one token', with the take function from src/rate-limit/bucket.ts shown as highlighted TypeScript beneath the prose and an annotation about its Math.min and Math.max clamps under the code." />
+      </div></details><details class="lens-detail" id="decisions" name="product-tour"><summary>Decisions<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary><div class="tour-content">
+        <div class="showcase-copy">
+
+          <h2>See the judgment calls hidden inside the change.</h2>
+          <p>Five judgment calls inside this branch: two stated by the proposal, three inferred from the code and marked as such. Each carries its rationale, the alternatives not taken, and the evidence. The first is one refill-on-read bucket per organisation, chosen over a fixed window that lets twice the limit through at the edge and a sliding log that costs storage per request, cited to the exact lines of <code>bucket.ts</code>. The lens surfaces the call; whether it was the right one is yours to decide.</p>
+        </div>
+        <Capture name="lens-decisions" label="Decisions" alt="The Decisions lens from its title: 'Five judgment calls inside the change', then the first decision, 'One refill-on-read bucket', with its rationale, two alternatives not taken, evidence chips for bucket.ts, and the cited bucket code revealed beneath." />
+      </div></details><details class="lens-detail" id="flagged" name="product-tour"><summary>Flagged<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary><div class="tour-content">
+        <div class="showcase-copy">
+
+          <h2>Work through what the models flagged, and where they disagree.</h2>
+          <p>Three open findings on this branch, one high. Claude and Codex both raised it, a Redis outage that removes every limit and leaves one log line per request as its only trace, and they disagree on how serious it is; the board says so with a severity split rather than averaging them, and it marks the shared-store race further down as Claude's alone. Each finding cites its lines and carries a lifted fix, and the actions are yours: dismiss it, discuss it, or request the change. Rennet flags; the verdict is yours.</p>
+        </div>
+        <Capture name="lens-flagged" label="Flagged" alt="The Flagged lens from its title: three open findings, one high. The high finding, 'A Redis outage removes every limit, and the only trace is one log line per request', is open with a 'severity split' badge, its lifted fix, the Dismiss, Discuss and Request This Change actions, and the failOpen wrapper from src/rate-limit/store.ts cited beneath." />
+      </div></details><details class="lens-detail" id="diff" name="product-tour"><summary>The code<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary><div class="tour-content">
+        <div class="section-heading">
+          <h2>The code never disappears.</h2>
+          <p>Every citation on a board points into the same built-in Diff view: the changed-files rail with its counts, the hunk in place with the app's own highlighting, and a marker on any line you have staged something against. Here it is open on the middleware, with the reviewer's request change sitting on the 429 lines. Move from overview to evidence without losing your place; Rennet changes the reading order, not the need to read.</p>
+        </div>
+        <Capture name="diff-viewer" label="Diff" alt="Rennet's built-in Diff view on src/rate-limit/middleware.ts, a 37-line added file shown as highlighted TypeScript, with a rail of every changed file and its line counts on the right and two comment markers on lines 31 and 32 where a request change is staged." />
+      </div></details></div></div></div>
+<div class="chapter" id="council" data-scene="3"><div class="scene-space" aria-hidden="true"></div><div class="chapter-content">      <section class="conversation section glass ">
         <div class="conversation-copy">
           <h2>Don’t just read the diff. Talk to it.</h2>
           <p>
@@ -225,9 +234,7 @@ const diffLines = [
             <div class="answer"><span>Claude Code</span><p>The PR treats rate limiting as protective infrastructure, not an availability dependency. The fallback preserves service when the store is unavailable.</p></div>
           </div>
         </div>
-      </section>
-
-      <section class="harnesses section shell" data-scheme="dark">
+      </section>      <section class="harnesses section glass " data-scheme="dark">
         <div class="section-heading harness-heading">
           <h2>Your Claude Code. Your Codex. Already connected.</h2>
           <p>
@@ -255,9 +262,22 @@ const diffLines = [
             <small>Illustrative dual-review output</small>
           </div>
         </div>
-      </section>
+      </section><div class="product-tour glass"><details class="lens-detail" id="explain" name="product-tour"><summary>Explain and request changes<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary><div class="tour-content">
+        <div class="showcase-copy">
 
-      <section class="intelligence section shell">
+          <h2>Select a range. Ask about it, or ask for it to change.</h2>
+          <p>Highlight any lines on a board or in the diff and the selection toolbar offers Comment, Request Changes and Explain. Explain puts the question to the conversation beside the review, about exactly those lines. Request Changes stages an ask against them that the next work order carries, citation and all. Here the reviewer has selected the <code>failOpen</code> wrapper under the high finding, where the lifted fix says to count fail-open decisions and mark the response.</p>
+        </div>
+        <Capture name="explain-request-changes" label="Flagged" alt="The Flagged lens with the failOpen function selected in the cited store.ts code and a selection toolbar floating above it offering Comment, Request Changes and Explain. The high finding's fix and its Dismiss, Discuss and Request This Change actions are visible above the selection." />
+      </div></details><details class="lens-detail" id="handoff" name="product-tour"><summary>Hand-off and pull request<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary><div class="tour-content">
+        <div class="showcase-copy">
+
+          <h2>Your calls become a work order. The delta comes back to you.</h2>
+          <p>Every request change you stage lands in the Changes lane with its cited lines and its comment thread. Dispatch Round hands the whole set to your own coding agent as one work order, citations included. When the round is back, Rennet re-reads the branch and shows you the delta by its shape: the sections the round touched open, the ones that carried forward stay folded, and every ask is checked against the round's diff rather than the worker's word. When nothing is left to ask, you push the branch and open the pull request, in your own words and under your own name.</p>
+        </div>
+        <Capture name="handoff-changes" label="Changes" alt="The hand-off lane in its Changes state: one staged request change, 'Answer the 429 through json(response, 429, { error: rate limit exceeded }) so the envelope in docs/api.md holds', with its cited lines from src/rate-limit/middleware.ts revealed, its comment thread and an empty reply box, and a gold Dispatch Round button beneath." />
+      </div></details></div></div></div>
+<div class="chapter" data-scene="4"><div class="scene-space" aria-hidden="true"></div><div class="chapter-content">      <section class="intelligence section glass ">
         <div class="intelligence-copy">
           <h2>Your agents read the repo. So do ours.</h2>
           <p>
@@ -278,110 +298,33 @@ const diffLines = [
           <div class="map-update"><i></i><p><strong>Main moved forward</strong><span>12 affected areas remapped · the next read starts from the new range</span></p></div>
           <small>Illustrative repository data</small>
         </div>
-      </section>
-
-      <section class="lenses section shell" id="lenses">
-        <div class="section-heading">
-          <h2>Five angles.<br />One complete review.</h2>
-          <p>Four lens boards carry the reading: what the branch promised, how it builds, what it decided, and what the models flagged. A fifth, Noise, keeps lockfile and import-order churn out of your way. Every board cites the lines it read, and the cited code opens right under the sentence that cites it. Below, the shipped app reviewing a fixture branch that adds per-organisation rate limiting to a small service called atlas.</p>
-        </div>
-      </section>
-
-      <section class="showcase section shell" id="design">
-        <div class="showcase-copy">
-          <p class="showcase-label">Design</p>
-          <h2>Start from what the branch promised.</h2>
-          <p>The Design lens reads the branch against its spec. On atlas it finds the OpenSpec change for rate limiting and lays out each requirement as the SHALL, its trigger-and-outcome scenarios, and trace chips into the code and tests that answer it. Open a chip and the cited span opens beneath the requirement, so the promise and the lines that keep it sit together on one screen.</p>
-        </div>
-        <Capture name="lens-design" label="Design" alt="The Design lens showing the requirement 'Requests are limited per organisation': the SHALL sentence, two trigger-and-outcome scenarios, trace chips for the spec, bucket, middleware and test files, and the cited take function from src/rate-limit/bucket.ts revealed beneath them. The conversation pane on the left holds the reviewer's questions about the branch." />
-      </section>
-
-      <section class="showcase flip section shell" id="sequence">
-        <div class="showcase-copy">
-          <p class="showcase-label">Sequence</p>
-          <h2>Read the work in the order it builds.</h2>
-          <p>The Sequence lens walks the change as steps, each a paragraph over the code it explains. Step two here is the token bucket: <code>take</code> is a pure function over the bucket, the policy and the clock, refilled from elapsed time on every read, which is why there is no timer anywhere in the branch. The annotation under the span names the clamps that keep it silent, the burst cap and the guard against a clock that went backwards. You still read the code; the board tells you which part to read next.</p>
-        </div>
-        <Capture name="lens-sequence" label="Sequence" alt="The Sequence lens at its second step, 'The bucket: refill on read, then take one token', with the take function from src/rate-limit/bucket.ts shown as highlighted TypeScript beneath the prose and an annotation about its Math.min and Math.max clamps under the code." />
-      </section>
-
-      <section class="showcase section shell" id="decisions">
-        <div class="showcase-copy">
-          <p class="showcase-label">Decisions</p>
-          <h2>See the judgment calls hidden inside the change.</h2>
-          <p>Five judgment calls inside this branch: two stated by the proposal, three inferred from the code and marked as such. Each carries its rationale, the alternatives not taken, and the evidence. The first is one refill-on-read bucket per organisation, chosen over a fixed window that lets twice the limit through at the edge and a sliding log that costs storage per request, cited to the exact lines of <code>bucket.ts</code>. The lens surfaces the call; whether it was the right one is yours to decide.</p>
-        </div>
-        <Capture name="lens-decisions" label="Decisions" alt="The Decisions lens from its title: 'Five judgment calls inside the change', then the first decision, 'One refill-on-read bucket', with its rationale, two alternatives not taken, evidence chips for bucket.ts, and the cited bucket code revealed beneath." />
-      </section>
-
-      <section class="showcase flip section shell" id="flagged">
-        <div class="showcase-copy">
-          <p class="showcase-label">Flagged</p>
-          <h2>Work through what the models flagged, and where they disagree.</h2>
-          <p>Three open findings on this branch, one high. Claude and Codex both raised it, a Redis outage that removes every limit and leaves one log line per request as its only trace, and they disagree on how serious it is; the board says so with a severity split rather than averaging them, and it marks the shared-store race further down as Claude's alone. Each finding cites its lines and carries a lifted fix, and the actions are yours: dismiss it, discuss it, or request the change. Rennet flags; the verdict is yours.</p>
-        </div>
-        <Capture name="lens-flagged" label="Flagged" alt="The Flagged lens from its title: three open findings, one high. The high finding, 'A Redis outage removes every limit, and the only trace is one log line per request', is open with a 'severity split' badge, its lifted fix, the Dismiss, Discuss and Request This Change actions, and the failOpen wrapper from src/rate-limit/store.ts cited beneath." />
-      </section>
-
-      <section class="product section shell" id="diff">
-        <div class="section-heading">
-          <h2>The code never disappears.</h2>
-          <p>Every citation on a board points into the same built-in Diff view: the changed-files rail with its counts, the hunk in place with the app's own highlighting, and a marker on any line you have staged something against. Here it is open on the middleware, with the reviewer's request change sitting on the 429 lines. Move from overview to evidence without losing your place; Rennet changes the reading order, not the need to read.</p>
-        </div>
-        <Capture name="diff-viewer" label="Diff" alt="Rennet's built-in Diff view on src/rate-limit/middleware.ts, a 37-line added file shown as highlighted TypeScript, with a rail of every changed file and its line counts on the right and two comment markers on lines 31 and 32 where a request change is staged." />
-      </section>
-
-      <section class="showcase section shell" id="explain">
-        <div class="showcase-copy">
-          <p class="showcase-label">Explain and Request Changes</p>
-          <h2>Select a range. Ask about it, or ask for it to change.</h2>
-          <p>Highlight any lines on a board or in the diff and the selection toolbar offers Comment, Request Changes and Explain. Explain puts the question to the conversation beside the review, about exactly those lines. Request Changes stages an ask against them that the next work order carries, citation and all. Here the reviewer has selected the <code>failOpen</code> wrapper under the high finding, where the lifted fix says to count fail-open decisions and mark the response.</p>
-        </div>
-        <Capture name="explain-request-changes" label="Flagged" alt="The Flagged lens with the failOpen function selected in the cited store.ts code and a selection toolbar floating above it offering Comment, Request Changes and Explain. The high finding's fix and its Dismiss, Discuss and Request This Change actions are visible above the selection." />
-      </section>
-
-      <section class="showcase flip section shell" id="handoff">
-        <div class="showcase-copy">
-          <p class="showcase-label">Hand-off and pull request</p>
-          <h2>Your calls become a work order. The delta comes back to you.</h2>
-          <p>Every request change you stage lands in the Changes lane with its cited lines and its comment thread. Dispatch Round hands the whole set to your own coding agent as one work order, citations included. When the round is back, Rennet re-reads the branch and shows you the delta by its shape: the sections the round touched open, the ones that carried forward stay folded, and every ask is checked against the round's diff rather than the worker's word. When nothing is left to ask, you push the branch and open the pull request, in your own words and under your own name.</p>
-        </div>
-        <Capture name="handoff-changes" label="Changes" alt="The hand-off lane in its Changes state: one staged request change, 'Answer the 429 through json(response, 429, { error: rate limit exceeded }) so the envelope in docs/api.md holds', with its cited lines from src/rate-limit/middleware.ts revealed, its comment thread and an empty reply box, and a gold Dispatch Round button beneath." />
-      </section>
-
-      <section class="shells section shell">
+      </section>      <section class="shells section glass ">
         <div class="section-heading">
           <h2>One app. A window or a tab. Any of your machines.</h2>
           <p>Run Rennet as the desktop app or open it as a browser tab served straight from your own machine — both are the full product, no read-only mode, no feature in only one. Review from another computer or your phone by pairing it over Tailscale. There is still no hosted anything: the remote device talks straight to your machine, and it never sees a path on it.</p>
         </div>
-      </section>
-
-      <section class="truth section shell">
+      </section>      <section class="truth section glass ">
         <div><h2>Local-first, without pretending the models are local.</h2><p>Rennet has no backend and no telemetry. The coding agents you use still send context to their own providers under your existing accounts. Rennet tells you that plainly.</p></div>
         <dl><div><dt>Rennet backend</dt><dd>None</dd></div><div><dt>Telemetry</dt><dd>None</dd></div><div><dt>API key setup</dt><dd>None</dd></div><div><dt>Platforms</dt><dd>macOS, Windows</dd></div><div><dt>Licence</dt><dd>FSL-1.1-MIT</dd></div></dl>
-      </section>
-
-      <section class="objections section shell">
+      </section>      <section class="objections section glass ">
         <h2>The questions worth asking.</h2>
         <div>
           <details open><summary>Is this another autonomous review bot?</summary><p>No. Rennet does the structural reading work. You inspect, question, edit, and post the judgment another person sees.</p></details>
           <details><summary>Does dual review mean a model decides by majority?</summary><p>No. Claude and Codex run independently. Agreement is evidence; disagreement is a signal for you, never something Rennet averages away.</p></details>
           <details><summary>Does “local-first” mean nothing leaves my machine?</summary><p>Rennet itself has no backend or telemetry. The coding agent you use still talks to its provider under its own terms and sign-in.</p></details>
         </div>
-      </section>
-
-      <section class="closing" data-scheme="dark">
+      </section></div></div>
+<section class="chapter closing" data-scene="5"><div class="scene-space finale-space" aria-hidden="true"></div>
         <div class="shell closing-inner">
-          <img src="/brand/rennet-mark.svg" alt="" width="72" height="72" />
-          <p class="closing-theme">Not for avoiding the code.<br />For engineers accountable for it.</p>
+
+
           <h2>Make the next change digestible.</h2>
+<p class="closing-theme">Not for avoiding the code.<br />For engineers accountable for it.</p>
           <div class="hero-actions"><a class="button primary inverse" href={downloadUrl}>Download for macOS or Windows</a><a class="text-link inverse-link" href={githubUrl}>View on GitHub</a></div>
           <p class="platform-note">macOS on Apple silicon, signed and notarized. Windows installer, not yet signed. Both update themselves.</p>
         </div>
       </section>
-    </main>
-
-    <footer class="site-footer shell">
+</main>    <footer class="site-footer shell">
       <a class="brand" href="#top" aria-label="Rennet home"><img class="logo-light" src="/brand/rennet-lockup.svg" alt="Rennet" width="136" height="27" /><img class="logo-dark" src={logoWhite} alt="Rennet" width="136" height="27" /></a>
       <div class="footer-copy">
         <p>Rennet turns a body of code into pieces a person can digest, question, and answer for.</p>
@@ -390,24 +333,32 @@ const diffLines = [
       <nav aria-label="Footer navigation"><a href="https://docs.rennet.dev">Docs</a><a href={githubUrl}>GitHub</a><a href={`${githubUrl}/blob/main/LICENSE`}>Licence</a></nav>
     </footer>
 
-    <script>
-      const root = document.documentElement;
-      const toggle = document.querySelector(".scheme-toggle");
-      const updateToggle = () => {
-        const dark = root.dataset.scheme === "dark";
-        toggle?.setAttribute("aria-label", `Switch to ${dark ? "light" : "dark"} theme`);
-        toggle?.setAttribute("aria-pressed", String(dark));
-        document.querySelector("#theme-color")?.setAttribute(
-          "content",
-          dark ? "#0a0a0a" : "#fbfaf7",
-        );
-      };
-      updateToggle();
-      toggle?.addEventListener("click", () => {
-        root.dataset.scheme = root.dataset.scheme === "dark" ? "light" : "dark";
-        localStorage.setItem("rennet-scheme", root.dataset.scheme);
-        updateToggle();
-      });
-    </script>
-  </body>
-</html>
+<script>
+import { mountExperience } from "../animation/experience";
+mountExperience();
+const toggle = document.querySelector<HTMLButtonElement>(".scheme-toggle");
+const applyReadingTheme = (light: boolean) => {
+ document.documentElement.dataset.reading = light ? "light" : "dark";
+ toggle?.setAttribute("aria-label", light ? "Use dark reading panels" : "Use light reading panels");
+ toggle?.setAttribute("aria-pressed", String(light));
+ document.querySelectorAll<HTMLImageElement>("img[data-light-src]").forEach(image => {
+ const source = light ? image.dataset.lightSrc : image.dataset.darkSrc;
+ if (source) image.src = source;
+ });
+};
+try { applyReadingTheme(localStorage.getItem("rennet-marketing-reading") === "light"); } catch { applyReadingTheme(false); }
+toggle?.addEventListener("click", () => {
+ const light = document.documentElement.dataset.reading !== "light";
+ applyReadingTheme(light);
+ try { localStorage.setItem("rennet-marketing-reading", light ? "light" : "dark"); } catch { /* The current page still changes when storage is unavailable. */ }
+});
+document.querySelectorAll<HTMLDetailsElement>(".lens-detail").forEach(detail => {
+ detail.addEventListener("toggle", () => { if(detail.open && document.activeElement === detail.querySelector("summary")) detail.scrollIntoView({block:"start",behavior:"smooth"}); });
+});
+const openAnchor = () => {
+ const id = decodeURIComponent(location.hash.slice(1));
+ const target = document.getElementById(id);
+ if (target instanceof HTMLDetailsElement) { target.open = true; requestAnimationFrame(() => target.scrollIntoView()); }
+};
+window.addEventListener("hashchange",openAnchor);openAnchor();
+</script></body></html>
