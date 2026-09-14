@@ -2,6 +2,7 @@ import type { LocalWork, ProjectDetail, PullRequest } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   buildSmartRows,
+  defaultRowOrder,
   filterSmartRows,
   type SmartRow,
   smartListCounts,
@@ -353,6 +354,39 @@ describe("sortSmartRows — HOT default with a relevance boost", () => {
     // Merged (done) sinks to the bottom.
     expect(rows.at(-1)?.state).toBe("merged");
     expect(rows[0]?.state).toBe("open");
+  });
+});
+
+describe("defaultRowOrder — needs-you, then yours, then recency", () => {
+  // A row that needs you leads even when it is the STALEST; among the rest, yours come
+  // before a teammate's; recency breaks the final tie. Every axis diverges from the next
+  // here, so a comparator that dropped one would reorder this list.
+  const rows: SmartRow[] = [
+    // A teammate PR, most recently active, but does not need you → must NOT lead.
+    { needsYou: false, mine: false, lastActivityAt: "2026-08-10T12:00:00.000Z" } as SmartRow,
+    // Your own PR, older than the teammate's → sits above it, below needs-you.
+    { needsYou: false, mine: true, lastActivityAt: "2026-08-10T09:00:00.000Z" } as SmartRow,
+    // Needs you, and the OLDEST of all → still leads.
+    { needsYou: true, mine: false, lastActivityAt: "2026-08-10T06:00:00.000Z" } as SmartRow,
+  ].map((row, index) => ({ ...row, id: `row-${index}` }));
+
+  it("floats needs-you first, then yours, then most recent — a stale needs-you row still leads", () => {
+    const ordered = defaultRowOrder(rows);
+    expect(ordered.map((row) => row.id)).toEqual(["row-2", "row-1", "row-0"]);
+  });
+
+  it("does not mutate its input", () => {
+    const before = rows.map((row) => row.id);
+    defaultRowOrder(rows);
+    expect(rows.map((row) => row.id)).toEqual(before);
+  });
+
+  it("breaks a pure needs-you/ownership tie by recency", () => {
+    const tie: SmartRow[] = [
+      { id: "old", needsYou: true, mine: true, lastActivityAt: "2026-08-01T00:00:00.000Z" },
+      { id: "new", needsYou: true, mine: true, lastActivityAt: "2026-08-09T00:00:00.000Z" },
+    ].map((row) => row as SmartRow);
+    expect(defaultRowOrder(tie).map((row) => row.id)).toEqual(["new", "old"]);
   });
 });
 
