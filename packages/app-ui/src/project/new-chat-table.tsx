@@ -43,6 +43,7 @@ import {
   GitMerge,
   GitPullRequest,
   GitPullRequestArrow,
+  type LucideIcon,
 } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useMemo } from "react";
 import { Avatar } from "../components/avatar";
@@ -58,11 +59,13 @@ import { filterSmartRows, type SmartFilter, type SmartRow } from "./smart-list";
 // passes over the array.
 //
 // The list folds from the right as the canvas narrows (`@container` on the content
-// region; a fold is a class on the column's meta, applied to its head and its cells):
-//   ≥ 72rem   change · author · CI · lines · files · created · activity
-//   ≥ 54rem   change · author · CI · lines · activity
-//   below     change · author (face only) · lines · activity
-// Status is not a column: "Review requested" and "Your PR" sit beside the title.
+// region; a fold is a class on the column's meta, applied to its head and its cells). The
+// leading identity column never folds; the Local column folds with CI:
+//   ≥ 72rem   identity · change · author · CI · Local · lines · files · created · activity
+//   ≥ 54rem   identity · change · author · CI · Local · lines · activity
+//   below     identity · change · author (face only) · lines · activity
+// Identity carries the row's kind-and-relationship word (local / PR / your PR / review /
+// merged / closed) in a fixed lane; the single gold left edge marks the rows that need you.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Cells that exist only from a fold up. */
@@ -184,6 +187,13 @@ function scopeFilter(row: { original: SmartRow }, _columnId: string, value: unkn
 }
 
 const columns = helper.columns([
+  helper.display({
+    id: "identity",
+    // The leading lane: the kind-and-relationship word reads top-to-bottom, so it carries
+    // no column title of its own. It never folds — it is the primary differentiator.
+    header: () => <span className="sr-only">Type</span>,
+    cell: ({ row }) => <IdentityCell row={row.original} />,
+  }),
   helper.accessor((row) => row.title, {
     id: "change",
     header: "Change",
@@ -213,6 +223,12 @@ const columns = helper.columns([
     enableGlobalFilter: false,
     meta: { fold: FROM_54 },
     cell: ({ row }) => <CiStatus ci={row.original.pr?.ci} />,
+  }),
+  helper.display({
+    id: "local",
+    header: "Local",
+    meta: { fold: FROM_54 },
+    cell: ({ row }) => <LocalCell row={row.original} />,
   }),
   helper.accessor(
     (row) =>
@@ -310,7 +326,10 @@ const HIDDEN_COLUMNS = { scope: false, repository: false };
 
 export type ChangeSorting = SortingState;
 export type ChangeFilters = ColumnFiltersState;
-export const DEFAULT_SORTING: ChangeSorting = [{ id: "activity", desc: true }];
+// The list opens with no column actively sorted: the view pre-orders its rows through
+// `defaultRowOrder` (needs-you, then yours, then recency). A column-header click sets that
+// column's sort and TanStack reorders the whole model, replacing the composite order.
+export const DEFAULT_SORTING: ChangeSorting = [];
 
 export function useChangeTable({
   rows,
@@ -533,6 +552,11 @@ export function ChangeTable({
                 pending && "cursor-not-allowed",
                 pending && !starting && "opacity-60",
                 starting && "bg-secondary/60",
+                // The single gold accent (DESIGN.md), spent once: a 2px left edge on the
+                // rows that need you, drawn as an inset shadow so it never shifts the cell
+                // box. Colour never stands alone — these rows also carry the `review` word
+                // and the accent request icon in the identity column.
+                target.needsYou && "shadow-[inset_2px_0_0_0_var(--color-accent)]",
                 // Merged is done: it stays legible (the retrospective path reads it) but
                 // recedes behind the open work.
                 target.state === "merged" && "opacity-70 hover:opacity-100",
@@ -644,113 +668,154 @@ function LinesCell({ row }: { readonly row: SmartRow }) {
   );
 }
 
-function ChangeCell({ row }: { readonly row: SmartRow }) {
-  const merged = row.state === "merged";
-  if (row.kind === "local") {
-    const local = row.local;
-    const ahead = local?.ahead !== null && local?.ahead !== undefined && local.ahead > 0;
-    const behind = local?.behind !== null && local?.behind !== undefined && local.behind > 0;
-    return (
-      <span className="flex min-w-0 items-start gap-2.5">
-        <Icon
-          icon={GitBranch}
-          className={cn("mt-0.5 size-3.5 shrink-0", local?.dirty ? "text-warn" : "text-ink-faint")}
-        />
-        <span className="min-w-0">
-          <span className="flex min-w-0 items-baseline gap-2.5">
-            <span className="truncate text-sm font-medium text-ink">{row.branch}</span>
-            {/* Clean/dirty is a measured fact only where there is a checkout to measure;
-                a bare branch says nothing. Dirty is copper (a flag to weigh), not gold. */}
-            {local?.worktree ? (
-              <span
-                data-worktree={local.dirty ? "dirty" : "clean"}
-                className={cn(
-                  "flex shrink-0 items-center gap-1 text-2xs font-medium",
-                  local.dirty ? "text-warn" : "text-green",
-                )}
-              >
-                <span
-                  aria-hidden
-                  className={cn("size-1.5 rounded-full", local.dirty ? "bg-warn" : "bg-green")}
-                />
-                {local.dirty ? "dirty" : "clean"}
-              </span>
-            ) : null}
-          </span>
-          {ahead || behind ? (
-            <span className="mt-0.5 flex gap-2 text-2xs text-ink-faint">
-              {ahead ? (
-                <span className="inline-flex items-center gap-0.5">
-                  <span className="sr-only">{`${local.ahead} ahead`}</span>
-                  <span aria-hidden className="contents">
-                    <Icon icon={ArrowUp} className="size-2.5" />
-                    {local.ahead}
-                  </span>
-                </span>
-              ) : null}
-              {behind ? (
-                <span className="inline-flex items-center gap-0.5">
-                  <span className="sr-only">{`${local.behind} behind`}</span>
-                  <span aria-hidden className="contents">
-                    <Icon icon={ArrowDown} className="size-2.5" />
-                    {local.behind}
-                  </span>
-                </span>
-              ) : null}
-            </span>
-          ) : null}
-        </span>
-      </span>
-    );
+/** The row's kind AND the viewer's relationship to it, as one icon plus one lowercase
+ *  word. The conditions are ordered and disjoint (D1), so every row yields exactly one
+ *  token: a review request outranks ownership outranks a plain PR, and a non-open PR is
+ *  merged/closed before any of those. The word is a plain span, never a pill. */
+function identityOf(row: SmartRow): {
+  readonly icon: LucideIcon;
+  readonly word: string;
+  readonly iconClass: string;
+} {
+  if (row.kind === "pr") {
+    if (row.state === "merged")
+      return { icon: GitMerge, word: "merged", iconClass: "text-ink-soft" };
+    if (row.state === "closed")
+      return { icon: GitPullRequest, word: "closed", iconClass: "text-ink-faint" };
+    if (row.pr?.reviewRequested)
+      return { icon: GitPullRequestArrow, word: "review", iconClass: "text-accent" };
+    if (row.mine) return { icon: GitPullRequest, word: "your PR", iconClass: "text-ink-soft" };
+    return { icon: GitPullRequest, word: "PR", iconClass: "text-ink-faint" };
   }
+  // Local: copper icon when the checkout is dirty (a flag to weigh), else faint.
+  return {
+    icon: GitBranch,
+    word: "local",
+    iconClass: row.local?.dirty ? "text-warn" : "text-ink-faint",
+  };
+}
+
+function IdentityCell({ row }: { readonly row: SmartRow }) {
+  const { icon, word, iconClass } = identityOf(row);
   return (
-    <span className="flex min-w-0 items-start gap-2.5">
-      <Icon
-        icon={merged ? GitMerge : row.pr?.reviewRequested ? GitPullRequestArrow : GitPullRequest}
-        className={cn(
-          "mt-0.5 size-3.5 shrink-0",
-          row.pr?.reviewRequested && !merged ? "text-accent" : "text-ink-faint",
-        )}
-      />
-      <span className="min-w-0">
-        <span className="flex min-w-0 items-center gap-2.5">
-          <span className="truncate text-sm font-medium text-ink">{row.title}</span>
-          <RowBadge row={row} />
-        </span>
-        <span className="mt-0.5 flex min-w-0 items-center gap-2 text-2xs text-ink-faint">
-          <span className="shrink-0">
-            {requestPrefix(row.pr?.forgeRepository?.forge)}
-            {row.pr?.number}
-          </span>
-          {merged ? (
-            <span className="flex shrink-0 items-center gap-1 text-ink-soft">
-              <Icon icon={GitMerge} className="size-2.5" /> Merged
-            </span>
-          ) : null}
-          <span className="truncate">{row.branch}</span>
-          {row.checkedOutLocally ? <span className="shrink-0">checked out locally</span> : null}
-        </span>
-      </span>
+    <span className="flex items-center gap-1.5 whitespace-nowrap">
+      <Icon icon={icon} className={cn("size-3.5 shrink-0", iconClass)} />
+      <span className="text-xs font-medium text-ink-soft">{word}</span>
     </span>
   );
 }
 
-function RowBadge({ row }: { readonly row: SmartRow }) {
-  if (row.kind === "local") return null;
-  if (row.state === "merged") return null;
-  if (row.pr?.reviewRequested)
+/** The ahead/behind arrows with their screen-reader words, drawn only for a non-null,
+ *  non-zero count. `null` (base unresolvable) draws nothing — never `0`. */
+function AheadBehind({
+  ahead,
+  behind,
+}: {
+  readonly ahead: number | null;
+  readonly behind: number | null;
+}) {
+  return (
+    <span className="flex gap-2 text-2xs text-ink-faint">
+      {ahead !== null && ahead > 0 ? (
+        <span className="inline-flex items-center gap-0.5">
+          <span className="sr-only">{`${ahead} ahead`}</span>
+          <span aria-hidden className="contents">
+            <Icon icon={ArrowUp} className="size-2.5" />
+            {ahead}
+          </span>
+        </span>
+      ) : null}
+      {behind !== null && behind > 0 ? (
+        <span className="inline-flex items-center gap-0.5">
+          <span className="sr-only">{`${behind} behind`}</span>
+          <span aria-hidden className="contents">
+            <Icon icon={ArrowDown} className="size-2.5" />
+            {behind}
+          </span>
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/** What is on the viewer's disk for this row (D3). A local worktree states clean/dirty and
+ *  its ahead/behind; a bare branch says only ahead/behind (no checkout to measure, so no
+ *  cleanliness word); a checked-out PR is marked as such with a dirty dot; a PR with no
+ *  checkout is an em dash. */
+function LocalCell({ row }: { readonly row: SmartRow }) {
+  if (row.kind === "local") {
+    const local = row.local;
+    const worktree = local?.worktree === true;
+    const ahead = local?.ahead ?? null;
+    const behind = local?.behind ?? null;
+    const hasAheadBehind = (ahead !== null && ahead > 0) || (behind !== null && behind > 0);
+    if (!worktree && !hasAheadBehind) return <Dash />;
     return (
-      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-accent-fill px-2 py-0.5 text-10 font-semibold text-accent-ink">
-        <Icon icon={GitPullRequestArrow} className="size-2.5" /> Review requested
+      <span className="flex flex-col items-start gap-0.5">
+        {/* Clean/dirty is a measured fact only where there is a checkout to measure;
+            a bare branch says nothing. Dirty is copper (a flag to weigh), not gold. */}
+        {worktree ? (
+          <span
+            data-worktree={local?.dirty ? "dirty" : "clean"}
+            className={cn(
+              "flex items-center gap-1 text-2xs font-medium",
+              local?.dirty ? "text-warn" : "text-green",
+            )}
+          >
+            <span
+              aria-hidden
+              className={cn("size-1.5 rounded-full", local?.dirty ? "bg-warn" : "bg-green")}
+            />
+            {local?.dirty ? "dirty" : "clean"}
+          </span>
+        ) : null}
+        {hasAheadBehind ? <AheadBehind ahead={ahead} behind={behind} /> : null}
       </span>
     );
-  if (row.mine)
+  }
+  if (row.checkedOutLocally) {
     return (
-      <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-line-strong px-2 py-0.5 text-10 font-medium text-ink-soft">
-        <Icon icon={GitPullRequest} className="size-2.5" /> Your PR
+      <span className="flex items-center gap-1 whitespace-nowrap text-2xs font-medium text-ink-soft">
+        <Icon icon={GitBranch} className="size-3 shrink-0 text-ink-faint" />
+        checked out
+        {row.checkedOutLocally.dirty ? (
+          <span className="inline-flex items-center text-warn">
+            <span aria-hidden className="size-1.5 rounded-full bg-warn" />
+            <span className="sr-only">dirty</span>
+          </span>
+        ) : null}
       </span>
     );
-  return null;
+  }
+  return <Dash />;
+}
+
+function ChangeCell({ row }: { readonly row: SmartRow }) {
+  if (row.kind === "local") {
+    return (
+      <span className="flex min-w-0 items-baseline">
+        <span className="truncate text-sm font-medium text-ink">{row.branch}</span>
+      </span>
+    );
+  }
+  const merged = row.state === "merged";
+  return (
+    <span className="flex min-w-0 flex-col">
+      <span className="truncate text-sm font-medium text-ink">{row.title}</span>
+      <span className="mt-0.5 flex min-w-0 items-center gap-2 text-2xs text-ink-faint">
+        <span className="shrink-0">
+          {requestPrefix(row.pr?.forgeRepository?.forge)}
+          {row.pr?.number}
+        </span>
+        {merged ? (
+          <span className="flex shrink-0 items-center gap-1 text-ink-soft">
+            <Icon icon={GitMerge} className="size-2.5" /> Merged
+          </span>
+        ) : null}
+        <span className="truncate">{row.branch}</span>
+      </span>
+    </span>
+  );
 }
 
 // CI is a coloured mark AND a named state (the aria-label): DESIGN.md never lets

@@ -355,12 +355,42 @@ describe("NewChatView", () => {
     expect(screen.queryByText("feat/local-x")).toBeNull();
   });
 
-  it("sorts by activity by default and by created time from the headers", async () => {
-    renderView("p1", { p1: detailP1() });
+  // D4: the list opens on the composite order (needs-you, then yours, then recency) with
+  // NO column actively sorted. This fixture makes the needs-you row the STALEST open row
+  // and a plain own PR the newest, so a plain activity-desc default would lead with the
+  // own PR — the composite default must still float the needs-you row to the top.
+  function driftedDetail(): ProjectDetail {
+    const detail = detailP1();
+    detail.prs = detail.prs.map((pr) => {
+      if (pr.id === "pr-review") return { ...pr, lastActivityAt: "2026-08-20T08:00:00.000Z" };
+      if (pr.id === "pr-mine") return { ...pr, lastActivityAt: "2026-08-27T08:00:00.000Z" };
+      return pr;
+    });
+    return detail;
+  }
+
+  it("opens on the composite order that floats needs-you, with no column actively sorted", async () => {
+    renderView("p1", { p1: driftedDetail() });
     await screen.findByText("Teammate span fix");
     const titles = () => targetRows().map((row) => row.textContent);
-
+    // Needs-you leads even though it is now the least recently active row.
     expect(titles()[0]).toContain("Teammate span fix");
+    // A more-recently-active row that does not need the viewer sits below it.
+    expect(titles()[1]).not.toContain("Teammate span fix");
+    // No header advertises itself as the active sort at open.
+    expect(document.querySelectorAll("th[aria-sort]")).toHaveLength(0);
+  });
+
+  it("a column-header click overrides the composite default with that column's own sort", async () => {
+    renderView("p1", { p1: driftedDetail() });
+    await screen.findByText("Teammate span fix");
+    const titles = () => targetRows().map((row) => row.textContent);
+    // Default order leads with needs-you…
+    expect(titles()[0]).toContain("Teammate span fix");
+    // …until Activity is chosen: the most recently active row leads regardless of needs-you.
+    fireEvent.click(screen.getByRole("button", { name: "Sort by activity" }));
+    expect(titles()[0]).toContain("My open change");
+    // Created toggles ascending/descending from its header, unaffected by the composite.
     fireEvent.click(screen.getByRole("button", { name: "Sort by created" }));
     expect(titles()[0]).toContain("My open change");
     fireEvent.click(screen.getByRole("button", { name: "Sort by created" }));
@@ -554,7 +584,13 @@ describe("NewChatView", () => {
     expect(within(worktree).getByText("−3")).toBeTruthy();
     expect(within(cell(worktree, "files")).getByText("2")).toBeTruthy();
     expect(worktree.querySelector("time[datetime='2026-08-22T08:00:00.000Z']")).not.toBeNull();
-    expect(worktree.querySelector("[data-worktree='dirty']")?.textContent).toBe("dirty");
+    // The disk facts live in the Local column now (D3), NOT in the change cell.
+    expect(cell(worktree, "local").querySelector("[data-worktree='dirty']")?.textContent).toBe(
+      "dirty",
+    );
+    expect(cell(worktree, "change").querySelector("[data-worktree]")).toBeNull();
+    expect(within(cell(worktree, "change")).queryByText("2 ahead")).toBeNull();
+    expect(within(cell(worktree, "local")).getByText("2 ahead")).toBeTruthy();
     expect(within(worktree).queryByText("reviewed")).toBeNull(); // the stage word is gone
     expect(within(worktree).queryByText("captured")).toBeNull();
 
@@ -564,8 +600,40 @@ describe("NewChatView", () => {
     expect(within(bare).queryByText("captured")).toBeNull();
     expect(within(bare).getAllByText("—").length).toBeGreaterThanOrEqual(3); // +/−, files, created
     // Ahead/behind are drawn icons with the word for a screen reader, not glyphs.
-    expect(within(bare).getByText("3 behind")).toBeTruthy();
-    expect(within(worktree).getByText("2 ahead")).toBeTruthy();
+    expect(within(cell(bare, "local")).getByText("3 behind")).toBeTruthy();
+  });
+
+  // D3: a PR that is also checked out locally says so in the Local column (with a dirty
+  // dot when the checkout is dirty), replacing the old "checked out locally" change-cell
+  // subline. A PR with no checkout shows an em dash there.
+  it("marks a checked-out PR in the Local column, never in a change-cell subline", async () => {
+    const detail = detailP1();
+    detail.locals.push({
+      id: "co-mine",
+      branch: "feat/mine", // same branch as pr-mine → dedupes onto that PR row
+      repository: "rbutera/rennet",
+      forgeRepository: GITHUB_RENNET,
+      author: "rai",
+      dirty: true,
+      worktree: true,
+      ahead: 1,
+      behind: 0,
+      stage: "reviewed",
+      lastActivityAt: "2026-08-26T07:00:00.000Z",
+    });
+    renderView("p1", { p1: detail });
+    await screen.findByText("My open change");
+
+    const checkedOut = rowButton(/My open change/);
+    expect(within(cell(checkedOut, "local")).getByText("checked out")).toBeTruthy();
+    // The dirty checkout carries the copper dot with its screen-reader word.
+    expect(within(cell(checkedOut, "local")).getByText("dirty")).toBeTruthy();
+    // The change cell no longer carries the "checked out locally" subline.
+    expect(within(cell(checkedOut, "change")).queryByText(/checked out/)).toBeNull();
+
+    // A PR with no local checkout shows an em dash in the Local column.
+    const notCheckedOut = rowButton(/Teammate span fix/);
+    expect(cell(notCheckedOut, "local").textContent).toContain("—");
   });
 
   it("shows a forge avatar where the forge gave one, initials everywhere else", async () => {
@@ -588,13 +656,74 @@ describe("NewChatView", () => {
     expect(mine?.textContent).toBe("R");
   });
 
-  it("state chips read the DERIVED target vocabulary, not just the bare kind", async () => {
-    renderView("p1", { p1: detailP1() });
-    await screen.findByText("Teammate span fix");
-    expect(within(rowButton(/Teammate span fix/)).getByText("Review requested")).toBeTruthy();
-    expect(within(rowButton(/Teammate span fix/)).queryByText("Teammate PR")).toBeNull();
-    expect(within(rowButton(/feat\/local-x/)).queryByText("Your PR")).toBeNull();
-    expect(within(rowButton(/My open change/)).getByText("Your PR")).toBeTruthy();
+  // D1: the identity column names each row's kind and the viewer's relationship to it in
+  // ONE lowercase word — `review` / `your PR` / `PR` / `merged` / `local` — in a fixed
+  // leading lane, not a floating pill. The words are disjoint: exactly one per row.
+  it("names each row's kind and relationship in one identity word, not a pill", async () => {
+    const detail = detailP1();
+    // Add a teammate PR that is neither mine nor review-requested → the plain `PR` word.
+    detail.prs.push({
+      id: "pr-plain",
+      number: 205,
+      title: "Someone else's change",
+      branch: "fix/theirs",
+      repository: "rbutera/rennet",
+      forgeRepository: GITHUB_RENNET,
+      author: "florence",
+      state: "open",
+      reviewRequestedFromViewer: false,
+      ci: "passing",
+      additions: 3,
+      deletions: 1,
+      changedFiles: 1,
+      createdAt: "2026-08-23T08:00:00.000Z",
+      lastActivityAt: "2026-08-23T09:00:00.000Z",
+    });
+    renderView("p1", { p1: detail });
+    fireEvent.click(await screen.findByRole("switch", { name: "Show merged PRs" }));
+    await screen.findByText("Old merged work");
+
+    const word = (name: RegExp, text: string) =>
+      within(cell(rowButton(name), "identity")).getByText(text);
+    expect(word(/Teammate span fix/, "review")).toBeTruthy();
+    expect(word(/My open change/, "your PR")).toBeTruthy();
+    expect(word(/Someone else's change/, "PR")).toBeTruthy();
+    expect(word(/Old merged work/, "merged")).toBeTruthy();
+    expect(word(/feat\/local-x/, "local")).toBeTruthy();
+
+    // The deleted pills leave no trace: no rounded-full badge in any change cell (task
+    // 1.2's control — the clean/dirty dot and the avatar keep their own rounded chrome
+    // elsewhere), and none of the old pill copy anywhere.
+    for (const name of [/Teammate span fix/, /My open change/, /Someone else's change/]) {
+      expect(cell(rowButton(name), "change").querySelector(".rounded-full")).toBeNull();
+    }
+    expect(screen.queryByText("Review requested")).toBeNull();
+    expect(screen.queryByText("Your PR")).toBeNull();
+  });
+
+  // D2: the single gold accent (DESIGN.md's one accent, spent once) is a 2px left edge
+  // drawn as an inset box-shadow — and ONLY on the rows that need the viewer. Colour never
+  // stands alone: an edged row also carries the `review` word.
+  it("draws the gold left edge on needs-you rows only, never as the sole signal", async () => {
+    const detail = detailP1();
+    // My own open PR with red CI also needs me (needsYou), so it too must carry the edge.
+    detail.prs = detail.prs.map((pr) =>
+      pr.id === "pr-mine" ? { ...pr, ci: "failing" as const } : pr,
+    );
+    renderView("p1", { p1: detail });
+    fireEvent.click(await screen.findByRole("switch", { name: "Show merged PRs" }));
+    await screen.findByText("Old merged work");
+
+    const edge = "shadow-[inset_2px_0_0_0_var(--color-accent)]";
+    // Review-requested → edged, and the `review` word rides with it (colour + word).
+    const review = rowButton(/Teammate span fix/);
+    expect(review.className).toContain(edge);
+    expect(within(cell(review, "identity")).getByText("review")).toBeTruthy();
+    // Own PR with red CI → edged.
+    expect(rowButton(/My open change/).className).toContain(edge);
+    // A plain merged PR and a local branch → no edge (positive control: the class flips).
+    expect(rowButton(/Old merged work/).className).not.toContain(edge);
+    expect(rowButton(/feat\/local-x/).className).not.toContain(edge);
   });
 
   it("keeps ownership distinct when your own PR has failing CI", async () => {
@@ -605,7 +734,7 @@ describe("NewChatView", () => {
     renderView("p1", { p1: detail });
 
     await screen.findByText("My open change");
-    expect(within(rowButton(/My open change/)).getByText("Your PR")).toBeTruthy();
+    expect(within(cell(rowButton(/My open change/), "identity")).getByText("your PR")).toBeTruthy();
     expect(within(rowButton(/My open change/)).getByLabelText("CI failing")).toBeTruthy();
   });
 
@@ -688,7 +817,9 @@ describe("NewChatView — the table: sort state is spoken, facets split, refresh
       Array.from(document.querySelectorAll("th[aria-sort]")).map(
         (th) => `${th.textContent?.trim()}:${th.getAttribute("aria-sort")}`,
       );
-    expect(sortedHeaders()).toEqual(["Activity:descending"]);
+    // The list opens with NO column actively sorted (the composite default order), so no
+    // header carries aria-sort until one is clicked.
+    expect(sortedHeaders()).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: "Sort by created" }));
     expect(sortedHeaders()).toEqual(["Created:descending"]);
     fireEvent.click(screen.getByRole("button", { name: "Sort by created" }));
