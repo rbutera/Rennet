@@ -14,6 +14,8 @@ For the `explicit-setting` tier: call `resolvePrimaryBase(git, topLevel, { prima
 
 For the `symbolic-head` tier: `resolvePrimaryBase(git, topLevel, {})` with no name, which reads `origin/HEAD` itself, falls through a dangling target to `main`/`master`, and picks the newest spelling. Today's tier only reads `origin/HEAD` and only takes the remote-tracking spelling; after this it also considers a local branch that is ahead.
 
+The tier is **gated on `origin/HEAD` existing** (`symbolic-ref --quiet refs/remotes/origin/HEAD`, existence only — a dangling TARGET still exits 0, so the fallthrough above keeps working), because the resolver's caller-less probe does not require one: ungated, the tier would answer `main`/`master` in a clone that has no `origin/HEAD` at all, and `baseRefResolution` is provenance stamped on the manifest — a `symbolic-head` that read no symbolic head is a lie. The gate also keeps the tier's REACH where it is, so a remoteless clone still fails closed to the caller's own fallback rather than newly resolving.
+
 The `configured-upstream` tier is untouched: `@{upstream}` is already a specific remote-tracking ref, not a name with several spellings.
 
 The order of tiers, the `baseRefResolution` labels and the fail-closed throw are unchanged. `explicit-setting` still means the caller named the branch; which spelling of it won is what `baseRef` reports, exactly as a working-tree patchset reports `origin/main` or `main`.

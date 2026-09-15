@@ -150,13 +150,44 @@ describe("resolveBaseRef — the branch-name tiers resolve the primary base", ()
     expect(resolved.baseRefResolution).toBe("explicit-setting");
   });
 
-  it("still fails closed with no primary branch, no origin/HEAD and no upstream", async () => {
+  it("takes the newest spelling through an `origin/HEAD` whose target is DANGLING", async () => {
+    // `symbolic-ref` reports a dangling target happily — a rename leaves `origin/HEAD`
+    // pointing at a ref nothing resolves — so the tier is entered, the name it read is
+    // dropped, and the probe falls through to `main`/`master` (D1).
+    const { root, remoteTip } = staleLocalMain();
+    git(root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone");
+    expect(git(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")).toBe("origin/gone");
+
+    const resolved = await resolveBaseRef(root, { git: execaGit });
+
+    expect(resolved.baseOid).toBe(remoteTip);
+    expect(resolved.baseRef).toBe("origin/main");
+    expect(resolved.baseRefResolution).toBe("symbolic-head");
+  });
+
+  it("still fails closed with a local `main` but no origin/HEAD and no upstream", async () => {
+    // The tier is GATED on `origin/HEAD` existing (repo-map-primary-base). Ungated, the
+    // resolver's caller-less probe would answer this repo's local `main` and stamp the
+    // manifest `symbolic-head` — provenance for a symbolic head nobody read — and a
+    // remoteless clone would resolve where it fails closed today.
+    const root = repository("rennet-snapshot-source-remoteless-");
+    commit(root, "index.ts", "export const value = 1;\n");
+    expect(git(root, "rev-parse", "--verify", "refs/heads/main").length).toBeGreaterThan(0);
+
+    await expect(resolveBaseRef(root, { git: execaGit })).rejects.toThrow(
+      /could not resolve the default-branch ref/,
+    );
+  });
+
+  it("still fails closed when `origin/HEAD` dangles and nothing else names a primary", async () => {
     const root = scratchDirectory("rennet-snapshot-source-orphan-");
-    // No `main`, no `master`, no remote: nothing in this clone names a primary branch.
+    // No `main`, no `master`: the tier IS entered — `origin/HEAD` exists — and declines,
+    // rather than guessing a branch.
     git(root, "init", "-q", "-b", "work");
     git(root, "config", "user.email", "rennet@example.test");
     git(root, "config", "user.name", "Rennet Test");
     commit(root, "index.ts", "export const value = 1;\n");
+    git(root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone");
 
     await expect(resolveBaseRef(root, { git: execaGit })).rejects.toThrow(
       /could not resolve the default-branch ref/,

@@ -230,16 +230,13 @@ describe("ProjectSnapshotGenerator — end-to-end over a real git repo", () => {
   it("fails closed when the default branch cannot be resolved", async () => {
     const root = mkdtempSync(join(tmpdir(), "rennet-noref-"));
     scratch.push(root);
-    // `work`, not `main`: resolution now goes through the primary-base resolver
-    // (repo-map-primary-base), whose caller-less probe tries `main` then `master`, so a
-    // clone holding either of those DOES name a primary branch. Nothing here does.
-    git(root, "init", "-q", "-b", "work");
+    git(root, "init", "-q", "-b", "main");
     git(root, "config", "user.email", "r@e.test");
     git(root, "config", "user.name", "R");
     write(root, "a.txt", "hi\n");
     git(root, "add", "-A");
     git(root, "commit", "-q", "-m", "one");
-    // No primary branch, no origin/HEAD, no upstream, no explicit ref → throw, never guess.
+    // No origin/HEAD, no upstream, no explicit ref → throw, never guess.
     await expect(new ProjectSnapshotGenerator().generate(root)).rejects.toThrow(
       /could not resolve/,
     );

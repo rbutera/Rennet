@@ -111,15 +111,9 @@ async function resolveNameThroughPrimaryBase(
  * `baseRef` reports, so the map's baseline is the same commit a patchset is
  * captured against. The tier ORDER, the `baseRefResolution` labels, the `repoKey`
  * and the fail-closed throw are unchanged — `explicit-setting` still means the
- * caller named the branch, `symbolic-head` still means nobody did and the clone was
- * asked. What each tier ANSWERS is what moved: the winning spelling, reported in
- * `baseRef`. Read verbs only (D3): nothing here fetches or writes a ref.
- *
- * One consequence worth naming, because it widens the reach of this function rather
- * than only re-pointing it: the caller-less probe tries `main` then `master` when
- * `origin/HEAD` is absent or dangling, so a clone with no remote at all now resolves
- * its local primary branch where it used to throw. The throw survives for a clone
- * that names no primary branch by any spelling and has no upstream.
+ * caller named the branch, `symbolic-head` still means `origin/HEAD` did. What each
+ * tier ANSWERS is what moved: the winning spelling, reported in `baseRef`. Read
+ * verbs only (D3): nothing here fetches or writes a ref.
  */
 export async function resolveBaseRef(
   root: string,
@@ -161,9 +155,24 @@ export async function resolveBaseRef(
     },
     {
       // the remote's own declared default branch. With no name of our own the
-      // resolver reads `origin/HEAD` itself, falls through a dangling target to
+      // resolver reads `origin/HEAD` itself, falls through a DANGLING target to
       // `main`/`master`, and picks the newest spelling of whichever it found.
-      resolve: () => resolveNameThroughPrimaryBase(git, topLevel),
+      resolve: async () => {
+        // GATED on `origin/HEAD` existing, which the resolver's caller-less probe does
+        // not require: without this the tier would answer `main`/`master` in a clone
+        // that has no `origin/HEAD` at all, and stamp the manifest
+        // `baseRefResolution: "symbolic-head"` — provenance claiming a symbolic head
+        // was read when none was. It would also widen the function, resolving where a
+        // remoteless clone fails closed today. Existence only: a dangling TARGET still
+        // exits 0 here, which is the fallthrough D1 wants and the resolver handles.
+        const symbolicHead = await tryGit(git, topLevel, [
+          "symbolic-ref",
+          "--quiet",
+          "refs/remotes/origin/HEAD",
+        ]);
+        if (!symbolicHead) return null;
+        return resolveNameThroughPrimaryBase(git, topLevel);
+      },
       resolution: "symbolic-head",
     },
     {
