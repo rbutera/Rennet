@@ -27,7 +27,7 @@ const diffLines = [
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta
       name="description"
-      content="Rennet is a free, local-first desktop review harness for macOS and Windows: understand, question, and refine large AI-generated code changes."
+      content="Rennet is a free, local-first review harness for macOS and Windows. It breaks large agent-written code changes into something you can understand, inspect, and answer for."
     />
     <meta id="theme-color" name="theme-color" content="#070b13" />
     <meta property="og:title" content="Rennet — Make code digestible" />
@@ -61,8 +61,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 <section class="chapter opening" id="top" data-scene="0"><div class="hero shell">        <div class="hero-copy">
           <h1><span>You stopped<br class="desktop-break" /> writing the code.</span><span>You still have to<br class="desktop-break" /> answer for it.</span></h1>
           <p class="hero-deck">
-            Rennet turns large changes into a review you can understand, question, refine, and
-            stand behind.
+            Rennet is a review harness. It helps you work with coding agents effectively and
+            transparently by breaking large changes into something you can understand and inspect.
           </p>
           <p class="agentic-line">Not for vibe coders. For agentic engineers.</p>
           <div class="hero-actions">
@@ -82,13 +82,13 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         <h2>AI can produce more code than a human can hold in their head.</h2>
         <div>
           <p>
-            Pull requests have ballooned. The old file-by-file reading ritual now asks the human
-            context window to keep pace with machines that never get tired.
+            Pull requests have ballooned. Reading file by file asks you to keep pace with a
+            machine that never gets tired.
           </p>
           <p>
-            Rennet does the structural reading work: grouping, ordering, narrating, and surfacing
-            decisions. You still read the code. Your attention goes where engineering judgment is
-            actually required.
+            Rennet does the structural reading for you: it groups the change, puts it in order,
+            explains it, and surfaces the decisions inside it. You still read the code. Your
+            attention goes where your judgment is actually needed.
           </p>
         </div>
       </section><div class="digest-panel glass">        <figure class="digest" aria-labelledby="digest-caption">
@@ -139,7 +139,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 
   <h2 id="category-statement-title">
     A coding harness points a model at your codebase so it can write. A review harness points
-    models at a change so you can read. The harness does the structural work. You do the deciding.
+    models at a change so you can read it. The harness does the structural work. You do the deciding.
   </h2>
 </section>
       <section class="workflows section glass " id="workflows">
@@ -152,13 +152,13 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
             <div class="workflow-title"><span>Before you submit</span><h3>Your own work</h3></div>
             <p>
               Your coding agent finished the branch. Before you open the PR, Rennet helps you
-              understand the change, catch issues, refine the implementation, and fulfil the human
-              review work the agent cannot own for you.
+              understand what it did, catch what is wrong, and send the fixes back to the agent,
+              so the review a teammate sees is one you already stand behind.
             </p>
             <ol>
-              <li><span>Branch</span><p>Review committed and working-tree changes.</p></li>
-              <li><span>Refine</span><p>Turn your calls into focused work for your coding agent.</p></li>
-              <li><span>Re-read</span><p>Rennet takes a new snapshot of the branch and re-reviews only what changed.</p></li>
+              <li><span>Branch</span><p>Review the committed and working-tree changes.</p></li>
+              <li><span>Refine</span><p>Turn what you find into focused work for your coding agent.</p></li>
+              <li><span>Re-read</span><p>Rennet snapshots the branch again and re-reviews only what changed.</p></li>
             </ol>
           </article>
           <article class="workflow team-work">
@@ -178,41 +178,49 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       </section></div></div>
 <div class="chapter" data-scene="2"><div class="scene-space" aria-hidden="true"></div><div class="chapter-content">      <section class="lenses section glass " id="lenses">
         <div class="section-heading">
-          <h2>Five angles.<br />One complete review.</h2>
-          <p>Four lens boards carry the reading: what the branch promised, how it builds, what it decided, and what the models flagged. A fifth, Noise, keeps lockfile and import-order churn out of your way. Every board cites the lines it read, and the cited code opens right under the sentence that cites it. Below, the shipped app reviewing a fixture branch that adds per-organisation rate limiting to a small service called atlas.</p>
+          <h2>Five lenses.<br />Five questions you already ask.</h2>
+          <p>Open a change and Rennet reads it five ways. Each lens is a board that answers one question about the branch, and every answer cites the lines it came from. Open a citation and the code appears right under the sentence that cites it.</p>
         </div>
+        <dl class="lens-list">
+          <div><dt>Design</dt><dd>What was this change supposed to do?</dd></div>
+          <div><dt>Sequence</dt><dd>In what order should I read it?</dd></div>
+          <div><dt>Decisions</dt><dd>Which choices need explaining?</dd></div>
+          <div><dt>Flagged</dt><dd>Where did the models find a problem, or disagree?</dd></div>
+          <div><dt>Noise</dt><dd>What can I skim? Lockfiles, import order, formatting.</dd></div>
+        </dl>
+        <p class="tour-note">The screenshots below are the real app reviewing an example branch: per-organisation rate limiting in a small service called atlas.</p>
       </section><div class="product-tour glass"><details class="lens-detail" id="design" name="product-tour" open><summary>Design<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary><div class="tour-content">
         <div class="showcase-copy">
 
           <h2>Start from what the branch promised.</h2>
-          <p>The Design lens reads the branch against its spec. On atlas it finds the OpenSpec change for rate limiting and lays out each requirement as the SHALL, its trigger-and-outcome scenarios, and trace chips into the code and tests that answer it. Open a chip and the cited span opens beneath the requirement, so the promise and the lines that keep it sit together on one screen.</p>
+          <p>Design reads the branch against whatever it was written from: a spec, an ADR, a plan, or the pull request description. On atlas it finds the rate-limiting spec and lays out each requirement with the code and tests that answer it. Open one and the cited lines appear under the requirement, so the promise and the code that keeps it sit together on one screen.</p>
         </div>
         <Capture name="lens-design" label="Design" alt="The Design lens showing the requirement 'Requests are limited per organisation': the SHALL sentence, two trigger-and-outcome scenarios, trace chips for the spec, bucket, middleware and test files, and the cited take function from src/rate-limit/bucket.ts revealed beneath them. The conversation pane on the left holds the reviewer's questions about the branch." />
       </div></details><details class="lens-detail" id="sequence" name="product-tour"><summary>Sequence<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary><div class="tour-content">
         <div class="showcase-copy">
 
           <h2>Read the work in the order it builds.</h2>
-          <p>The Sequence lens walks the change as steps, each a paragraph over the code it explains. Step two here is the token bucket: <code>take</code> is a pure function over the bucket, the policy and the clock, refilled from elapsed time on every read, which is why there is no timer anywhere in the branch. The annotation under the span names the clamps that keep it silent, the burst cap and the guard against a clock that went backwards. You still read the code; the board tells you which part to read next.</p>
+          <p>Sequence turns the change into steps, each a short explanation over the code it describes. Step two here is the token bucket: <code>take</code> refills from elapsed time on every read, which is why there is no timer anywhere in the branch. The note under the code names the clamps that keep it quiet. You still read the code; Sequence tells you what to read next.</p>
         </div>
         <Capture name="lens-sequence" label="Sequence" alt="The Sequence lens at its second step, 'The bucket: refill on read, then take one token', with the take function from src/rate-limit/bucket.ts shown as highlighted TypeScript beneath the prose and an annotation about its Math.min and Math.max clamps under the code." />
       </div></details><details class="lens-detail" id="decisions" name="product-tour"><summary>Decisions<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary><div class="tour-content">
         <div class="showcase-copy">
 
           <h2>See the judgment calls hidden inside the change.</h2>
-          <p>Five judgment calls inside this branch: two stated by the proposal, three inferred from the code and marked as such. Each carries its rationale, the alternatives not taken, and the evidence. The first is one refill-on-read bucket per organisation, chosen over a fixed window that lets twice the limit through at the edge and a sliding log that costs storage per request, cited to the exact lines of <code>bucket.ts</code>. The lens surfaces the call; whether it was the right one is yours to decide.</p>
+          <p>Decisions lists the choices the branch made, each with its reasoning, the alternatives it passed over, and the lines that show it. Five here: two stated in the proposal, three inferred from the code and marked as such. The first is one refill-on-read bucket per organisation, chosen over a fixed window that lets twice the limit through at the edge. Rennet surfaces the call. Whether it was the right one is yours to decide.</p>
         </div>
         <Capture name="lens-decisions" label="Decisions" alt="The Decisions lens from its title: 'Five judgment calls inside the change', then the first decision, 'One refill-on-read bucket', with its rationale, two alternatives not taken, evidence chips for bucket.ts, and the cited bucket code revealed beneath." />
       </div></details><details class="lens-detail" id="flagged" name="product-tour"><summary>Flagged<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary><div class="tour-content">
         <div class="showcase-copy">
 
           <h2>Work through what the models flagged, and where they disagree.</h2>
-          <p>Three open findings on this branch, one high. Claude and Codex both raised it, a Redis outage that removes every limit and leaves one log line per request as its only trace, and they disagree on how serious it is; the board says so with a severity split rather than averaging them, and it marks the shared-store race further down as Claude's alone. Each finding cites its lines and carries a lifted fix, and the actions are yours: dismiss it, discuss it, or request the change. Rennet flags; the verdict is yours.</p>
+          <p>Flagged collects what Claude and Codex found, each finding with its severity, the lines involved, and a proposed fix. Three open on this branch, one high: a Redis outage that silently removes every limit. Both models raised it and disagree on how serious it is, so the board shows the split instead of averaging it away. A finding only one model raised says so. Dismiss it, discuss it, or request the change. Rennet flags; the verdict is yours.</p>
         </div>
         <Capture name="lens-flagged" label="Flagged" alt="The Flagged lens from its title: three open findings, one high. The high finding, 'A Redis outage removes every limit, and the only trace is one log line per request', is open with a 'severity split' badge, its lifted fix, the Dismiss, Discuss and Request This Change actions, and the failOpen wrapper from src/rate-limit/store.ts cited beneath." />
       </div></details><details class="lens-detail" id="diff" name="product-tour"><summary>The code<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary><div class="tour-content">
         <div class="section-heading">
           <h2>The code never disappears.</h2>
-          <p>Every citation on a board points into the same built-in Diff view: the changed-files rail with its counts, the hunk in place with the app's own highlighting, and a marker on any line you have staged something against. Here it is open on the middleware, with the reviewer's request change sitting on the 429 lines. Move from overview to evidence without losing your place; Rennet changes the reading order, not the need to read.</p>
+          <p>Every citation opens the same built-in Diff view: the changed-files rail, the hunk in place with syntax highlighting, and a marker on any line you have a request against. Here it is open on the middleware, with a request sitting on the 429 lines. Move from overview to evidence without losing your place. Rennet changes the reading order, not the need to read.</p>
         </div>
         <Capture name="diff-viewer" label="Diff" alt="Rennet's built-in Diff view on src/rate-limit/middleware.ts, a 37-line added file shown as highlighted TypeScript, with a rail of every changed file and its line counts on the right and two comment markers on lines 31 and 32 where a request change is staged." />
       </div></details></div></div></div>
@@ -266,52 +274,31 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         <div class="showcase-copy">
 
           <h2>Select a range. Ask about it, or ask for it to change.</h2>
-          <p>Highlight any lines on a board or in the diff and the selection toolbar offers Comment, Request Changes and Explain. Explain puts the question to the conversation beside the review, about exactly those lines. Request Changes stages an ask against them that the next work order carries, citation and all. Here the reviewer has selected the <code>failOpen</code> wrapper under the high finding, where the lifted fix says to count fail-open decisions and mark the response.</p>
+          <p>Highlight any lines on a board or in the diff and the toolbar offers Comment, Request Changes, and Explain. Explain asks the conversation beside the review about exactly those lines. Request Changes records a request against them that your coding agent will receive, with the lines attached. Here the reviewer has selected the <code>failOpen</code> wrapper under the high finding.</p>
         </div>
         <Capture name="explain-request-changes" label="Flagged" alt="The Flagged lens with the failOpen function selected in the cited store.ts code and a selection toolbar floating above it offering Comment, Request Changes and Explain. The high finding's fix and its Dismiss, Discuss and Request This Change actions are visible above the selection." />
       </div></details><details class="lens-detail" id="handoff" name="product-tour"><summary>Hand-off and pull request<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg></summary><div class="tour-content">
         <div class="showcase-copy">
 
-          <h2>Your calls become a work order. The delta comes back to you.</h2>
-          <p>Every request change you stage lands in the Changes lane with its cited lines and its comment thread. Dispatch Round hands the whole set to your own coding agent as one work order, citations included. When the round is back, Rennet re-reads the branch and shows you the delta by its shape: the sections the round touched open, the ones that carried forward stay folded, and every ask is checked against the round's diff rather than the worker's word. When nothing is left to ask, you push the branch and open the pull request, in your own words and under your own name.</p>
+          <h2>Your calls become a work order. The result comes back to you.</h2>
+          <p>Every change you request collects in one place with its cited lines and its thread. Dispatch Round hands the whole set to your own coding agent. When the round is back, Rennet re-reads the branch and shows you what moved: the sections the round touched open, the ones it left alone stay folded, and every request is checked against the round's actual diff, not the agent's word. When nothing is left to ask, push the branch and open the pull request, in your own words and under your own name.</p>
         </div>
         <Capture name="handoff-changes" label="Changes" alt="The hand-off lane in its Changes state: one staged request change, 'Answer the 429 through json(response, 429, { error: rate limit exceeded }) so the envelope in docs/api.md holds', with its cited lines from src/rate-limit/middleware.ts revealed, its comment thread and an empty reply box, and a gold Dispatch Round button beneath." />
       </div></details></div></div></div>
-<div class="chapter" data-scene="4"><div class="scene-space" aria-hidden="true"></div><div class="chapter-content">      <section class="intelligence section glass ">
-        <div class="intelligence-copy">
-          <h2>Your agents read the repo. So do ours.</h2>
-          <p>
-            Every review lens is a coding agent, started inside the checkout you are reviewing,
-            with the tools it would have anyway — git, file reads, search — and told exactly which
-            commits it is answering for.
-          </p>
-          <p>
-            It investigates the change the way you would, and cites only what it actually read.
-            Underneath it, a deterministic map of the repository — workspaces, symbols,
-            references, tests — is there for the questions structure can answer outright.
-          </p>
-        </div>
-        <div class="map-proof" aria-label="How a review lens reads the repository">
-          <div class="map-root"><strong>atlas/</strong><span>current · main@8d2f1a</span></div>
-          <div class="map-layer deterministic"><span>Deterministic discovery</span><b>47 workspaces · 3,284 symbols · 612 test links</b></div>
-          <div class="map-layer agent"><span>Lens agent, in the checkout</span><b>git diff · git log · file reads · grep</b></div>
-          <div class="map-update"><i></i><p><strong>Main moved forward</strong><span>12 affected areas remapped · the next read starts from the new range</span></p></div>
-          <small>Illustrative repository data</small>
-        </div>
-      </section>      <section class="shells section glass ">
+<div class="chapter" data-scene="4"><div class="scene-space" aria-hidden="true"></div><div class="chapter-content">      <section class="shells section glass ">
         <div class="section-heading">
           <h2>One app. A window or a tab. Any of your machines.</h2>
-          <p>Run Rennet as the desktop app or open it as a browser tab served straight from your own machine — both are the full product, no read-only mode, no feature in only one. Review from another computer or your phone by pairing it over Tailscale. There is still no hosted anything: the remote device talks straight to your machine, and it never sees a path on it.</p>
+          <p>Run Rennet as the desktop app or open it as a browser tab served from your own machine. Both are the full product: no read-only mode, no feature in only one. Pair another computer or your phone over Tailscale to review from wherever you are. Nothing is hosted. The remote device talks straight to your machine, and it never sees a path on it.</p>
         </div>
       </section>      <section class="truth section glass ">
-        <div><h2>Local-first, without pretending the models are local.</h2><p>Rennet has no backend and no telemetry. The coding agents you use still send context to their own providers under your existing accounts. Rennet tells you that plainly.</p></div>
+        <div><h2>What leaves your machine, and what doesn’t.</h2><p>Nothing goes to Rennet. There is no Rennet backend and no telemetry. Your coding agents still send context to their own providers, under the accounts you already have, exactly as they do when you use them directly. Rennet says so plainly instead of hiding it.</p></div>
         <dl><div><dt>Rennet backend</dt><dd>None</dd></div><div><dt>Telemetry</dt><dd>None</dd></div><div><dt>API key setup</dt><dd>None</dd></div><div><dt>Platforms</dt><dd>macOS, Windows</dd></div><div><dt>Licence</dt><dd>FSL-1.1-MIT</dd></div></dl>
       </section>      <section class="objections section glass ">
         <h2>The questions worth asking.</h2>
         <div>
-          <details open><summary>Is this another autonomous review bot?</summary><p>No. Rennet does the structural reading work. You inspect, question, edit, and post the judgment another person sees.</p></details>
-          <details><summary>Does dual review mean a model decides by majority?</summary><p>No. Claude and Codex run independently. Agreement is evidence; disagreement is a signal for you, never something Rennet averages away.</p></details>
-          <details><summary>Does “local-first” mean nothing leaves my machine?</summary><p>Rennet itself has no backend or telemetry. The coding agent you use still talks to its provider under its own terms and sign-in.</p></details>
+          <details open><summary>Is this another autonomous review bot?</summary><p>No. Rennet does the structural reading. You inspect, question, edit, and post the review another person sees.</p></details>
+          <details><summary>Does dual review mean the models decide by majority?</summary><p>No. Claude and Codex run independently. Agreement is evidence; disagreement is a signal for you, and Rennet never averages it away.</p></details>
+          <details><summary>Does “local-first” mean nothing leaves my machine?</summary><p>Rennet itself sends nothing anywhere. The coding agent you use still talks to its provider under its own terms and sign-in, exactly as it does today.</p></details>
         </div>
       </section></div></div>
 <section class="chapter closing" data-scene="5"><div class="scene-space finale-space" aria-hidden="true"></div>
@@ -319,7 +306,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 
 
           <h2>Make the next change digestible.</h2>
-<p class="closing-theme">Not for avoiding the code.<br />For engineers accountable for it.</p>
+<p class="closing-theme">Not for vibe coders.<br />For agentic engineers.</p>
           <div class="hero-actions"><a class="button primary inverse" href={downloadUrl}>Download for macOS or Windows</a><a class="text-link inverse-link" href={githubUrl}>View on GitHub</a></div>
           <p class="platform-note">macOS on Apple silicon, signed and notarized. Windows installer, not yet signed. Both update themselves.</p>
         </div>

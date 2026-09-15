@@ -705,46 +705,30 @@ main,
   margin: 0;
   font-size: 12px;
 }
-.map-proof {
-  background: var(--surface);
-  padding: 28px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  margin-top: 32px;
-}
-.map-root {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-}
-.map-root span {
-  font-size: 12px;
-  color: var(--ink-soft);
-}
-.map-layer {
-  margin-top: 24px;
+.lens-list {
   display: grid;
-  gap: 6px;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 44px;
+  margin: 36px 0 0;
 }
-.map-layer > span {
-  font-size: 12px;
-  color: var(--ink-soft);
-}
-.map-layer b {
-  font-size: 15px;
-}
-.map-update {
-  border-top: 1px solid var(--line);
-  margin-top: 24px;
-  padding-top: 22px;
-}
-.map-update p {
+.lens-list > div {
   display: grid;
   gap: 4px;
-  font-size: 13px;
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
 }
-.map-proof small {
-  font-size: 11px;
+.lens-list dt {
+  font-weight: 580;
+}
+.lens-list dd {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+.tour-note {
+  margin-top: 28px;
+  font-size: 14px;
+  color: var(--ink-soft);
 }
 .truth dl {
   margin: 32px 0 0;
@@ -1016,11 +1000,9 @@ main,
   .dual-proof p {
     font-size: 14px;
   }
-  .map-proof {
-    padding: 18px;
-  }
-  .map-root {
-    flex-wrap: wrap;
+  .lens-list {
+    grid-template-columns: 1fr;
+    gap: 0;
   }
   .code-question,
   .thread {

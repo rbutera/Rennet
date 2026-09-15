@@ -91,7 +91,8 @@ Large rounded glass panels contain the reading sections. Smaller rounded frames 
 
 - **Download:** gold primary link in the hero and closing, pale compact link in the fixed header. All lead to the release page.
 - **Reading panel:** one section of prose or product explanation on glass; use the pale variant through the shared reading preference.
-- **Product disclosure:** native `details` and `summary` preserve keyboard operation. Seven captures remain reachable, with their existing copy, labels, and anchors.
+- **Product disclosure:** native `details` and `summary` preserve keyboard operation. Seven captures remain reachable through their labels and anchors; each carries copy written from the reviewer's side, naming what the surface does for them rather than how Rennet builds it.
+- **Lens list:** a two-column definition list under the lens heading names each lens and the one question it answers, in the reviewer's words. It collapses to one column at 600px.
 - **Capture:** one lazy image with dark and light source data. The reading control swaps its source. A closed disclosure does not guarantee that the browser avoids downloading it.
 - **Motion and reading controls:** labelled toggle buttons with pressed states; visible gold focus rings support keyboard use.
 
@@ -101,7 +102,8 @@ Large rounded glass panels contain the reading sections. Smaller rounded frames 
 - Preserve original brand assets and opaque shipped-app captures.
 - Keep constellation materials scoped to marketing.
 - Do not import the glass treatment into the product app.
-- Do not present illustrative conversation or repository counts as measured product results.
+- Do not present illustrative conversation or review counts as measured product results.
+- Write copy from the reviewer's point of view: what they see, ask, and decide. Do not describe Rennet's internals (seats, boards as machinery, repository maps) or defend design choices the reader never raised.
 
 The mobile hero reserves 360px above its copy for the visible code scene. Intro geometry rises with document scroll so it does not pass through the copy; the closing keeps its separate feathered backing.
 
