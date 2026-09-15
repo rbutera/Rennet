@@ -381,6 +381,10 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
 
   it("projects the fresh context.map/file snapshot into compact hypothesis repo context", async () => {
     const repo = workspaceRepo();
+    // The base map is built at the PRIMARY BASE (repo-map-primary-base), so put the
+    // primary branch at the reviewed OID: this reader is constructed without an
+    // overlay source, so it only ever sees the manifest at that exact OID.
+    git(repo.root, "reset", "--hard", "-q", repo.oid1);
     const { review, pipeline } = await reviewAt(repo.root, repo.commonDir, repo.oid1);
     const store = freshStore();
     const live = await createLiveCanvasOpsBackend(review, pipeline, { store });
@@ -437,6 +441,10 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
   it("refuses a snapshot at the WRONG OID as stale, never serving a mismatched map", async () => {
     const repo = workspaceRepo();
     const store = freshStore();
+    // The open builds the base map at the PRIMARY BASE (repo-map-primary-base), so the
+    // primary branch has to be at oid1 for the store to end up pinned there — which is
+    // the whole setup this test needs: a stored OID that is not the one asked for next.
+    git(repo.root, "reset", "--hard", "-q", repo.oid1);
 
     // Open at oid1 → the store now holds a snapshot pinned to oid1.
     const first = await reviewAt(repo.root, repo.commonDir, repo.oid1);
