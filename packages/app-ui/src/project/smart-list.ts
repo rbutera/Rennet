@@ -270,6 +270,21 @@ export function sortSmartRows(rows: readonly SmartRow[], sort: SmartSort): Smart
   }
 }
 
+/**
+ * The New Chat list's opening order: the rows that need you first, then the rows you own,
+ * then recency of activity. The view applies this before handing rows to the table, so the
+ * list opens with no column actively sorted; choosing a column header replaces it entirely.
+ * Reuses the same recency tiebreaker `sortSmartRows` uses.
+ */
+export function defaultRowOrder(rows: readonly SmartRow[]): SmartRow[] {
+  const byRecency = (a: SmartRow, b: SmartRow) => b.lastActivityAt.localeCompare(a.lastActivityAt);
+  return [...rows].sort((a, b) => {
+    if (a.needsYou !== b.needsYou) return a.needsYou ? -1 : 1;
+    if (a.mine !== b.mine) return a.mine ? -1 : 1;
+    return byRecency(a, b);
+  });
+}
+
 export type SmartFilter = "all" | "needs-you" | "mine" | "local" | "prs";
 
 /** Keep only the rows matching the filter (ownership + kind + attention). */

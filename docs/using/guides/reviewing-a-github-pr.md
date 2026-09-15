@@ -23,10 +23,12 @@ was detected on each machine and which review roles run on which model.
 ## Open the pull request
 
 Start a **New Chat** in the project and pick the pull request from the list. A
-teammate PR whose review is requested of you carries a gold left rule and a
-**Review requested** pill. Your own pull requests use a quiet outlined **Your
-PR** pill instead. The session claims that pull request as its review target,
-and the claimed row leaves the list.
+teammate PR whose review is requested of you reads `review` in the leading
+identity column and carries the single gold left edge that marks the rows needing
+you. Your own pull requests read `your PR` in that same column, with no edge —
+unless one has failing CI, which also needs you, so it carries the edge too. The
+session claims that pull request as its review target, and the claimed row leaves
+the list.
 
 The session's gold button reads **Write Review** from the start — the target
 decides the exit, and a teammate PR has exactly one.
