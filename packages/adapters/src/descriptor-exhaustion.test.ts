@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { describeSpawnFailure } from "./descriptor-exhaustion";
 
-// #850's third symptom: the message. All five lens lanes read "T3 sidecar unavailable:
+// #850's third symptom: the message. All five lens lanes read "chat sidecar unavailable:
 // spawn EBADF", which is true and useless — the sidecar was fine, the daemon had no
 // descriptors left, and the reader spent a week on #821 looking for a double-close in the
 // spawn helpers. The assertion here is on what the SENTENCE says, because the sentence is

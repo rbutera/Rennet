@@ -214,7 +214,7 @@ answers `{ status: "bound", threadId, threadUrl }` or `{ status: "unavailable", 
 it is absent only when the caller named no review, which is a fact about the ask rather than
 about the sidecar. A failed bind does **not** reject the read: the origin, the bearer and the
 environment id are good whatever the bind did, and rejecting threw them away — a healthy
-sidecar with one missing workspace used to surface in the dock as "T3 Code sidecar
+sidecar with one missing workspace used to surface in the dock as "Chat sidecar
 unavailable" and the mount never rendered at all. The reason travels instead, and the dock
 prints it.
 
@@ -271,8 +271,8 @@ So the route waits, and names which wait it is in (`resolvePinnedThreadView`, in
 | state | when | what the reviewer reads |
 | --- | --- | --- |
 | `chat` | the thread's detail or shell is here | the thread |
-| `syncing` | the snapshot has not delivered it yet | *Connecting to the T3 Code sidecar…* |
-| `gone` | the sidecar positively reports it **deleted** | *This review's thread is no longer in the T3 Code sidecar. Nothing is being written to it.* |
+| `syncing` | the snapshot has not delivered it yet | a skeleton placeholder, so the wait reads as a wait, with an `aria-label` of *Connecting to the chat sidecar* for a screen reader |
+| `gone` | the sidecar positively reports it **deleted** | *This review's thread is no longer in the chat sidecar. Nothing is being written to it.* |
 
 The home route is now reachable one way only — the daemon said `unavailable` — so it states
 that flatly and carries the daemon's reason: *This review has no thread, and none is being
@@ -1157,8 +1157,8 @@ edited without committing keeps the checkpoint's diff and still fails.
 ## What a thread costs and where it is kept
 
 Three facts about running every session's chat and every work order inside the sidecar,
-stated here and on the local host card in Settings rather than beside a choice, because
-there is no choice:
+stated here because they hold for every session and there is no choice to state them
+beside:
 
 - Threads are persisted harness sessions, so they appear in the harness's own history.
 - Their token usage is reported by T3 Code's usage view, not by Rennet's seat usage.

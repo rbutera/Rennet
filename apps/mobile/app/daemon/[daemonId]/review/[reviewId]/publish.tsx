@@ -380,7 +380,7 @@ export default function Publish(): ReactNode {
             lands nowhere — the phone still never text-edits the outbound review. */}
         <SectionLabel>Not right?</SectionLabel>
         <Text style={{ color: t.faint, fontSize: type.control, marginTop: 6 }}>
-          Ask for changes in the review&apos;s T3 Code thread on the desktop — the phone never
+          Ask for changes in the review&apos;s chat thread on the desktop — the phone never
           text-edits the outbound review.
         </Text>
 

@@ -384,7 +384,7 @@ describe("an anchored ask that does not go out (#888)", () => {
     await view.user.keyboard(`${text}{Enter}`);
   }
 
-  const SIDECAR_DOWN = "T3 sidecar unavailable: the vendored T3 Code server bundle is not built";
+  const SIDECAR_DOWN = "chat sidecar unavailable: the chat sidecar server bundle is not built";
 
   it("says the question was not sent, in the daemon's own words, when the send is refused", async () => {
     const { id, view } = renderWithAsk(() => {

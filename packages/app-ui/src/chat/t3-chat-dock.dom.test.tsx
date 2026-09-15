@@ -321,7 +321,7 @@ describe("the chat slot is always the T3 thread", () => {
 
   // ── #872: the dock may only claim a bring-up it is actually waiting on ────────
   //
-  // "Starting the T3 Code sidecar…" is the `pending || !data` arm of a read that is
+  // The "starting the chat sidecar" skeleton is the `pending || !data` arm of a read that is
   // DISABLED with no review, so `data` is undefined forever and the line never resolved.
   // It is not the copy that was wrong — it is that the arm was reachable at all from a
   // route where nothing is being started.

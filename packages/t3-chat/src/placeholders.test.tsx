@@ -50,17 +50,22 @@ describe("chat placeholders: each one says which state it is, and does not overc
     );
   });
 
-  it("keeps a settled absence and a live wait as different sentences", () => {
+  it("keeps a settled absence and a live wait as different states", () => {
     const unavailable = renderToStaticMarkup(<ThreadUnavailableNotice />);
     const gone = renderToStaticMarkup(<ThreadGoneNotice />);
     const syncing = renderToStaticMarkup(<ThreadSyncingNotice />);
     const connections = renderToStaticMarkup(<ConnectionsNotice />);
-    // Four states, four sentences: a reviewer who sees one must be able to tell which.
+    // Four states, four renders: a reviewer who sees one must be able to tell which.
     expect(new Set([unavailable, gone, syncing, connections]).size).toBe(4);
-    // The two that are settled name an ending; the one that is a wait names the wait.
-    expect(gone).toContain("no longer in the T3 Code sidecar");
+    // The settled ones name an ending in words; the live wait is a skeleton, and carries its
+    // wait in an sr-only label rather than a sentence the reviewer has to parse.
+    expect(gone).toContain("no longer in the chat sidecar");
     expect(gone).toContain("Nothing is being written to it");
-    expect(syncing).toContain("Connecting to the T3 Code sidecar");
+    expect(syncing).toContain('data-slot="t3-native-syncing"');
+    expect(syncing).toContain("animate-pulse");
+    expect(syncing).toContain('aria-label="Connecting to the chat sidecar"');
+    // A wait is not a settled sentence: the skeleton must not read as one.
+    expect(syncing).not.toContain("no longer");
     expect(connections).toContain("managed by the Rennet daemon");
   });
 

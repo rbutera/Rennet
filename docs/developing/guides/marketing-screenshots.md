@@ -58,7 +58,7 @@ The staged request-change goes through the durable ask log (`AskLogStore`), as t
 | PNG optimisation (palette quantisation through `sharp`) | `apps/marketing/scripts/optimize-screenshots.mjs` |
 | The Nx target | `screenshots` in `apps/marketing/project.json` |
 | The page that shows them | `apps/marketing/src/pages/index.astro` |
-| The framed light/dark pair one section shows | `apps/marketing/src/components/Capture.astro` |
+| The framed capture with a switchable light/dark source | `apps/marketing/src/components/Capture.astro` |
 
 The capture file is not a `*.spec.ts`, so `pnpm nx run rennet-desktop:e2e` and `pnpm check` never run it; the desktop `lint` and `typecheck` targets still cover it.
 
@@ -66,7 +66,7 @@ The capture file is not a `*.spec.ts`, so `pnpm nx run rennet-desktop:e2e` and `
 
 Every surface is captured at 1536×1024 CSS pixels (3072×2048 device pixels), once with `prefers-color-scheme: light` and once with `dark`, as `<name>-{light,dark}.png`. The chat pane with the conversation is in every frame. Wherever a cited span is on screen it is the app's own syntax-highlighted TypeScript.
 
-Each capture feeds exactly one section of the page, and the sections run in review order: the four lens boards (understand, walk, weigh, flag), then the three acting surfaces (read the diff, ask or request a change, hand off and open the pull request). A section's copy describes what its capture shows, so a capture that changes shape is a copy change too.
+Each capture appears in one native disclosure in the six-scene constellation page: the four lens boards (understand, walk, weigh, flag), then the three acting surfaces (read the diff, ask or request a change, hand off and open the pull request). The first five belong to the lens chapter; the last two follow the council content. Each disclosure retains its deep link and descriptive copy, so a capture that changes shape is a copy change too.
 
 | Name | What it shows | Page section |
 | --- | --- | --- |
@@ -78,7 +78,7 @@ Each capture feeds exactly one section of the page, and the sections run in revi
 | `explain-request-changes` | The Flagged lens with lines of `failOpen` selected and the selection toolbar showing Comment, Request Changes and Explain. | Explain and Request Changes, `#explain` |
 | `handoff-changes` | The hand-off lane in its Changes state: the reviewer's staged request-change with its cited lines revealed and its comment thread, and Dispatch Round beneath. | Hand-off and pull request, `#handoff` |
 
-The page's opening image is the illustrative digest figure, not a capture. Every capture is a lazy image, and only the active scheme's file of each pair is ever fetched, so a full scroll costs about 1.75 MB of PNG in either scheme; the fourteen files total 3.5 MB on disk.
+The opening visual is procedural code geometry in the fixed constellation canvas. The digest illustration remains in the page, and all seven product captures remain accessible through disclosures. `Capture.astro` renders one lazy image per capture, initially pointing to the dark file. The reading-panel control swaps that image's source to the light or dark file and stores the preference. A switch can fetch another file; neither a closed disclosure nor CSS visibility guarantees that a browser skips a request. The captures retain their opaque app appearance above the animated scene. The page's visual authority is `apps/marketing/DESIGN.md`.
 
 Two surfaces are not captured, because they cannot be reached honestly without a model turn. The own-branch lane becomes the pull request only once no ask remains and `publish.compose` has drafted a body, and the body drafter is the live council-routed producer; without a harness the compose degrades to the branch name and an empty description. The teammate "Write Review" lane needs a captured pull request with a `postTarget` and an authored opener, which only the publish-proof fixture's in-process daemon can supply. Capture those when a lane has a way to draft the body without a harness, and add them to the table.
 

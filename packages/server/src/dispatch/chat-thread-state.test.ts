@@ -198,12 +198,12 @@ describe("chat.t3Send reports a failed ask instead of rejecting (#888)", () => {
     // The failure Rai's daemon.log actually carried: the thread binds, then the sidecar
     // cannot run anything. Binding successfully is not the same as the question going out.
     const f = fixture(mints, async () => {
-      throw new Error("T3 sidecar unavailable: spawn EBADF");
+      throw new Error("chat sidecar unavailable: spawn EBADF");
     });
     const out = await f.chat$["chat.t3Send"]({ reviewId: "rev-1", text: "Explain this passage." });
     expect(out).toEqual({
       status: "unavailable",
-      reason: "T3 sidecar unavailable: spawn EBADF",
+      reason: "chat sidecar unavailable: spawn EBADF",
     });
   });
 

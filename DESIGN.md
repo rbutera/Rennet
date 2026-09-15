@@ -70,7 +70,7 @@ components:
 
 Rennet turns a dense code change into a smaller set of readable objects without hiding the source. The interface uses warm opaque grounds, small changes in surface lightness, one gold accent, and serif type for annotations and quoted excerpts.
 
-Desktop, browser, mobile, marketing, and documentation use the same palette and type families. Each application can choose its own density and layout.
+This file governs the product UI and documentation. The marketing site has a separate visual authority in [`apps/marketing/DESIGN.md`](apps/marketing/DESIGN.md): its constellation scenes, glass panels, palette, and motion are scoped to that site. Product UI rules below remain unchanged.
 
 ## Material
 
@@ -180,7 +180,7 @@ The desktop shell is a collapsible left sidebar (projects grouped by machine, se
 
 **The first-run welcome carries the same live mark, at the same proportion.** Its opening hero is the sphere beside the wordmark, the wordmark's height half the mark's — so their widths sit at 1 : 2.14 on the authored 480.168:112 window — in a 320–500px container that puts the sphere between about 93 and 145px across the viewport range. The sphere **works while the logo assembles** and settles to resting the moment the wordmark finishes wiping in; under reduced motion, whose opening is a 0.18s cross-fade with no assembly to report, it rests throughout. The wizard's 56px step header repeats the lockup at a 32px sphere beside a 16px wordmark, and the Ready badge is the sphere alone at 72px with the completion tick pinned to its corner — the one screen carrying two spheres, because the badge is that stage's subject and the header is chrome. Nothing in the wizard draws the mark as static artwork; the static drawing is the fallback inside the sphere, for reduced motion and for a machine with no WebGL.
 
-The marketing shell is at most 1440px wide with 40px side gutters. Section spacing ranges from 88px to 168px. Responsive layouts preserve the document order when columns collapse.
+Marketing layout and responsive rules live in [`apps/marketing/DESIGN.md`](apps/marketing/DESIGN.md).
 
 ### Change decomposition
 
@@ -202,7 +202,7 @@ Motion must explain a state change. Start animated content from a visible state,
 
 ## Shape
 
-Marketing controls use 10px corners. Marketing proof surfaces use 10px to 14px corners. Desktop uses this scale:
+Desktop uses this scale:
 
 - 4px for inline code chips and small tokens
 - 6px for chips and segmented controls
@@ -218,7 +218,7 @@ Use one-pixel, low-contrast borders for structure.
 
 ### Buttons
 
-Primary actions use a gold fill with near-black text. Secondary actions use a quiet outline or a text link. Marketing primary buttons have a minimum height of 56px, a 10px radius, and 24px horizontal padding. Desktop controls target a 32px visual height. Touch controls provide a target of at least 44 by 44 pixels.
+Primary actions use a gold fill with near-black text. Secondary actions use a quiet outline or a text link. Desktop controls target a 32px visual height. Touch controls provide a target of at least 44 by 44 pixels.
 
 All interactive elements use a three-pixel gold focus ring. Only an element that already floats may lift on hover.
 

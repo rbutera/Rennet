@@ -397,8 +397,8 @@ export function councilSeatTurn(
       return {
         failure:
           deps.t3Unavailable === undefined
-            ? `${jobId} is a board job and runs only on a T3 sidecar seat; this caller composed no sidecar seam`
-            : `T3 sidecar unavailable: ${describeSpawnFailure(deps.t3Unavailable)}`,
+            ? `${jobId} is a board job and runs only on a chat sidecar seat; this caller composed no sidecar seam`
+            : `chat sidecar unavailable: ${describeSpawnFailure(deps.t3Unavailable)}`,
       };
     }
     const provider = resolution.harness === "codex" ? "codex" : "claudeAgent";

@@ -1,4 +1,4 @@
-import { cn } from "@rennet/ui";
+import { cn, Skeleton } from "@rennet/ui";
 import { Suspense } from "react";
 import { useT3ChatSlot } from "../chat/t3-chat-slot";
 import { useCommand } from "../data/query";
@@ -27,6 +27,25 @@ import { LENS_LABEL } from "./lens-seats";
 // letters pair an element with the receipt that made it), and a push-down puts them one
 // scroll apart.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The bring-up wait for the read-only transcript: a skeleton, not a sentence, so the wait
+ * reads as a wait (Rai, 2026-09-14). The sr-only label keeps the state honest for a reader.
+ */
+function TranscriptSkeleton({ label }: { readonly label: string }) {
+  return (
+    <div
+      data-slot="seat-transcript-starting"
+      role="status"
+      aria-label={label}
+      className="flex flex-col gap-2.5 p-3"
+    >
+      <Skeleton className="h-3 w-1/2" />
+      <Skeleton className="h-3 w-3/4" />
+      <Skeleton className="h-3 w-2/3" />
+    </div>
+  );
+}
 
 export function SeatTranscriptDrawer({ reviewId }: { readonly reviewId: string }) {
   const open = useRennetStore((s) => s.ui.seatTranscript);
@@ -83,20 +102,12 @@ export function SeatTranscriptDrawer({ reviewId }: { readonly reviewId: string }
       </header>
       {error ? (
         <p data-slot="seat-transcript-error" className="p-3 text-ink-soft text-xs">
-          T3 Code sidecar unavailable: {error instanceof Error ? error.message : String(error)}
+          Chat sidecar unavailable: {error instanceof Error ? error.message : String(error)}
         </p>
       ) : pending || !data ? (
-        <p data-slot="seat-transcript-starting" className="p-3 text-ink-soft text-xs">
-          Starting the T3 Code sidecar…
-        </p>
+        <TranscriptSkeleton label="Starting the chat sidecar" />
       ) : slot ? (
-        <Suspense
-          fallback={
-            <p data-slot="seat-transcript-starting" className="p-3 text-ink-soft text-xs">
-              Loading the thread view…
-            </p>
-          }
-        >
+        <Suspense fallback={<TranscriptSkeleton label="Loading the thread view" />}>
           <slot.thread session={data} thread={open.thread} readOnly onOpenFile={openFileInDiff} />
         </Suspense>
       ) : (
