@@ -236,9 +236,7 @@ function registerAppProtocol(): void {
 }
 
 async function createWindow(): Promise<void> {
-  const { width, height } = screen.getDisplayNearestPoint(
-    screen.getCursorScreenPoint(),
-  ).workAreaSize;
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
   const window = new BrowserWindow({
     width: Math.min(1520, width),
     height: Math.min(1000, height),
