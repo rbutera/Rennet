@@ -86,6 +86,7 @@ vi.mock("electron", () => {
       dock: { show: () => undefined, hide: () => undefined },
     },
     BrowserWindow: FakeBrowserWindow,
+    screen: { getPrimaryDisplay: () => ({ workAreaSize: { width: 1280, height: 720 } }) },
     clipboard: { writeText: () => undefined },
     dialog: {
       showErrorBox: (title: string, content: string) => {
@@ -240,6 +241,8 @@ afterEach(() => {
 describe("desktop boot order (perf audit §2/§6 H1)", () => {
   it("creates and loads the window while the daemon ensure is still pending", async () => {
     await boot();
+
+    expect(harness.windowOptions[0]).toMatchObject({ width: 1280, height: 720 });
 
     // The assertion is the SEQUENCE. The ensure has not resolved at this point in the file —
     // nothing has resolved it — so a window in `order` here can only mean boot did not wait.
