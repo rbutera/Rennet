@@ -11,6 +11,7 @@ import type {
   WorkspaceScope,
 } from "@rennet/protocol";
 import { execaGit, type GitExec } from "./git-range-diff";
+import { resolvePrimaryBase } from "./primary-base";
 
 /**
  * The deterministic, model-free structural source for a ProjectSnapshot (#14).
@@ -56,6 +57,46 @@ export interface ResolvedBase {
   readonly baseRefResolution: BaseRefResolution;
 }
 
+/** A tier's answer: the ref name to record and the commit it resolved to. */
+interface BaseRefHit {
+  readonly ref: string;
+  readonly oid: string;
+}
+
+/**
+ * Resolve a branch NAME through the primary-base resolver (repo-map-primary-base,
+ * D1), or `null` when the value names no branch in this clone.
+ *
+ * A clone spells the primary branch more than once and the spellings drift apart;
+ * git's own refname disambiguation reads `refs/heads/<name>` before any
+ * `refs/remotes/<remote>/<name>`, so a bare `rev-parse main` pins the map at whatever the
+ * LOCAL branch happened to be, while every capture measures against the newest
+ * spelling (`fresh-base-patchset`). That disagreement is the ping-pong this change
+ * removes: the watcher kept the base map at local `main`, the capture-time pin
+ * wanted `origin/main`, and each rebuilt what the other had just undone. Going
+ * through the resolver here makes the initial build, the proactive pass and the pin
+ * land on one OID.
+ *
+ * `null` is the OID case — the pin's fallback and the generator's
+ * `explicitBaseRef: defaultBase.baseOid` both pass a commit id — and the caller
+ * resolves it verbatim, exactly as before.
+ */
+async function resolveNameThroughPrimaryBase(
+  git: GitExec,
+  topLevel: string,
+  primaryBranch?: string,
+): Promise<BaseRefHit | null> {
+  const resolved = await resolvePrimaryBase(
+    git,
+    topLevel,
+    primaryBranch === undefined ? {} : { primaryBranch },
+  );
+  // `baseTipOid` is present exactly when `baseRef` is, but the type states them
+  // separately, so read both rather than assert one from the other.
+  if (resolved.baseRef === null || resolved.baseTipOid === undefined) return null;
+  return { ref: resolved.baseRef, oid: resolved.baseTipOid };
+}
+
 /**
  * Resolve the pinned default-branch ref + commit OID. Resolution order matches
  * the contract (§2.3): forge metadata → symbolic HEAD → configured upstream →
@@ -64,6 +105,15 @@ export interface ResolvedBase {
  * git-local tiers plus an explicit override. It FAILS CLOSED: if none resolve we
  * throw rather than guess a default branch, because pinning to the wrong OID
  * would silently poison every downstream request.
+ *
+ * The two tiers that carry a branch NAME resolve through `resolvePrimaryBase`
+ * (repo-map-primary-base, D1): the newest spelling of the name wins and is what
+ * `baseRef` reports, so the map's baseline is the same commit a patchset is
+ * captured against. The tier ORDER, the `baseRefResolution` labels, the `repoKey`
+ * and the fail-closed throw are unchanged — `explicit-setting` still means the
+ * caller named the branch, `symbolic-head` still means `origin/HEAD` did. What each
+ * tier ANSWERS is what moved: the winning spelling, reported in `baseRef`. Read
+ * verbs only (D3): nothing here fetches or writes a ref.
  */
 export async function resolveBaseRef(
   root: string,
@@ -81,41 +131,86 @@ export async function resolveBaseRef(
   // node I/O half of the escaped-path scheme; `escapePath` (core) is the pure half.
   const repoKey = escapePath(realpathSync(topLevel));
 
-  const attempts: { ref: string | null; resolution: BaseRefResolution }[] = [
-    // explicit setting is the deliberate human override — highest precedence.
-    { ref: options.explicitBaseRef ?? null, resolution: "explicit-setting" },
-    // the remote's own declared default branch.
+  // Each tier is a THUNK rather than a pre-awaited value: a tier's git reads only
+  // run when the tiers above it came up empty, so an explicit setting still costs
+  // one resolution and not three.
+  const attempts: { resolve: () => Promise<BaseRefHit | null>; resolution: BaseRefResolution }[] = [
     {
-      ref: await tryGit(git, topLevel, [
-        "symbolic-ref",
-        "--quiet",
-        "--short",
-        "refs/remotes/origin/HEAD",
-      ]),
+      // explicit setting is the deliberate human override — highest precedence.
+      resolve: async () => {
+        const explicit = options.explicitBaseRef;
+        if (!explicit) return null;
+        const named = await resolveNameThroughPrimaryBase(git, topLevel, explicit);
+        if (named) return named;
+        // Not a branch name in this clone — an OID, or `HEAD` — so take it verbatim.
+        const oid = await tryGit(git, topLevel, [
+          "rev-parse",
+          "--verify",
+          "--quiet",
+          `${explicit}^{commit}`,
+        ]);
+        return oid ? { ref: explicit, oid } : null;
+      },
+      resolution: "explicit-setting",
+    },
+    {
+      // the remote's own declared default branch. With no name of our own the
+      // resolver reads `origin/HEAD` itself, falls through a DANGLING target to
+      // `main`/`master`, and picks the newest spelling of whichever it found.
+      resolve: async () => {
+        // GATED on `origin/HEAD` existing, which the resolver's caller-less probe does
+        // not require: without this the tier would answer `main`/`master` in a clone
+        // that has no `origin/HEAD` at all, and stamp the manifest
+        // `baseRefResolution: "symbolic-head"` — provenance claiming a symbolic head
+        // was read when none was. It would also widen the function, resolving where a
+        // remoteless clone fails closed today. Existence only: a dangling TARGET still
+        // exits 0 here, which is the fallthrough D1 wants and the resolver handles —
+        // so the label means "the tier that consulted `origin/HEAD`", and when the
+        // target dangles the ref it reports came from the `main`/`master` probe.
+        const symbolicHead = await tryGit(git, topLevel, [
+          "symbolic-ref",
+          "--quiet",
+          "refs/remotes/origin/HEAD",
+        ]);
+        if (!symbolicHead) return null;
+        return resolveNameThroughPrimaryBase(git, topLevel);
+      },
       resolution: "symbolic-head",
     },
-    // the configured upstream of the current branch.
     {
-      ref: await tryGit(git, topLevel, [
-        "rev-parse",
-        "--abbrev-ref",
-        "--symbolic-full-name",
-        "@{upstream}",
-      ]),
+      // the configured upstream of the current branch. Untouched by
+      // repo-map-primary-base: `@{upstream}` is already one specific
+      // remote-tracking ref, not a name with several spellings.
+      resolve: async () => {
+        const ref = await tryGit(git, topLevel, [
+          "rev-parse",
+          "--abbrev-ref",
+          "--symbolic-full-name",
+          "@{upstream}",
+        ]);
+        if (!ref) return null;
+        const oid = await tryGit(git, topLevel, [
+          "rev-parse",
+          "--verify",
+          "--quiet",
+          `${ref}^{commit}`,
+        ]);
+        return oid ? { ref, oid } : null;
+      },
       resolution: "configured-upstream",
     },
   ];
 
-  for (const { ref, resolution } of attempts) {
-    if (!ref) continue;
-    const oid = await tryGit(git, topLevel, [
-      "rev-parse",
-      "--verify",
-      "--quiet",
-      `${ref}^{commit}`,
-    ]);
-    if (oid)
-      return { repoKey, root: topLevel, baseRef: ref, baseOid: oid, baseRefResolution: resolution };
+  for (const { resolve, resolution } of attempts) {
+    const hit = await resolve();
+    if (hit)
+      return {
+        repoKey,
+        root: topLevel,
+        baseRef: hit.ref,
+        baseOid: hit.oid,
+        baseRefResolution: resolution,
+      };
   }
   throw new Error(
     "ProjectSnapshot: could not resolve the default-branch ref (no origin/HEAD, no upstream, no explicit setting). Pass an explicit base ref.",
