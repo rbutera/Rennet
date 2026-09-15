@@ -86,21 +86,38 @@ components:
 
 **Creative direction: "The Affineur's Bench"**
 
-Rennet turns a dense code change into a smaller set of readable objects without hiding the source. The interface uses warm opaque grounds, small changes in surface lightness, one gold accent, and serif type for annotations and quoted excerpts.
+Rennet turns a dense code change into a smaller set of readable objects without hiding the source. The interface uses a soft theme-derived gradient, translucent navigation and panes, and readable surfaces drawn from the selected palette.
 
-This file governs the product UI and documentation. The marketing site has a separate visual authority in [`apps/marketing/DESIGN.md`](apps/marketing/DESIGN.md): its constellation scenes, glass panels, palette, and motion are scoped to that site. Product UI rules below remain unchanged.
+This file governs the product UI and documentation. The marketing site has a separate visual authority in [`apps/marketing/DESIGN.md`](apps/marketing/DESIGN.md): its constellation scenes, glass panels, palette, and motion govern that site. The first-run welcome adapts its particle scenes, documented in [`packages/app-ui/DESIGN.md`](packages/app-ui/DESIGN.md#surface-rules-the-first-run-welcome). The main app shares the theme-derived gradient and glass material described below; particles remain confined to welcome.
 
 ## Material
 
-Canvas, title bar, and toolbar share one background. Panels use the `canvas`, `surface`, and `raised` steps with low-contrast hairlines. Menus, dialogs, and popovers are the only elements that use the overlay shadow.
+The app backdrop combines soft accent and model-color radial gradients over
+`--rn-canvas`. It follows the selected theme and light/dark mode. Transparent
+workspace wrappers let this common backdrop continue behind the working panes.
 
-All neutral colors have a warm cast. Do not use glass, vibrancy, translucent chrome, or decorative shadows.
+The expanded sidebar, chat dock, non-floating session bar, and settings header
+and navigation use 76% theme surface with an 18px blur and a faint ink hairline.
+Non-bare settings sections, the New Chat branch list, and board sections share
+that fill through `data-material="glass"`, with 18px blur and a thin inset highlight.
+Dialogs, sheets, popovers, and menus use 88% overlay with 24px blur and a soft
+shadow. Welcome panels use their own 78% surface treatment. These are CSS glass
+surfaces, not operating-system vibrancy. Diff and code retain dedicated reading
+palettes rather than inheriting the decorative backdrop.
 
-One narrow exception, approved by Rai on 2026-08-28 while watching it render: chrome that floats over content in the full-bleed state may use a translucent, blurred ground — the only sanctioned use; opaque grounds remain the rule everywhere else (Rai, 2026-08-28). This covers the desktop shell's corner-slot pill and the floating chip layer the session bar dissolves into when both the sidebar and the chat are closed, and nothing else. The prohibition above stands unchanged for every other surface.
+Reduced-transparency preference makes the shared navigation fill and overlay
+fills opaque. The particle backdrop belongs to welcome only; extending glass
+does not add decorative particles to review workspaces.
 
 ## Color
 
 Light and dark schemes are complete designs. Use `data-scheme="light|dark"` in Rennet applications and `data-theme="light|dark"` in Starlight. Follow the operating-system preference until the user stores an override.
+
+The app’s live and static color marks preserve their sphere geometry while
+using `--app-art-top`, `--app-art-mid`, and `--app-art-bottom`. The default theme
+maps these to accent fill, warning, and danger; named themes use accent fill,
+model, and syntax-keyword colors. Standalone assets retain their original color
+fallbacks. Monochrome marks remain single-ink artwork.
 
 ### Dark scheme
 
@@ -160,7 +177,7 @@ Beyond it, a viewer may select a bundled **theme pack** (GitHub, One Dark Pro, D
 
 The wordmark is vector artwork. Do not recreate it with a font.
 
-**The mark is a liquid sphere.** A warm gradient body — `#f3b437` at the top, `#e8641f` through the middle, `#d42c3b` at the bottom, resting on `#ecdfcf` ground — that ripples while Rennet is working and settles when it is done. Colour surfaces get the colour sphere: app icons, favicons, both site headers, every lockup. Surfaces that are monochrome by contract — a macOS menu-bar template image, a stencil, one-ink print — get the ridged mark instead: the same sphere as a single-ink silhouette with its ripple creases cut through it, three deep ridges below 48px and six from 48px up. Never filter or recolour the colour sphere to fake the monochrome one; the monochrome mark is drawn, not derived. The assets and the rebuild order live in `brand/README.md`.
+**The mark is a liquid sphere.** A gradient body — theme-derived in the app, with standalone defaults of `#f3b437` at the top, `#e8641f` through the middle, and `#d42c3b` at the bottom on `#ecdfcf` ground — that ripples while Rennet is working and settles when it is done. Colour surfaces get the colour sphere: app icons, favicons, both site headers, every lockup. Surfaces that are monochrome by contract — a macOS menu-bar template image, a stencil, one-ink print — get the ridged mark instead: the same sphere as a single-ink silhouette with its ripple creases cut through it, three deep ridges below 48px and six from 48px up. Never filter or recolour the colour sphere to fake the monochrome one; the monochrome mark is drawn, not derived. The assets and the rebuild order live in `brand/README.md`.
 
 Display headings can reach `6rem` with a line height near `1`. Keep letter spacing at `-0.04em` or looser. Keep long prose lines between 45 and 75 characters where the layout permits.
 
@@ -196,7 +213,7 @@ The desktop shell is a collapsible left sidebar (projects grouped by machine, se
 
 **The leftmost pane owns the traffic lights.** On macOS the window hides its native titlebar, so one corner slot — the light inset and the sidebar toggle — mounts in exactly one place at a time: the sidebar header while the sidebar is expanded, the chat header while the sidebar is collapsed and the chat is open, and a floating pill over the main view when both are closed. **The mark is the sphere, and it is the app's working state.** In the expanded sidebar the identity is not on that strip: a 40px row carrying the 81px light reserve leaves the mark nowhere to grow, so the lockup has **its own 56px row directly beneath**, its left edge on the 16px content padding the actions' icon column sits on — below the titlebar, so it does not drag the window. That row is the live sphere at 44px beside the wordmark at 22px — the "Own row" placement from `spikes/sidebar-lockup-prototypes`, carrying the stacked header's proportion: **the wordmark's height is half the mark's**, not the artwork's 126:112. The gap is authored — 44 × 24/126 ≈ 8px — and both halves sit under one `role="img"` called Rennet. Collapse the sidebar and the lockup row goes with it, so the corner slot carries the sphere alone as a 32px orb, in the chat header or in a floating pill grown to 36px to hold it. Exactly one sphere is on screen in every state, and it works while any review is being prepared or any round is regenerating, resting otherwise. Nothing else in the frame animates that fact: a review being written is reported by the mark, not by a banner over the boards, and the only chrome a running generation adds is a floating Cancel chip under the titlebar, on the hand-off action's right edge. With the sidebar and the chat both closed the main surface runs full-bleed and the session top bar dissolves into a floating chip layer. A session surface carries the chip clearance inside its scrolling region, so its content clears the chips at rest and slides under them on scroll; a takeover surface has its own header and takes the clearance as plain padding instead. One chat open/close control lives on the main view's top-left, in both directions. rbutera/Rennet#558 records the ruling.
 
-**The first-run welcome carries the same live mark, at the same proportion.** Its opening hero is the sphere beside the wordmark, the wordmark's height half the mark's — so their widths sit at 1 : 2.14 on the authored 480.168:112 window — in a 320–500px container that puts the sphere between about 93 and 145px across the viewport range. The sphere **works while the logo assembles** and settles to resting the moment the wordmark finishes wiping in; under reduced motion, whose opening is a 0.18s cross-fade with no assembly to report, it rests throughout. The wizard's 56px step header repeats the lockup at a 32px sphere beside a 16px wordmark, and the Ready badge is the sphere alone at 72px with the completion tick pinned to its corner — the one screen carrying two spheres, because the badge is that stage's subject and the header is chrome. Nothing in the wizard draws the mark as static artwork; the static drawing is the fallback inside the sphere, for reduced motion and for a machine with no WebGL.
+**The first-run welcome carries the same live mark, at the same proportion.** Its header pairs a resting 32px sphere with a 16px wordmark. The opening surrounds “You stopped writing the code. You still have to answer for it.” and a Start button with floating code glyphs. Start coalesces them into the sphere and reveals Appearance beside it; the five steps use sphere, spanner, gavel, network, and sphere geometry. One full-screen canvas persists behind every step. Access replaces project selection with optional macOS Full Disk Access guidance; Ready opens a generic new chat. Ready retains the 72px sphere with its completion tick. The decorative scene animates automatically, becomes static under reduced motion, and falls back to a static wordmark without WebGL. Welcome layout, panel material, and its scoped display/radius adaptations live in [`packages/app-ui/DESIGN.md`](packages/app-ui/DESIGN.md#surface-rules-the-first-run-welcome).
 
 Marketing layout and responsive rules live in [`apps/marketing/DESIGN.md`](apps/marketing/DESIGN.md).
 
@@ -214,7 +231,7 @@ Keep the motif quiet. Warm gold, cream review previews, one useful empty-state i
 
 ## Depth and motion
 
-Normal surfaces are flat and opaque. Menus, dialogs, and the command palette may use `--rn-shadow-overlay`.
+Working navigation and panes use the theme-derived glass material above. Content and code retain their dedicated reading surfaces; overlays add a soft shadow.
 
 Motion must explain a state change. Start animated content from a visible state, use an exponential ease-out when practical, and honor `prefers-reduced-motion`.
 
@@ -242,7 +259,7 @@ All interactive elements use a three-pixel gold focus ring. Only an element that
 
 ### Review surfaces
 
-Board sections, findings, conversations, provider results, and product frames use the 12px surface radius on opaque `surface` or `raised` colors. Use a border or a shadow, not both. Code always sits on an opaque surface.
+Board sections use the shared glass material with the 12px surface radius. Findings, provider results, and other inner reading surfaces retain their component palette; glass is applied at the explicit material boundary. Code keeps its opaque reading surface.
 
 The `sheet` palette — cream in light mode, espresso in dark mode — is reserved for a
 full post preview and no surface uses it yet. Today's outbound preview is the handoff
@@ -297,12 +314,12 @@ The alias map lives in [`packages/theme/src/theme.css`](packages/theme/src/theme
 
 ## Required design behavior
 
-- Keep one ground color from title bar to canvas.
+- Carry the shared theme-derived backdrop behind navigation and workspace panes.
 - Reserve gold for selection, decisions, focus, and primary actions.
 - Use sans serif for every chrome surface — headings, annotations, quoted prose, the review body, conversations, controls, and data — and monospace only for code, diffs, and exact technical values (amended 2026-09-04 — see Typography).
 - Test light and dark schemes.
 - Preserve the full review and all important claims at every breakpoint.
-- Do not use decorative gradients, neon, glass, or monospace as generic developer-tool styling. Functional progress and state graphics may use a gradient when the gradient encodes the state. Chrome floating over content in the full-bleed state may use a translucent, blurred ground — the one sanctioned exception (see Material, Rai 2026-08-28); opaque grounds remain the rule everywhere else.
+- Derive backdrop and glass colors from the selected palette and mode; keep particles confined to welcome and preserve code contrast.
 - Do not turn a page into a grid of equal feature cards.
 - No self-explaining chrome (Rai, 2026-09-06). A word on a surface names a fact about the object — a branch is dirty, a PR is merged, CI is failing — never Rennet's own machinery or a state the user cannot act on. The New Chat list printed "captured" on every local row: a pipeline stage that never ran, read as status. When a cell has nothing true to say, it is empty.
 - Do not average independent model outputs into one consensus.

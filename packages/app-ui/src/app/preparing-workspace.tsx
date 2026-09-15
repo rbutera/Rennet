@@ -27,7 +27,7 @@ export function PreparingWorkspace({ slug }: { readonly slug: string }) {
   const query = readSessionQuery(new URLSearchParams(useSearch()));
   const lens: LensKind = query.lens;
   return (
-    <div className="relative flex h-full min-h-0 flex-col bg-canvas">
+    <div className="rennet-workspace relative flex h-full min-h-0 flex-col">
       <WorkspaceHeader slug={slug} />
       <div data-region="board" className="flex min-h-0 flex-1 @container">
         <div className="chrome-scroll-clearance min-h-0 min-w-0 flex-1 overflow-y-auto">

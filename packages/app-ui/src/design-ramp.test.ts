@@ -35,23 +35,8 @@ const BANS: ReadonlyArray<readonly [RegExp, string]> = [
   [/fontSize\s*:/, "inline fontSize (use the ramp utilities)"],
 ];
 
-// The two decorative micro-type declarations that sit BELOW the ramp's 10px
-// floor, named by selector and pinned to their exact value. Both live in the
-// first-run welcome's appearance stage and render illegible faux-code as
-// texture, not as text:
-//
-//   .rn-code-fragment       9px  the code-rain fragments drifting behind the
-//                                theme picker (`.rn-code-fragment`, opacity .58,
-//                                under the field's own .72 on `.rn-code-field`)
-//   .rn-theme-preview code  8px  the faux-diff miniature inside a ~100px-wide
-//                                theme preview card
-//
-// Neither is read at any size, so widening the ramp to 8/9px would sanction
-// unreadable type everywhere to license two ornaments. Nothing else may use
-// these values: the map is keyed on the selector AND the declaration value, so
-// a third site, or a drift in either of these two, reddens the test.
+// The miniature faux diff is texture inside a theme swatch, not reading text.
 const DECORATIVE_MICRO_TYPE: ReadonlyMap<string, string> = new Map([
-  [".rn-code-fragment", "9px / 1.62 var(--font-mono)"],
   [".rn-theme-preview code", "8px / 1.8 var(--font-mono)"],
 ]);
 

@@ -1,3 +1,4 @@
+import { createModels, sampleCodeGlyphs } from "@rennet/theme/constellation-models";
 import {
   AdditiveBlending,
   BufferAttribute,
@@ -17,7 +18,6 @@ import {
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
-import { createModels } from "./models";
 
 const vertexShader = `
 attribute vec3 destination;
@@ -59,47 +59,8 @@ void main() {
 }`;
 
 function codeCloud(count: number): Float32Array | null {
-  const canvas = document.createElement("canvas");
-  canvas.width = 1100;
-  canvas.height = 700;
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  if (!context) return null;
-  context.font = "22px monospace";
-  context.fillStyle = "white";
-  const lines = [
-    "export async function review(change) {",
-    "  const patchset = await capture(change);",
-    "  const files = patchset.changedFiles;",
-    "  return files.map(file => ({",
-    "    path: file.path,",
-    "    before: file.base,",
-    "    after: file.head,",
-    "    decisions: inspect(file.diff)",
-    "  }));",
-    "}",
-    "",
-    "const evidence = await read(repository);",
-    "const questions = changes.flatMap(diff =>",
-    "  findDecisions(diff, evidence)",
-    ");",
-    "",
-    "+ await test(fallback, policy);",
-    "- return store.get(key);",
-    "+ return store.get(key).catch(recover);",
-    "",
-    "// every decision stays connected to code",
-  ];
-  lines.forEach((line, row) => {
-    context.fillText(line, 16, 30 + row * 30);
-  });
-  const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-  const samples: Vector2[] = [];
-  for (let y = 0; y < canvas.height; y += 2) {
-    for (let x = 0; x < canvas.width; x += 2) {
-      if (pixels[(y * canvas.width + x) * 4 + 3] > 110) samples.push(new Vector2(x, y));
-    }
-  }
-  if (!samples.length) return null;
+  const samples = sampleCodeGlyphs();
+  if (!samples) return null;
   const compact = matchMedia("(max-width: 700px)").matches;
   const output = new Float32Array(count * 3);
   const point = new Vector3();
@@ -112,9 +73,10 @@ function codeCloud(count: number): Float32Array | null {
     const plane = i % 3;
     const sample = samples[Math.floor(i * 0.61803398875 * samples.length) % samples.length];
     point.set((sample.x / 1100 - 0.5) * 10, (0.5 - sample.y / 700) * 6.5, 0);
-    point.applyEuler(rotations[plane]);
+    point.applyEuler(rotations[compact ? 0 : plane]);
     if (compact) {
-      point.multiplyScalar(0.7);
+      point.multiplyScalar(1.1);
+      point.x += 1.2;
       point.y += 6.4;
       point.z -= 2;
     } else {

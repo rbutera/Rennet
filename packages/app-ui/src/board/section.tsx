@@ -205,12 +205,13 @@ export const Section = memo(function Section({
       ref={root}
       id={entry.ref}
       data-kind="board-section"
+      data-material="glass"
       data-section-id={entry.ref}
       {...(entry.delta ? { "data-delta": entry.delta } : {})}
       {...(specDelta ? { "data-spec-delta": specDelta } : {})}
       {...viewedOnInteraction}
       data-open={open}
-      className="flex scroll-mt-6 flex-col gap-3"
+      className="flex scroll-mt-6 flex-col gap-3 rounded-lg border border-line p-4"
     >
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="flex min-w-0 flex-1 items-center gap-2">

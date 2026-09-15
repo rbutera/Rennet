@@ -15,6 +15,7 @@ import {
   nativeTheme,
   net,
   protocol,
+  screen,
   session,
   shell,
 } from "electron";
@@ -235,9 +236,10 @@ function registerAppProtocol(): void {
 }
 
 async function createWindow(): Promise<void> {
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
   const window = new BrowserWindow({
-    width: 1420,
-    height: 900,
+    width: Math.min(1520, width),
+    height: Math.min(1000, height),
     minWidth: 980,
     minHeight: 640,
     // One seamless OPAQUE window (2026-08-19 overhaul; root DESIGN.md §Material).

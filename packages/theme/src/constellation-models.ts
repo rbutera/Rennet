@@ -24,7 +24,8 @@ function frame(points: Point[], center: Point, width: number, height: number) {
     [x - width / 2, y + height / 2, z],
   ];
   corners.forEach((corner, i) => {
-    line(points, corner, corners[(i + 1) % 4]);
+    const next = corners[(i + 1) % 4];
+    if (next) line(points, corner, next);
   });
 }
 
@@ -198,10 +199,11 @@ function networkScene() {
       [center[0], center[1] + 0.13, center[2]],
       0.24,
     );
-    if (index > 0) line(points, nodes[Math.floor((index - 1) / 2)], center, 100);
+    const parent = nodes[Math.floor((index - 1) / 2)];
+    if (index > 0 && parent) line(points, parent, center, 100);
   }
-  line(points, [-3.2, 2.3, 0.5], nodes[1], 100);
-  line(points, [3.3, 1.2, -0.8], nodes[2], 100);
+  line(points, [-3.2, 2.3, 0.5], [-2.7, 3.7, -1], 100);
+  line(points, [3.3, 1.2, -0.8], [2.8, 3.5, -1], 100);
   return points;
 }
 
@@ -231,20 +233,95 @@ function resample(points: Point[], count: number) {
   const output = new Float32Array(count * 3);
   for (let i = 0; i < count; i++) {
     const point = points[Math.floor((i * points.length) / count)];
-    output.set(point, i * 3);
+    if (point) output.set(point, i * 3);
   }
   return output;
 }
 
-export function createModels(count: number): Float32Array[] {
+export function createModels(
+  count: number,
+): [Float32Array, Float32Array, Float32Array, Float32Array, Float32Array, Float32Array] {
   const workstation: Point[] = [];
   monitor(workstation, [0, 0.6, 0]);
   return [
-    codeScene(),
-    workstation,
-    telescopeScene(),
-    councilScene(),
-    networkScene(),
-    sphereScene(count),
-  ].map((points) => resample(points, count));
+    resample(codeScene(), count),
+    resample(workstation, count),
+    resample(telescopeScene(), count),
+    resample(councilScene(), count),
+    resample(networkScene(), count),
+    resample(sphereScene(count), count),
+  ];
+}
+
+export function sampleCodeGlyphs() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1100;
+  canvas.height = 700;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return null;
+  context.font = "22px monospace";
+  context.fillStyle = "white";
+  const lines = [
+    "export async function review(change) {",
+    "  const patchset = await capture(change);",
+    "  const files = patchset.changedFiles;",
+    "  return files.map(file => ({",
+    "    path: file.path,",
+    "    before: file.base,",
+    "    after: file.head,",
+    "    decisions: inspect(file.diff)",
+    "  }));",
+    "}",
+    "",
+    "const evidence = await read(repository);",
+    "const questions = changes.flatMap(diff =>",
+    "  findDecisions(diff, evidence)",
+    ");",
+    "",
+    "+ await test(fallback, policy);",
+    "- return store.get(key);",
+    "+ return store.get(key).catch(recover);",
+    "",
+    "// every decision stays connected to code",
+  ];
+  lines.forEach((line, row) => {
+    context.fillText(line, 16, 30 + row * 30);
+  });
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+  const samples: { x: number; y: number }[] = [];
+  for (let y = 0; y < canvas.height; y += 2) {
+    for (let x = 0; x < canvas.width; x += 2) {
+      if ((pixels[(y * canvas.width + x) * 4 + 3] ?? 0) > 110) samples.push({ x, y });
+    }
+  }
+  return samples.length ? samples : null;
+}
+
+export function createSpanner(count: number) {
+  const points: Point[] = [];
+  tube(points, [0, -3.5, 0], [0, 1.9, 0], 0.32, 0.4);
+  const jaw: Point[] = [
+    [-0.4, 1.6, 0],
+    [-1.1, 2.2, 0],
+    [-1.25, 3.1, 0],
+    [-0.7, 3.9, 0],
+    [-0.55, 2.8, 0],
+    [0.55, 2.8, 0],
+    [0.7, 3.9, 0],
+    [1.25, 3.1, 0],
+    [1.1, 2.2, 0],
+    [0.4, 1.6, 0],
+  ];
+  for (let z = -0.22; z <= 0.22; z += 0.055) {
+    jaw.forEach((point, i) => {
+      const next = jaw[(i + 1) % jaw.length];
+      if (next) line(points, [point[0], point[1], z], [next[0], next[1], z], 100);
+    });
+  }
+  for (const point of points) {
+    const [x, y] = point;
+    point[0] = x * 0.87 + y * 0.5;
+    point[1] = y * 0.87 - x * 0.5;
+  }
+  return resample(points, count);
 }

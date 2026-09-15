@@ -50,6 +50,7 @@ export function Section({
         ) : null}
       </div>
       <div
+        data-material={bare ? undefined : "glass"}
         className={cn(
           "flex flex-col",
           bare ? "gap-3 pt-1" : "divide-y divide-line rounded-md border border-line px-3",

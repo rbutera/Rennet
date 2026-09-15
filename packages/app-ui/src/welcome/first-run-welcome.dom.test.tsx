@@ -12,11 +12,6 @@ import { RennetRouterApp } from "../routes/app";
 import { memoryHistory } from "../routes/history";
 import { cleanup, fireEvent, mount, screen, waitFor, within } from "../test/dom";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
-import {
-  bindWelcomeIdleLoops,
-  welcomeFragmentIdleAnimation,
-  welcomeParticleIdleAnimation,
-} from "./first-run-welcome";
 
 // The `settings.reviewRoles` rows this stage reads its assignment off. It is a FIXTURE, and
 // it was the only place the `orchestrator` row existed: `REVIEW_ROLE_CATALOGUE` carried no
@@ -154,7 +149,7 @@ function welcomeBridge(
 }
 
 async function advanceToReviewSetup(): Promise<void> {
-  fireEvent.click(await screen.findByRole("button", { name: "Continue to Rennet" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Start" }));
   fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
   await screen.findByText("Your tools, already connected.");
   fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
@@ -165,9 +160,7 @@ async function advanceToReviewSetup(): Promise<void> {
 async function advanceToReady(): Promise<void> {
   await advanceToReviewSetup();
   fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
-  const add = await screen.findByRole("button", { name: "Add" });
-  await waitFor(() => expect((add as HTMLButtonElement).disabled).toBe(false));
-  fireEvent.click(add);
+  fireEvent.click(await screen.findByRole("button", { name: /^Continue$/ }));
   await screen.findByRole("button", { name: "Start a new chat" });
 }
 
@@ -212,186 +205,19 @@ afterEach(() => {
 });
 
 describe("FirstRunWelcome", () => {
-  it("starts with realistic flying code, no top bar, and stays independent of coach marks", async () => {
+  it("starts with code and reveals appearance alongside the welcome on Start", async () => {
     const { container } = mount(
       <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
     );
+    expect(screen.queryByText("Choose your appearance")).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+    expect(await screen.findByText("Choose your appearance")).toBeTruthy();
     expect(
-      await screen.findByText("You stopped writing the code. You still have to answer for it."),
+      screen.getByRole("heading", { name: "Welcome to your new Review Harness." }),
     ).toBeTruthy();
-    expect(container.querySelector("header")).toBeNull();
-    const fragments = [...container.querySelectorAll("[data-fragment]")];
-    expect(fragments).toHaveLength(10);
-    expect(new Set(fragments.map((fragment) => fragment.textContent?.length)).size).toBeGreaterThan(
-      5,
-    );
-    expect(screen.getByText("Appearance")).toBeTruthy();
-  });
-
-  it("removes the exact visibilitychange listeners it added, on unmount", async () => {
-    // The drift loops are `repeat: Infinity` and motion keeps its frame loop running in a
-    // hidden window, so the welcome parks them on `document.hidden`. Observable here: the
-    // listener exists while the screen is up, and every handler registered is later removed
-    // BY IDENTITY (a cleanup passing a fresh closure removes nothing and leaks the loop).
-    // Not observable here: that the handler actually pauses motion — see the report.
-    const added = vi.spyOn(document, "addEventListener");
-    const removed = vi.spyOn(document, "removeEventListener");
-    try {
-      const { unmount } = mount(
-        <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
-      );
-      await screen.findByText("You stopped writing the code. You still have to answer for it.");
-      const handlers = added.mock.calls
-        .filter(([type]) => type === "visibilitychange")
-        .map(([, handler]) => handler);
-      expect(handlers.length).toBeGreaterThan(0);
-      expect(removed.mock.calls.filter(([type]) => type === "visibilitychange")).toHaveLength(0);
-      unmount();
-      expect(
-        removed.mock.calls
-          .filter(([type]) => type === "visibilitychange")
-          .map(([, handler]) => handler),
-      ).toEqual(handlers);
-    } finally {
-      added.mockRestore();
-      removed.mockRestore();
-    }
-  });
-
-  it("replaces the opening visibility listener with one for the post-click reel", async () => {
-    const added = vi.spyOn(document, "addEventListener");
-    const removed = vi.spyOn(document, "removeEventListener");
-    try {
-      const { unmount } = mount(
-        <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
-      );
-      fireEvent.click(await screen.findByRole("button", { name: "Continue to Rennet" }));
-
-      await waitFor(() => {
-        const addedHandlers = added.mock.calls
-          .filter(([type]) => type === "visibilitychange")
-          .map(([, handler]) => handler);
-        const removedHandlers = removed.mock.calls
-          .filter(([type]) => type === "visibilitychange")
-          .map(([, handler]) => handler);
-        expect(addedHandlers.length).toBeGreaterThanOrEqual(2);
-        expect(removedHandlers).toContain(addedHandlers[0]);
-      });
-
-      const postClickHandler = added.mock.calls
-        .filter(([type]) => type === "visibilitychange")
-        .map(([, handler]) => handler)
-        .at(-1);
-      unmount();
-      expect(
-        removed.mock.calls
-          .filter(([type]) => type === "visibilitychange")
-          .map(([, handler]) => handler),
-      ).toContain(postClickHandler);
-    } finally {
-      added.mockRestore();
-      removed.mockRestore();
-    }
-  });
-
-  it("keeps every repeat-forever welcome animation transform-only", () => {
-    const fragments = Array.from({ length: 10 }, (_, index) =>
-      welcomeFragmentIdleAnimation(index, 1_200, 800),
-    );
-    const particles = Array.from({ length: 38 }, (_, index) => welcomeParticleIdleAnimation(index));
-
-    for (const animation of fragments) {
-      expect(Object.keys(animation.keyframes).sort()).toEqual(["rotate", "x", "y"]);
-      expect(animation.transition.repeat).toBe(Infinity);
-    }
-    for (const animation of particles) {
-      expect(Object.keys(animation.keyframes).sort()).toEqual(["x", "y"]);
-      expect(animation.transition.repeat).toBe(Infinity);
-    }
-  });
-
-  it("pauses, resumes, and stops every bound idle loop", () => {
-    let hidden = true;
-    let listener = (): void => undefined;
-    const added = vi.fn((_type: "visibilitychange", next: () => void) => {
-      listener = next;
-    });
-    const removed = vi.fn();
-    const loops = Array.from({ length: 48 }, () => ({
-      pause: vi.fn(),
-      play: vi.fn(),
-      stop: vi.fn(),
-    }));
-
-    const cleanup = bindWelcomeIdleLoops(loops, {
-      get hidden() {
-        return hidden;
-      },
-      addEventListener: added,
-      removeEventListener: removed,
-    });
-    expect(loops.every((loop) => loop.pause.mock.calls.length === 1)).toBe(true);
-    expect(loops.every((loop) => loop.play.mock.calls.length === 0)).toBe(true);
-
-    hidden = false;
-    listener();
-    expect(loops.every((loop) => loop.play.mock.calls.length === 1)).toBe(true);
-
-    cleanup();
-    expect(removed).toHaveBeenCalledWith("visibilitychange", listener);
-    expect(loops.every((loop) => loop.stop.mock.calls.length === 1)).toBe(true);
-  });
-
-  it("renders each code fragment as toned spans over its full-length source", async () => {
-    // What a DOM test CAN see: the token structure and which tone each token claims.
-    // What it CANNOT see: the colour those tones resolve to (happy-dom has no style
-    // engine, and the tones resolve through `--rn-syn-*` in index.css), nor the drift
-    // and gather that move these nodes. Asserted here: structure only.
-    const { container } = mount(
-      <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
-    );
-    await screen.findByText("You stopped writing the code. You still have to answer for it.");
-    const first = container.querySelector("[data-fragment]");
-    if (!first) throw new Error("no code fragment rendered");
-    // Six lines, not the four of the truncated string version — the fragments carry the
-    // prototype's whole function body, so the rain reads as real code.
-    expect(first.querySelectorAll(":scope > span")).toHaveLength(6);
-    expect(first.querySelector('[data-tone="keyword"]')?.textContent).toBe("export async function");
-    expect(first.querySelector('[data-tone="function"]')?.textContent).toBe(" listProjectFiles");
-    const tones = new Set(
-      [...container.querySelectorAll("[data-fragment] [data-tone]")].map(
-        (node) => node.getAttribute("data-tone") ?? "",
-      ),
-    );
-    // Every tone in the catalogue is actually used by some fragment; a palette entry
-    // nothing renders is a colour nobody sees.
-    expect([...tones].sort()).toEqual([
-      "add",
-      "comment",
-      "function",
-      "hunk",
-      "keyword",
-      "literal",
-      "remove",
-      "string",
-      "type",
-    ]);
-  });
-
-  it("carries the whole sentence per reel row, with the first row repeated for the wrap", async () => {
-    // The reel's MOTION (a `y` keyframe track held 1.55s per word) is invisible here —
-    // no layout, no animation frames. What is assertable is the thing the setInterval
-    // word-swap could not do: every row holds the complete sentence, so nothing reflows
-    // mid-swap, and row 0 is repeated last so the loop closes without a jump.
-    const { container } = mount(
-      <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
-    );
-    await screen.findByText("You stopped writing the code. You still have to answer for it.");
-    const rows = [...container.querySelectorAll("[data-sentence-reel] > strong")];
-    expect(rows).toHaveLength(21);
-    expect(rows[0]?.textContent).toBe("Rennet makes code review digestible");
-    expect(rows.at(-1)?.textContent).toBe(rows[0]?.textContent);
-    for (const row of rows) expect(row.textContent).toContain("Rennet makes code review ");
+    expect(screen.getByRole("button", { name: /^Continue$/ }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "Dark" })).toBeTruthy();
+    expect(container.querySelector("[data-slot=corner-slot]")).toBeNull();
   });
 
   it("remounts the stage on every step so its entrance animation re-fires", async () => {
@@ -402,9 +228,9 @@ describe("FirstRunWelcome", () => {
       <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
     );
     await screen.findByText("You stopped writing the code. You still have to answer for it.");
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
     const first = container.querySelector("main");
     expect(first?.className).toContain("animate-welcome-step");
-    fireEvent.click(screen.getByRole("button", { name: "Continue to Rennet" }));
     fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
     await screen.findByText("Your tools, already connected.");
     const second = container.querySelector("main");
@@ -418,7 +244,7 @@ describe("FirstRunWelcome", () => {
     // `upcoming`. Position matters here — asserting the SET of states would pass on a
     // wizard that marked the wrong steps done.
     mount(<RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Continue to Rennet" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start" }));
     fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
     await screen.findByText("Your tools, already connected.");
     fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
@@ -442,7 +268,7 @@ describe("FirstRunWelcome", () => {
         history={memoryHistory("/new-chat")}
       />,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Continue to Rennet" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start" }));
     fireEvent.click(screen.getByRole("button", { name: "Dracula" }));
     await waitFor(() => expect(document.documentElement.dataset.rnTheme).toBe("dracula"));
     expect(setTheme).toHaveBeenCalledWith({ themePack: "dracula" });
@@ -450,7 +276,7 @@ describe("FirstRunWelcome", () => {
 
   it("shows an authenticated GitLab CLI from live host detection", async () => {
     mount(<RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Continue to Rennet" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start" }));
     fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
 
     const gitlab = await gitLabToolRow();
@@ -490,7 +316,7 @@ describe("FirstRunWelcome", () => {
         history={memoryHistory("/new-chat")}
       />,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Continue to Rennet" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start" }));
     fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
 
     const gitlab = await gitLabToolRow();
@@ -530,7 +356,7 @@ describe("FirstRunWelcome", () => {
         history={memoryHistory("/new-chat")}
       />,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Continue to Rennet" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start" }));
     fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
 
     const gitlab = await gitLabToolRow();
@@ -568,7 +394,7 @@ describe("FirstRunWelcome", () => {
         history={memoryHistory("/new-chat")}
       />,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Continue to Rennet" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start" }));
     fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
 
     const gitlab = await gitLabToolRow();
@@ -593,7 +419,7 @@ describe("FirstRunWelcome", () => {
     await advanceToReviewSetup();
     fireEvent.click(screen.getByRole("button", { name: /Codex Codex Existing install/ }));
     fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
-    await screen.findByText("Add the code you’re responsible for.");
+    await screen.findByText("Your code, wherever it lives.");
     expect(enabled).toHaveBeenCalledWith({ source: "local", harnessId: "claude", enabled: true });
     expect(enabled).toHaveBeenCalledWith({ source: "local", harnessId: "codex", enabled: true });
     expect(role).toHaveBeenCalledWith({
@@ -603,7 +429,7 @@ describe("FirstRunWelcome", () => {
     });
   });
 
-  it("opens macOS Full Disk Access from the project step", async () => {
+  it("opens optional macOS Full Disk Access without requiring permission", async () => {
     const access = vi.fn(async () => true);
     mount(
       <RennetRouterApp
@@ -617,40 +443,43 @@ describe("FirstRunWelcome", () => {
     expect(access).toHaveBeenCalledOnce();
   });
 
-  it("adds a project, reports completion failure, then opens the real New Chat", async () => {
+  it("reports completion failure, then finishes without requiring a project", async () => {
     let failCompletion = true;
+    const settings = freshSettings();
+    const add = vi.fn(() => {
+      throw new Error("Welcome must not add projects");
+    });
     const complete = vi.fn(() => {
       if (failCompletion) throw new Error("disk unavailable");
-      return { completedAt: "2026-08-28T12:00:00.000Z" };
+      const completedAt = "2026-08-28T12:00:00.000Z";
+      settings.welcome = { completedAt };
+      return { completedAt };
     });
     const history = memoryHistory("/new-chat");
     mount(
       <RennetRouterApp
-        bridge={welcomeBridge({ "settings.completeWelcome": complete })}
+        bridge={welcomeBridge({
+          "settings.completeWelcome": complete,
+          "settings.get": () => settings,
+          "projects.add": add,
+        })}
         history={history}
       />,
     );
     await advanceToReviewSetup();
     fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
-    const add = await screen.findByRole("button", { name: "Add" });
-    await waitFor(() => expect((add as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(add);
+    fireEvent.click(await screen.findByRole("button", { name: /^Continue$/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Start a new chat" }));
     expect(await screen.findByText(/Setup wasn’t completed: disk unavailable/)).toBeTruthy();
     failCompletion = false;
     fireEvent.click(screen.getByRole("button", { name: "Start a new chat" }));
-    await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat?project=rennet"));
+    await waitFor(() =>
+      expect(document.querySelector("[data-screen=add-project-entry]")).toBeTruthy(),
+    );
+    expect(add).not.toHaveBeenCalled();
   });
 
-  it("mounts no shell, so adding a project mid-welcome paints no coach mark", async () => {
-    // The regression control for D7. Coach marks are ARMED here (no `seen`, no
-    // skipAll) — the opposite of the rest of this file — and the project is added
-    // FROM the wizard, which invalidates `projects.list`. Against the old code that
-    // is the exact failing shape: the shell sat mounted in a `display:none` underlay,
-    // the freshly non-empty list rendered `NewChatView` inside it, its `new-chat`
-    // anchor registered, the store elected "Start Here", and the coachmark — a portal
-    // to `document.body`, outside the underlay and outside its `inert` — painted its
-    // spotlight and card over the wizard. Unmounting the shell removes the anchor.
+  it("mounts no shell or coach marks while progressing through welcome", async () => {
     const history = memoryHistory("/new-chat");
     mount(
       <RennetRouterApp
@@ -662,9 +491,7 @@ describe("FirstRunWelcome", () => {
     );
     await advanceToReviewSetup();
     fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
-    const add = await screen.findByRole("button", { name: "Add" });
-    await waitFor(() => expect((add as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(add);
+    fireEvent.click(await screen.findByRole("button", { name: /^Continue$/ }));
     // The wizard advances to its own last stage — it is still the only thing on screen.
     await screen.findByRole("button", { name: "Start a new chat" });
     expect(screen.queryByTestId("chat-dock-slot")).toBeNull();
@@ -758,10 +585,8 @@ describe("FirstRunWelcome", () => {
     await advanceToReviewSetup();
     fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
 
-    await screen.findByText("Add the code you’re responsible for.");
-    const add = await screen.findByRole("button", { name: "Add" });
-    await waitFor(() => expect((add as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(add);
+    await screen.findByText("Your code, wherever it lives.");
+    fireEvent.click(await screen.findByRole("button", { name: /^Continue$/ }));
 
     // Ready tells the truth about the empty machine instead of inventing an orchestrator.
     await screen.findByRole("button", { name: "Start a new chat" });
@@ -773,7 +598,7 @@ describe("FirstRunWelcome", () => {
     expect(role).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Start a new chat" }));
-    await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat?project=rennet"));
+    await waitFor(() => expect(history.history.at(-1)).toBe("/new-chat"));
   });
 });
 
@@ -796,7 +621,7 @@ describe("FirstRunWelcome — the Rennet mark", () => {
     const { container } = mount(
       <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Continue to Rennet" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start" }));
     fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
     await screen.findByText("Your tools, already connected.");
     const header = container.querySelector("header");
@@ -823,45 +648,6 @@ describe("FirstRunWelcome — the Rennet mark", () => {
     expect(word.getAttribute("aria-hidden")).toBe("true");
 
     expect(staticMarks(container)).toHaveLength(0);
-  });
-
-  it("works the hero sphere through the opening and settles it when the wordmark lands", async () => {
-    const { container } = mount(
-      <RennetRouterApp bridge={welcomeBridge()} history={memoryHistory("/new-chat")} />,
-    );
-    await screen.findByText("You stopped writing the code. You still have to answer for it.");
-    const markSpan = container.querySelector<HTMLElement>("[data-logo-mark]");
-    if (!markSpan) throw new Error("the hero has no mark span");
-
-    // The opening screen is the one surface with no step header, so the hero's sphere is
-    // the only one on it.
-    expect(container.querySelectorAll("[data-liquid-sphere]")).toHaveLength(1);
-    expect(staticMarks(container)).toHaveLength(0);
-
-    // The motion hooks are on the SPAN — the opening's own starting state, which is also
-    // what the code field's gather measures its target from. Replacing the artwork inside
-    // it must not disturb either.
-    expect(markSpan.style.opacity).toBe("0");
-    expect(markSpan.style.filter).toBe("blur(2px)");
-    const box = sphere(markSpan);
-    expect(box.style.width).toBe(box.style.height);
-    expect(Number.parseFloat(box.style.width)).toBeGreaterThan(0);
-
-    // Nothing is assembling before the click, so nothing is rippling.
-    expect(box.getAttribute("data-state")).toBe("resting");
-    fireEvent.click(screen.getByRole("button", { name: "Continue to Rennet" }));
-    expect(sphere(markSpan).getAttribute("data-state")).toBe("working");
-
-    // …and it settles on its own, when the wordmark's wipe lands (0.94 + 0.86s on the
-    // sequence's clock) — not when the test asks it to.
-    // (4s, inside vitest's 5s test timeout, so a sphere that never settles reports the
-    // state it was stuck in rather than an anonymous "test timed out".)
-    await waitFor(() => expect(sphere(markSpan).getAttribute("data-state")).toBe("resting"), {
-      timeout: 4_000,
-    });
-    // The sequence really drove the span it was pointed at: by now the mark's own
-    // landing (0.78 + 0.72s) has run it from the 0 above to fully opaque.
-    expect(markSpan.style.opacity).toBe("1");
   });
 
   it("puts the live sphere in the ready badge with the tick still pinned to its box", async () => {

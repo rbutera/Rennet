@@ -12,7 +12,11 @@ once, end to end.
 
 If Rennet is not on this machine yet, [install it](./install-rennet.md) first.
 
-On a new client with no projects, Rennet opens a full-window welcome. It
+On a new client with no projects, Rennet opens a full-window welcome. Choose **Start** to gather the floating code into the Rennet logo and reveal
+appearance choices beside it. The constellation changes with each setup step.
+The full-screen background persists across every step and animates automatically.
+Your operating system’s reduced-motion preference stops background motion and
+the rotating welcome phrase. Without WebGL, the welcome uses a static wordmark. It
 introduces the review model, applies appearance choices immediately, shows the
 tools detected in this environment, and lets you choose the orchestrator and
 Dual Harness mode. The orchestrator is the chat thread a review runs on — the
@@ -27,9 +31,13 @@ and check again. The welcome does not replace the contextual
 [onboarding tour](./onboarding-tour.md); coach marks begin after setup as you
 reach the controls they explain.
 
-The welcome ends by opening the same **Add Project** browser described below.
-After the project is added, **Start a new chat** opens the real New Chat screen
-for it.
+The **Access** step offers **Grant Full Disk Access** on macOS. It opens
+**System Settings → Privacy & Security → Full Disk Access**. This is optional:
+without it, macOS may prevent Rennet from reading external drives, network
+volumes, or protected folders. You can continue setup and change it later.
+
+The welcome does not ask you to add a project. On **Ready**, **Start a new chat**
+finishes setup and opens New Chat. Choose a project when you need one.
 
 ### Replaying the welcome
 
@@ -40,10 +48,8 @@ whatever you were doing, on a client that already has projects. There is no
 confirmation, because nothing is destroyed: your projects, appearance, and
 sessions are untouched, and finishing the welcome puts it away again.
 
-A replayed welcome does not ask you to add a project again. Its **Project** step
-offers **Continue with _your project_** — the one you used last, or the first in
-your list — so **Ready** and **Start a new chat** are one click away, and the
-picker is still there if you do want to add another. Replaying the welcome does
+A replay follows the same setup steps without adding or selecting a project.
+**Start a new chat** finishes it and opens New Chat. Replaying the welcome does
 not re-arm the [onboarding tour](./onboarding-tour.md), and replaying the tour
 does not reopen the welcome.
 
@@ -117,8 +123,7 @@ an **Add Environment** escape into pairing. Switching source reloads the browser
 against that machine's own filesystem, so browsing a distro or a paired machine
 works exactly like browsing locally.
 
-The browser is the picker, and the welcome flow's Project step uses the same
-one. Click a row to descend, use **Up** or Backspace to ascend, or type an
+Click a row to descend, use **Up** or Backspace to ascend, or type an
 absolute path and press Enter to jump there. The path bar shows the current
 folder with a trailing slash, so appending the next folder name is one keystroke
 away. Arrow keys move between rows. A folder holding a repository wears a
@@ -131,12 +136,6 @@ this machine the desktop app also offers **Browse…**, which opens the system
 folder dialog and jumps the browser to whatever you choose there. It does not
 appear while browsing a WSL distro or a paired environment, because the system
 dialog can only see this machine's files. There is no recents list.
-
-On macOS, the welcome also offers **Grant Full Disk Access** beside Add Project.
-It opens **System Settings → Privacy & Security → Full Disk Access**. This is
-optional and is useful when the in-app browser needs to reach protected or
-external locations. Rennet reads only projects you add; the setting does not
-make Rennet scan unrelated files.
 
 Pair a new environment with **Add Environment**: it takes an address and a
 one-time code. Run `rennet pair` on the other machine and it prints a link that

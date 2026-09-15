@@ -321,6 +321,7 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
             </aside>
             <div
               ref={smartListRef}
+              data-material="glass"
               aria-busy={fetching || undefined}
               className="min-w-0 flex-1 overflow-clip rounded-lg border border-line bg-card/25"
             >

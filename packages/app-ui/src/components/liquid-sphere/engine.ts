@@ -144,6 +144,18 @@ function buildSphereEngine(
     uTop: { value: new Color(LOOK.top) },
   };
 
+  function syncPalette() {
+    const css = getComputedStyle(document.documentElement);
+    uniforms.uBottom.value.set(css.getPropertyValue("--app-art-bottom").trim() || LOOK.bottom);
+    uniforms.uMid.value.set(css.getPropertyValue("--app-art-mid").trim() || LOOK.mid);
+    uniforms.uTop.value.set(css.getPropertyValue("--app-art-top").trim() || LOOK.top);
+  }
+  syncPalette();
+  const paletteObserver = new MutationObserver(syncPalette);
+  paletteObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-scheme", "data-rn-theme"],
+  });
   const material = new MeshPhysicalMaterial({
     color: 0xffffff,
     roughness: LOOK.roughness,
@@ -298,6 +310,7 @@ function buildSphereEngine(
       renderer.render(scene, camera);
     },
     dispose() {
+      paletteObserver.disconnect();
       geometry.dispose();
       material.dispose();
       environment.dispose();
