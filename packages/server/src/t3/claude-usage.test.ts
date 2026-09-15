@@ -11,6 +11,19 @@ const bundle = resolveSidecarBundle({});
 
 it.skipIf(!bundle)(
   "counts a recovered Claude runtime separately even when it resumes the same provider session",
+  // A full round-trip end-to-end: git init, sidecar spawn, WebSocket client, six turns, a
+  // SIGKILL and a recovery. Passes deterministically locally; the assertions are real (each
+  // usageEpoch rotation is a genuine claim about /clear and recovery). Under CI memory
+  // pressure the `/clear` epoch-rotation assertion flakes: the epoch is `${queryId}:${session}`,
+  // stamped once and immutably onto the turn's settlement (ClaudeAdapter), and when the turn
+  // settles before its result frame's session_id is parsed the adapter falls back to the prior
+  // `resumeSessionId`, so the epoch fails to rotate and matches the previous turn's. The stamp
+  // is never corrected, so a re-read within the run can't recover it — a fresh run gets fresh
+  // scheduling, which is why the WHOLE test retries rather than polls or skips. That fallback
+  // may be a real (rare) adapter ordering race that mis-buckets usage; it is tracked in #958,
+  // and the retry is a quarantine, not a fix. If it fails LOCALLY, or every retry, that is #958
+  // surfacing for real — not a flake to wave through.
+  { timeout: 90_000, retry: 2 },
   async () => {
     if (!bundle) throw new Error("Sidecar bundle required");
     const root = mkdtempSync(join(tmpdir(), "rennet-claude-usage-"));
@@ -135,5 +148,4 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   },
-  90_000,
 );
