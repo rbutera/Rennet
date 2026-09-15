@@ -164,7 +164,7 @@ describe("board-data seam — the single board resolution point", () => {
       reads,
     );
     expect(seats.design.register).toBe("settled");
-    expect(seats.design.cut).toBe("seamed");
+    expect(seats.design.cut).toBe("clean");
     expect(seats.sequence.register).toBe("working");
     expect(seats.sequence.cut).toBe("open");
     expect(seats.noise.register).toBe("waiting");

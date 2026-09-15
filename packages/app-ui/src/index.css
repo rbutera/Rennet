@@ -191,19 +191,17 @@
    * away. Its keyframe still belongs here (keyframes declared in `@theme` are emitted
    * whether or not a utility references them) and the pseudo names it directly. */
   --animate-processing-pulse: processing-pulse 1.6s ease-in-out infinite;
-  /* The affineur's attention on the lens rail's stop: a soft band of that lens's own
-   * colour that BREATHES over the dashed rule while the seat is writing — swelling and
-   * settling in place, never travelling. A moving band shuttling along a rule reads as a
-   * scanner (Cylon/KITT/"SCANNING…"); a breath reads as someone attending. The dashed rule
-   * beneath is the static tell, so this layer is pure motion.
+  /* The affineur's attention on the lens rail's stop: a bright band of that lens's own
+   * colour that sweeps the LENGTH of the rule while the seat is writing, then repeats. This
+   * replaced a breathing band over a dashed rule: the dashes read as machine telemetry, and
+   * a soft continuous rule with one travelling sheen reads calmer while still being the one
+   * moving thing on the rail. The sheen is a narrow gradient (transparent → lens → transparent)
+   * so it has no hard leading edge — a solid block travelling would read as a scanner.
    *
-   * The call site pairs it with `motion-reduce:hidden`, NOT `animate-none`: parked, a
-   * full-opacity band would read as a solid rule (i.e. "clean"), and the dashed rule under
-   * it already says "under way" without it. Removing it is the honest reduced-motion state.
-   *
-   * The curve is a symmetric sine ease (in-out) so the swell has no hard edge in time the
-   * way a linear travel does — the whole point is to stop reading as machine telemetry. */
-  --animate-lens-breathe: rn-lens-breathe 2.6s cubic-bezier(0.37, 0, 0.63, 1) infinite;
+   * The call site pairs it with `motion-reduce:hidden`, NOT `animate-none`: parked mid-travel
+   * it would sit as a bright patch, and the half-ink rule under it already says "under way"
+   * without it. The travel is a slow linear loop — a sheen has no rest position to ease into. */
+  --animate-lens-sheen: rn-lens-sheen 1.9s linear infinite;
   /* The per-seat working mark's breath: a core dot that swells and dims on the same sine
    * curve. This replaces a spinning dashed arc (a generic loading spinner) — one calm
    * idiom for "working" across the whole app instead of three mechanical ones. Scale AND
@@ -215,13 +213,14 @@
    * opacity would be a second mark, not a halo. */
   --animate-seat-halo: rn-seat-halo 2.2s cubic-bezier(0.37, 0, 0.63, 1) infinite;
 
-  @keyframes rn-lens-breathe {
-    0%,
-    100% {
-      opacity: 0.25;
+  @keyframes rn-lens-sheen {
+    /* The band is one third of the rule's width; travel it from just off the left edge to
+     * just off the right so the rule is never fully lit and never fully dark mid-loop. */
+    from {
+      transform: translateX(-110%);
     }
-    50% {
-      opacity: 0.9;
+    to {
+      transform: translateX(310%);
     }
   }
   @keyframes rn-seat-breathe {

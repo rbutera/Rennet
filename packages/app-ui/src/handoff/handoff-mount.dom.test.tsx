@@ -48,7 +48,7 @@ function review(over: Partial<Review> = {}): Review {
 // The hand-off path wires the live `publish.*` exits (C08 cluster 6), so the route now needs a
 // bridge. These mount tests exercise the surface shape, not the egress — a bare MemoryBridge (no
 // publish handlers) is enough: the own-branch PR compose read simply rejects and the page stays
-// on its Changes / "Nothing staged yet." state, which is exactly what these assert.
+// on its Changes / "No changes to request." state, which is exactly what these assert.
 function mountWorkspace(path: string, r: Review = review()) {
   const history = memoryHistory(path);
   return mount(
@@ -64,7 +64,7 @@ describe("ReviewWorkspace ?view=handoff mount (C08 task 5.2)", () => {
   it("renders the own-branch rounds surface at ?view=handoff", () => {
     const { getByText } = mountWorkspace("/s/x?view=handoff");
     // Own branch, nothing staged → the rounds lanes' honest empty state.
-    expect(getByText("Nothing staged yet.")).toBeTruthy();
+    expect(getByText("No changes to request.")).toBeTruthy();
   });
 
   it("renders the teammate-PR Post Review lane at ?view=handoff", () => {
@@ -74,20 +74,21 @@ describe("ReviewWorkspace ?view=handoff mount (C08 task 5.2)", () => {
 
   it("the FAB toggles to ?view=handoff from the board", async () => {
     const r = mountWorkspace("/s/x");
-    // The board is showing and the FAB is present and clickable (own branch → "Continue").
-    // The landmark is the board element: the `REVIEW · <repo>` eyebrow it used to be is gone
-    // (the board opens on the board), and the element is what the surface actually is.
+    // The board is showing and the FAB is present and clickable (own branch, no PR, nothing
+    // staged → "Open pull request"). The landmark is the board element: the `REVIEW · <repo>`
+    // eyebrow it used to be is gone (the board opens on the board), and the element is what the
+    // surface actually is.
     const board = () => document.querySelector('[data-kind="lens-board-view"]');
     expect(board()).not.toBeNull();
-    await r.user.click(r.getByRole("button", { name: /Continue/ }));
+    await r.user.click(r.getByRole("button", { name: /Open pull request/ }));
     // The hand-off is now open — the board is gone, the rounds surface is shown.
-    expect(r.getByText("Nothing staged yet.")).toBeTruthy();
+    expect(r.getByText("No changes to request.")).toBeTruthy();
     expect(board()).toBeNull();
   });
 
   it("the FAB yields (inert, data-open) while the hand-off is open", () => {
     const r = mountWorkspace("/s/x?view=handoff");
-    const fab = r.getByRole("button", { name: /Continue/ });
+    const fab = r.getByRole("button", { name: /Open pull request/ });
     expect(fab.hasAttribute("data-open")).toBe(true);
     expect(fab.className).toContain("pointer-events-none");
   });

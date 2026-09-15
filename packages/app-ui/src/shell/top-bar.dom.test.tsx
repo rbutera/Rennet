@@ -130,7 +130,12 @@ describe("session top-bar (C03 §4)", () => {
       );
       expect(visibleLabel?.textContent).toBe(label);
       expect(tab?.querySelector("svg")).toBeTruthy();
-      expect(visibleLabel?.className).not.toContain("hidden");
+      // The label collapses to the icon only under a narrow pane (a `@max-[Npx]:hidden`
+      // container-query variant), never unconditionally — a bare `hidden` would drop the
+      // word at every width and leave five wordless icons on a wide window.
+      const labelClasses = visibleLabel?.className.split(/\s+/) ?? [];
+      expect(labelClasses).not.toContain("hidden");
+      expect(labelClasses.some((c) => /^@max-\[\d+px\]:hidden$/.test(c))).toBe(true);
     }
     expect(flagged.getAttribute("aria-selected")).toBe("true");
 

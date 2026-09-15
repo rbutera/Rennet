@@ -336,15 +336,20 @@ between the reviewer and their boards.
   the lanes it waits on are running, with its explanation on hover and keyboard focus.
   Flagged carries one indicator per review voice because it runs two review legs (the
   compiler is a third thread behind the board, not a rail voice). The register rides
-  the stop under each tab as a `data-cut` (`unstarted` / `open` / `clean` / `seamed` /
+  the stop under each tab as a `data-cut` (`unstarted` / `open` / `clean` /
   `snapped` / `empty`), so it survives the colour being ignored — the hue says which lens
-  this is, so a failed Design lane is a snapped blue stop and never a red one.
+  this is, so a failed Design lane is a snapped blue stop and never a red one. A lens re-cut
+  this round takes no shape of its own: it cuts `clean` like any settled lens, and "this lens
+  moved" rides the gold delta pip while "this lens is ready" rides an evidence-green check on
+  the settled tab.
 - The **lens activity popover** (`board/lens-activity.tsx`) opens automatically for the selected
   running tab, or when a tab is hovered or focused, and anchors directly beneath
   that tab so the board and its heading never move. It names the seat, how long this
   window has followed it, its `latest` line from `SessionPreparation` in the daemon's plain
   words, and a short rolling history of meaningful actions; raw tool calls stay in the
-  transcript. Flagged lists both voices, each with its own transcript control. The board
+  transcript. Flagged names its shape in one plain line — "Two reviewers, in parallel, then
+  merged into one list." — lists the two review legs each with its own transcript control, and
+  sets the merged result apart under its own rule as a distinct "Merged" transcript. The board
   itself carries only a small activity mark beside the lens heading while its lane runs.
 - The **workspace header** (`board/workspace-header.tsx`) carries the generation-wide
   retry for a failed or cancelled preparation, with its reason. While the generation is

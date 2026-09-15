@@ -1,6 +1,6 @@
 import type { LensKind } from "@rennet/protocol";
 import { cn, Popover, PopoverContent, PopoverTrigger } from "@rennet/ui";
-import { CircleCheck, CircleX, X } from "lucide-react";
+import { CircleCheck, CircleX, GitMerge, type LucideIcon, X } from "lucide-react";
 import {
   type Dispatch,
   type ReactElement,
@@ -12,10 +12,25 @@ import {
 } from "react";
 import { Icon } from "../components/icon";
 import { ReviewActivity } from "../components/review-activity";
+import { AgentMark, type AgentToolId } from "../settings/assets/agent-marks";
 import { useRennetStore } from "../store";
 import type { LensBoardEntry } from "./board-data";
 import { lensActivityKey, useLensActivityHistory } from "./lens-activity-state";
 import { lensTint } from "./lens-colour";
+import type { SeatVoice } from "./lens-seats";
+
+/** A review leg's provider maps to its owner's mark (`agent-marks.tsx`). The Flagged legs are
+ *  a Claude seat and a Codex seat; the mark carries the identity so the link reads "◆ transcript". */
+const PROVIDER_MARK = { claudeAgent: "claude", codex: "codex" } as const satisfies Record<
+  NonNullable<SeatVoice["provider"]>,
+  AgentToolId
+>;
+
+/** The merge seat that collates the two Flagged review legs into one board. Its transcript is
+ *  set apart from the legs (it is not a third reviewer), and labelled "Merged", never "collator". */
+function isMergeVoice(voice: SeatVoice): boolean {
+  return voice.seat.endsWith("-compile");
+}
 
 export function LensActivity({
   reviewId,
@@ -90,6 +105,38 @@ export function LensActivity({
     return () => clearInterval(timer);
   }, [running]);
   const seconds = Math.max(0, Math.floor((now - observedAt) / 1000));
+
+  // The two parallel review legs, and the merge that folds them into one board — set apart
+  // below, because it is not a third reviewer. Non-Flagged lenses have neither: one plain voice.
+  const mergeVoice = seat.voices.find(isMergeVoice);
+  const legVoices = seat.voices.filter((voice) => !isMergeVoice(voice));
+
+  const renderTranscript = (voice: SeatVoice, label: string, mark?: LucideIcon) => (
+    <button
+      key={voice.seat}
+      data-seat-transcript={voice.seat}
+      disabled={voice.thread === undefined}
+      title={
+        voice.thread === undefined ? "Transcript available when the agent thread starts" : undefined
+      }
+      type="button"
+      className="flex items-center gap-1.5 self-start rounded px-2 py-1 text-sm text-primary hover:bg-secondary disabled:cursor-default disabled:opacity-50"
+      onClick={() => {
+        close();
+        if (!voice.thread) return;
+        onSelect?.(lens);
+        openTranscript({ reviewId, lens, seat: voice.seat, thread: voice.thread });
+      }}
+    >
+      {mark ? (
+        <Icon icon={mark} className="size-3.5" />
+      ) : voice.provider ? (
+        <AgentMark id={PROVIDER_MARK[voice.provider]} className="size-3.5" />
+      ) : null}
+      <span>{label}</span>
+    </button>
+  );
+
   return (
     <Popover
       open={open}
@@ -140,7 +187,15 @@ export function LensActivity({
           ) : running ? (
             <ReviewActivity className="text-lens" />
           ) : null}
-          <strong className="flex-1">{seat.label}</strong>
+          <strong>{seat.label}</strong>
+          {running ? (
+            // Bare elapsed, next to the title. "Following for M:SS" read as a claim about the
+            // reviewer ("you have been following"); this is just how long the seat has run.
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}
+            </span>
+          ) : null}
+          <span className="flex-1" />
           <button type="button" aria-label="Close activity" onClick={() => close(true)}>
             <Icon icon={X} className="size-4" />
           </button>
@@ -157,46 +212,43 @@ export function LensActivity({
             Noise reviews what remains once the other lenses have finished.
           </p>
         ) : null}
-        {running ? (
-          <p className="text-xs text-muted-foreground tabular-nums">
-            Following for {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}
+        {mergeVoice !== undefined ? (
+          // The Flagged shape in one plain line — no "collator", no "compile". The reviewer
+          // sees two reviews happen at once, then one merged list; this says exactly that.
+          <p className="text-xs text-muted-foreground">
+            Two reviewers, in parallel, then merged into one list.
           </p>
         ) : null}
-        <ol className="flex flex-col gap-3 border-l border-lens-line pl-3">
-          {history.map((text, index) => (
-            <li
-              key={text}
-              className={cn(
-                "motion-safe:animate-in motion-safe:slide-in-from-top-2 motion-safe:fade-in duration-300 text-sm [overflow-wrap:anywhere]",
-                index > 0 && "text-muted-foreground text-xs",
-              )}
-            >
-              {text}
-            </li>
-          ))}
-        </ol>
-        {seat.voices.map((voice) => (
-          <button
-            key={voice.seat}
-            data-seat-transcript={voice.seat}
-            disabled={voice.thread === undefined}
-            title={
-              voice.thread === undefined
-                ? "Transcript available when the agent thread starts"
-                : undefined
-            }
-            type="button"
-            className="self-start rounded px-2 py-1 text-sm text-primary hover:bg-secondary disabled:cursor-default disabled:opacity-50"
-            onClick={() => {
-              close();
-              if (!voice.thread) return;
-              onSelect?.(lens);
-              openTranscript({ reviewId, lens, seat: voice.seat, thread: voice.thread });
-            }}
-          >
-            {voice.name ? `Open ${voice.name} transcript` : "Open transcript"}
-          </button>
-        ))}
+        {history.length > 0 ? (
+          <ol className="flex flex-col gap-3 border-l border-lens-line pl-3">
+            {history.map((text, index) => (
+              <li
+                key={text}
+                className={cn(
+                  "motion-safe:animate-in motion-safe:slide-in-from-top-2 motion-safe:fade-in duration-300 text-sm [overflow-wrap:anywhere]",
+                  index > 0 && "text-muted-foreground text-xs",
+                )}
+              >
+                {text}
+              </li>
+            ))}
+          </ol>
+        ) : null}
+        <div className="flex flex-col items-start gap-0.5">
+          {legVoices.map((voice) =>
+            renderTranscript(
+              voice,
+              voice.provider !== undefined ? "transcript" : "Open transcript",
+            ),
+          )}
+        </div>
+        {mergeVoice !== undefined ? (
+          // Set apart from the two legs: the merged result is a different kind of thing to read,
+          // so it sits under its own rule with its own glyph and the plain word "Merged".
+          <div className="mt-1 flex flex-col items-start gap-0.5 border-t border-lens-line pt-2">
+            {renderTranscript(mergeVoice, "Merged", GitMerge)}
+          </div>
+        ) : null}
       </PopoverContent>
     </Popover>
   );

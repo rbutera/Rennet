@@ -185,7 +185,7 @@ describe("lens activity lives outside the board", () => {
     expect(document.querySelector('[data-kind="seat-widget"]')).toBeNull();
     const activity = getByRole("dialog", { name: "Sequence activity details" });
     expect(activity.textContent).toContain("Inspecting the change");
-    expect(activity.textContent).toMatch(/Following for \d+:\d\d/);
+    expect(activity.textContent).toMatch(/\d+:\d\d/);
     expect(activity.textContent).not.toContain("github-auth.ts");
     expect(activity.textContent).not.toContain("elements written");
     expect(activity.querySelector('[aria-label="Pin activity"]')).toBeNull();
@@ -199,11 +199,48 @@ describe("lens activity lives outside the board", () => {
     const h = harness({ boards: { flagged: at(FIXTURE_BOARDS.gen1?.flagged) } });
     const { user, findByRole, getByRole } = h.open("?lens=flagged");
     await user.hover(await findByRole("tab", { name: /^Flagged/ }));
-    expect(getByRole("button", { name: "Open Claude transcript" })).toBeTruthy();
-    expect(getByRole("button", { name: "Open Codex transcript" })).toBeTruthy();
+    expect(getByRole("button", { name: "Claude transcript" })).toBeTruthy();
+    expect(getByRole("button", { name: "Codex transcript" })).toBeTruthy();
     expect(getByRole("dialog", { name: "Flagged activity details" }).textContent).toContain(
       "The token refresh races the logout.",
     );
+  });
+
+  it("sets Flagged's merge apart from its two legs and says the shape in words", async () => {
+    // Flagged runs THREE seats: two review legs in parallel, then a compiler that folds them
+    // into one board. The compiler is not a third reviewer, so its transcript sits apart under
+    // "Merged" (never "collator"/"compile"), and the tooltip states the shape in one plain line.
+    // A single-leg or two-leg fixture cannot see either the divider or the explainer — the
+    // third seat with the `-compile` id is the shape this test needs.
+    const lanes = DRAFTING.map((lane) =>
+      lane.id === "flagged"
+        ? ({
+            ...lane,
+            seats: [
+              ...(lane.seats ?? []),
+              {
+                seat: "flagged-compile",
+                provider: "claudeAgent",
+                thread: THREAD("seat-flagged-compile"),
+              },
+            ],
+          } as LensLane)
+        : lane,
+    );
+    const h = harness({ lanes, boards: { flagged: at(FIXTURE_BOARDS.gen1?.flagged) } });
+    const { user, findByRole, getByRole } = h.open("?lens=flagged");
+    await user.hover(await findByRole("tab", { name: /^Flagged/ }));
+    const details = getByRole("dialog", { name: "Flagged activity details" });
+    expect(details.textContent).toContain("Two reviewers, in parallel, then merged into one list.");
+    // The two legs read as their owners; the merge is the plain word "Merged".
+    expect(getByRole("button", { name: "Claude transcript" })).toBeTruthy();
+    expect(getByRole("button", { name: "Codex transcript" })).toBeTruthy();
+    const merged = getByRole("button", { name: "Merged" });
+    // Apart: the merge sits under its own divider (border-t), the legs do not.
+    expect(merged.closest("div")?.className).toContain("border-t");
+    expect(
+      getByRole("button", { name: "Claude transcript" }).closest("div")?.className,
+    ).not.toContain("border-t");
   });
 });
 
@@ -242,7 +279,12 @@ describe("the transcript opens in its own surface and never displaces the conver
     expect(document.querySelector('[data-region="board"]')?.contains(dock() as Node)).toBe(false);
   });
 
-  it("moves the board, the activity and the transcript together when the lens changes", async () => {
+  it("moves the board and activity to the new lens and lands on the board, closing the transcript, when the lens changes", async () => {
+    // (H). A transcript is a deep read of ONE seat. Switching lens is a move to another
+    // lens's BOARD, not a request to read that lens's seat — so the drawer closes and the
+    // reviewer lands on the board. A drawer carried across (the old "followed" behaviour)
+    // would sit the Sequence seat's transcript above the Decisions board and read as the
+    // Decisions seat's work, which is the disagreement this reverses.
     const h = harness({
       boards: {
         sequence: at(FIXTURE_BOARDS.gen1?.sequence),
@@ -258,17 +300,14 @@ describe("the transcript opens in its own surface and never displaces the conver
 
     await user.click(document.querySelector('[data-lens="decisions"]') as HTMLButtonElement);
 
-    // All three, in one assertion, because the defect is them DISAGREEING: a drawer left
-    // on the Sequence seat above the Decisions board reads as the Decisions seat's work.
+    // Board and activity move to Decisions; the transcript is closed, not carried across —
+    // one assertion, because the defect would be them DISAGREEING.
     await waitFor(() =>
       expect({
         board: document.querySelector("article[data-lens]")?.getAttribute("data-lens"),
         activity: document.querySelector('[aria-label="Decisions activity details"]') !== null,
-        transcript: drawer()?.getAttribute("data-lens"),
-      }).toEqual({ board: "decisions", activity: true, transcript: "decisions" }),
-    );
-    expect(drawer()?.querySelector('[data-testid="drawer-seat-thread"]')?.textContent).toBe(
-      "seat-decisions",
+        transcript: drawer(),
+      }).toEqual({ board: "decisions", activity: true, transcript: null }),
     );
   });
 

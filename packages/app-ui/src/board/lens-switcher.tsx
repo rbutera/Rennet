@@ -1,6 +1,7 @@
 import type { LensKind } from "@rennet/protocol";
 import { cn } from "@rennet/ui";
 import {
+  Check,
   DraftingCompass,
   Flag,
   GitCommitHorizontal,
@@ -32,12 +33,16 @@ import { deltaKey } from "./viewed-delta";
 // so the `data-cut` vocabulary rides it rather than being invented somewhere new:
 //
 //   unstarted  a faint rule: nothing has been drawn yet.
-//   open       a dashed rule with a lamp travelling along it — the one moving thing on
-//              the rail, and it means this seat is writing right now.
-//   clean      a solid rule: the board is cut and it stops moving.
-//   seamed     the same, split by a gap where the board was re-cut this generation.
+//   open       a soft lens-hue rule with a sheen sweeping along it — the one moving thing
+//              on the rail, and it means this seat is writing right now. Parked (reduced
+//              motion) the rule stays at half ink, which still reads apart from `clean`.
+//   clean      a solid rule at full ink: the board is cut and it stops moving.
 //   snapped    two offset pieces: the seat broke before it settled.
 //   empty      a dotted outline — the lens settled with nothing to draw.
+//
+// A lens re-cut this round no longer gets a SHAPE of its own (the old `seamed` gap): the
+// gold delta pip already says "this lens moved this round", and the evidence-green check on
+// a settled tab says "this lens is ready". A second shape for the same fact read as damage.
 //
 // COLOUR IS IDENTITY, NEVER STATE. The hue says which lens this is (#818), so a failed
 // Design lane is a snapped BLUE stop, never a red one, and every register above survives
@@ -79,19 +84,6 @@ function LensStop({ cut, active }: { readonly cut: SeatCut; readonly active: boo
       </span>
     );
   }
-  if (cut === "seamed") {
-    return (
-      <span
-        data-testid="lens-stop"
-        data-cut={cut}
-        aria-hidden="true"
-        className="absolute inset-x-2 bottom-1 flex h-0.5 gap-1"
-      >
-        <span className={cn("h-0.5 flex-1 rounded-full", ink)} />
-        <span className={cn("h-0.5 flex-1 rounded-full", ink)} />
-      </span>
-    );
-  }
   return (
     <span
       data-testid="lens-stop"
@@ -105,16 +97,17 @@ function LensStop({ cut, active }: { readonly cut: SeatCut; readonly active: boo
         // different SHAPES: dotted says "the socket was never filled", faint says "not yet".
         cut === "empty" &&
           "bg-[length:4px_2px] bg-[linear-gradient(to_right,var(--color-lens-line)_50%,transparent_50%)] bg-repeat-x",
-        cut === "open" &&
-          "bg-[length:4px_2px] bg-[linear-gradient(to_right,var(--color-lens)_50%,transparent_50%)] bg-repeat-x",
+        // Working: a soft continuous lens-hue rule (half ink) with a brighter band sweeping
+        // across it. No dashes — a solid-but-dim rule reads calmer than a dashed one and
+        // still parts from `clean` (full ink) when the sweep is parked for reduced motion.
+        cut === "open" && "bg-lens/45",
       )}
     >
       {cut === "open" && (
-        // The affineur's attention, at rail scale: a soft lens-hue band that breathes in
-        // place over the dashed rule. `motion-reduce:hidden`, not `animate-none` — parked
-        // at full opacity it would read as a solid ("clean") rule, and the dashed rule
-        // underneath already says "under way".
-        <span className="pointer-events-none absolute inset-0 block rounded-full bg-lens animate-lens-breathe motion-reduce:hidden" />
+        // The affineur's attention, at rail scale: a bright lens-hue sheen travelling the
+        // length of the rule. `motion-reduce:hidden`, not `animate-none` — parked mid-travel
+        // it would sit as a bright patch; the half-ink rule underneath already says "under way".
+        <span className="pointer-events-none absolute inset-y-0 block w-1/3 rounded-full bg-gradient-to-r from-transparent via-lens to-transparent animate-lens-sheen motion-reduce:hidden" />
       )}
     </span>
   );
@@ -261,9 +254,24 @@ export function LensSwitcher({
                 />
               ) : null}
             </span>
-            <span>{LENS_LABEL[lens]}</span>
+            {/* The label drops out once the rail's own pane (the top-bar `@container`) is too
+                narrow to hold five of them — at Rennet's default size with the chat dock open
+                it clips, so below ~1080px of pane the tabs go icon-only. The `aria-label`
+                above still carries the full name, so nothing is lost to a screen reader. */}
+            <span className="@max-[1080px]:hidden">{LENS_LABEL[lens]}</span>
             {lens === "noise" && seat.waitingOn.length > 0 ? (
               <ReviewActivity label="Waiting for other lenses" className="size-3 text-lens" />
+            ) : seat.register === "settled" ? (
+              // Evidence green, NEVER the lens hue: a Flagged-red or any-hued check would read
+              // as a severity/error mark. Green is the palette's one "good / ready" ink and
+              // means the same on every lens. This is the "reworked" line's replacement (J) —
+              // "this lens is ready", carried as a mark on the tab, not a sentence in the feed.
+              <Icon
+                icon={Check}
+                strokeWidth={3}
+                aria-hidden="true"
+                className="size-3.5 shrink-0 text-green"
+              />
             ) : (
               <SeatIndicators register={seat.register} voices={seat.voices.length} />
             )}
