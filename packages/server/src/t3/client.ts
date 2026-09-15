@@ -625,7 +625,25 @@ export async function awaitTurnSettled(
         };
       return undefined;
     }
-    return latest && latest.turnId !== after?.previousTurnId ? latest : undefined;
+    if (latest == null || latest.turnId === after?.previousTurnId) return undefined;
+    // A candidate that SETTLED before this wait was even requested is a prior turn
+    // surfacing as `latest` while the projection rebuilds — T3 rebuilds a thread on
+    // `/clear`, and an earlier settled turn briefly re-appears as the latest one. The
+    // loose `!== previousTurnId` test alone accepts that stale turn and the wait answers
+    // with its usage (the sighted flake: an earlier turn's 10,000-token settlement
+    // returned for the freshly-cleared turn, which owns zero). A turn cannot settle
+    // before the start that requested it, so a settlement stamped before `requestedAt`
+    // is never ours — keep waiting. Correlated callers never reach here: they matched on
+    // `startCommandId` above. This mirrors the same request-time cutoff `startFailure`
+    // and `sessionFailure` already apply to the error paths.
+    if (after?.requestedAt !== undefined && thread !== undefined) {
+      const settled = thread.activities.findLast(
+        (entry) => entry.kind === "turn.settled" && entry.turnId === latest.turnId,
+      );
+      if (settled !== undefined && Date.parse(settled.createdAt) < Date.parse(after.requestedAt))
+        return undefined;
+    }
+    return latest;
   };
   // Preserve the schema path but omit the provider's stack, whichever failure arrives first.
   const failureMessage = (detail: string): string => detail.split("\n    at ")[0] ?? detail;

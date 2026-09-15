@@ -1015,6 +1015,55 @@ describe("awaitTurnSettled", () => {
     });
   });
 
+  it("skips an earlier turn that resurfaces as `latest` while the projection rebuilds", async () => {
+    // The `/clear` flake: T3 rebuilds the thread, and an earlier settled turn briefly
+    // re-appears as `latestTurn`. Its id differs from `previousTurnId`, so the loose
+    // matcher used to accept it and answer with its usage — an old turn's tokens
+    // returned for the cleared turn (`expected 10000 to be +0`). The earlier turn
+    // settled BEFORE this wait was requested, which is how we know it is not ours.
+    const beforeRequest = "2026-09-03T09:59:00.000Z"; // < requestedAt (T0)
+    const rebuilt = fakeThread({
+      // An earlier turn, settled long ago, flashing as the latest one mid-rebuild.
+      latestTurn: { turnId: "turn-earlier", state: "completed" },
+      activities: [
+        {
+          ...settledActivity("turn-earlier", { structuredOutput: { stale: true } }),
+          createdAt: beforeRequest,
+        },
+      ],
+    });
+    const p = projection(rebuilt);
+    // Control: unscoped (no request-time cutoff), the wait answers at once with the
+    // stale turn — the bug, proving this fixture can trip the old behaviour.
+    await expect(awaitTurnSettled("t", p.deps)).resolves.toMatchObject({
+      turnId: "turn-earlier",
+      structuredOutput: { stale: true },
+    });
+
+    const wait = awaitTurnSettled("t", p.deps, {
+      after: { previousTurnId: "turn-cleared-away", requestedAt: T0 },
+    });
+    await tick();
+    // The real (cleared) turn finally lands, settling AFTER the request.
+    p.set(
+      fakeThread({
+        latestTurn: { turnId: "turn-mine", state: "completed" },
+        activities: [
+          {
+            ...settledActivity("turn-earlier", { structuredOutput: { stale: true } }),
+            createdAt: beforeRequest,
+          },
+          settledActivity("turn-mine", { structuredOutput: { mine: true } }),
+        ],
+      }),
+    );
+    p.push(event("thread.activity-appended"));
+    await expect(wait).resolves.toMatchObject({
+      turnId: "turn-mine",
+      structuredOutput: { mine: true },
+    });
+  });
+
   it("ignores a session failure recorded before the turn was requested", async () => {
     const stale = fakeThread({
       session: {
