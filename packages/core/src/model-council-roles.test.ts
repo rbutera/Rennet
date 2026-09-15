@@ -20,7 +20,15 @@ function role(roles: ResolvedReviewRole[], id: string): ResolvedReviewRole {
 
 describe("REVIEW_ROLE_CATALOGUE", () => {
   it("offers only model roles with production work", () => {
-    expect(resolveReviewRoles(CTX).map((role) => role.id)).toEqual(["lens-workers", "second-seat"]);
+    expect(resolveReviewRoles(CTX).map((role) => role.id)).toEqual([
+      "lens-workers",
+      "second-seat",
+      // The review's own conversation (session-thread-briefing 4.4). It is here because the
+      // first-run welcome has always written `roleId: "orchestrator"` — against a catalogue
+      // that had no such row, so the write never landed and a dual-harness host sent the
+      // chat to Claude whatever the reviewer chose.
+      "orchestrator",
+    ]);
   });
 
   // Positive control (must be able to fail): a role naming a job id absent from
@@ -36,7 +44,7 @@ describe("REVIEW_ROLE_CATALOGUE", () => {
 describe("resolveReviewRoles", () => {
   it("resolves every role in every scenario to an assignment or honest-null (never undefined, never a throw)", () => {
     const roles = resolveReviewRoles(CTX);
-    expect(roles).toHaveLength(2);
+    expect(roles).toHaveLength(3);
     for (const r of roles) {
       for (const cell of [r.dual, r.claudeOnly, r.codexOnly]) {
         // a cell is EITHER a real pick with a source, OR honest-null with null source.

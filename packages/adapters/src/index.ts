@@ -217,6 +217,7 @@ export {
   type GitExec,
   type GitStdoutEncoding,
   gitForRepoFactory,
+  isAncestor,
   parseChangedPaths,
   parseCounts,
   parseUnifiedDiffFiles,
@@ -321,13 +322,16 @@ export {
   captureReviewContextManifest,
   createLiveCanvasOpsBackend,
   ensureReviewContextAssembly,
+  extractRelatedRefs,
   type LiveBackendDeps,
   type LiveReviewBackend,
   type LiveSnapshotOutcome,
+  loadRelatedContextDossier,
   projectHypothesisRepoContext,
   type RelatedContextKickDeps,
   type RepoRecord,
   type ReviewContextManifest,
+  relatedContextDossierKey,
   repoKeyOf,
   repoRecordOf,
   resolveContextFor,
@@ -404,6 +408,11 @@ export {
   type WorktreeTokens,
   worktreeForBranch,
 } from "./pr-worktree";
+export {
+  type PrimaryBaseOptions,
+  type PrimaryBaseResolution,
+  resolvePrimaryBase,
+} from "./primary-base";
 export {
   type ProjectContextBackendPart,
   projectContextBackend,
@@ -646,7 +655,6 @@ export {
 export { type DraftOp, WhiteboardClient } from "./whiteboard-client";
 // The workspace inventory (workspace-settings D6).
 export {
-  isAncestor,
   type ListWorkspacesOptions,
   listWorkspaces,
   measureWorkspaceSize,

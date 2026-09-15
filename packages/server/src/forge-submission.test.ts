@@ -18,6 +18,7 @@ const SUBMISSION = {
 
 const GITLAB_DESTINATION = {
   remoteName: "gitlab-submit",
+  remotes: ["gitlab-submit"],
   target: {
     repo: { forge: "gitlab", owner: "acme", name: "widget" },
   },
@@ -34,10 +35,15 @@ describe("forge pull-request destination resolution", () => {
     ]);
     const git = vi.fn(async (_root: string, args: string[]) => {
       if (args[0] === "remote") {
-        return [
-          "gitlab-submit\thttps://github.com/acme/widget.git (fetch)",
-          "gitlab-submit\tgit@gitlab.com:acme/widget.git (push)",
-        ].join("\n");
+        // `remote -v` is the URL table discovery reads; a BARE `remote` is the name
+        // list, which is what `git remote` actually prints and what the base-ref
+        // normalisation needs. Conflating them would feed URLs in as remote names.
+        return args[1] === "-v"
+          ? [
+              "gitlab-submit\thttps://github.com/acme/widget.git (fetch)",
+              "gitlab-submit\tgit@gitlab.com:acme/widget.git (push)",
+            ].join("\n")
+          : "gitlab-submit\n";
       }
       throw new Error(`Unexpected mutation: ${args.join(" ")}`);
     });
@@ -59,11 +65,13 @@ describe("forge pull-request destination resolution", () => {
     ]);
     const git = vi.fn(async (_root: string, args: string[]) => {
       if (args[0] === "remote") {
-        return [
-          "origin\thttps://github.com/acme/widget.git (fetch)",
-          "origin\tgit@github.com:acme/widget.git (push)",
-          "origin\tgit@github.com:backup/widget.git (push)",
-        ].join("\n");
+        return args[1] === "-v"
+          ? [
+              "origin\thttps://github.com/acme/widget.git (fetch)",
+              "origin\tgit@github.com:acme/widget.git (push)",
+              "origin\tgit@github.com:backup/widget.git (push)",
+            ].join("\n")
+          : "origin\n";
       }
       throw new Error(`Unexpected mutation: ${args.join(" ")}`);
     });
@@ -85,10 +93,15 @@ describe("forge pull-request destination resolution", () => {
     ]);
     const git = vi.fn(async (_root: string, args: string[]) => {
       if (args[0] === "remote") {
-        return [
-          "gitlab-submit\thttps://github.com/acme/widget.git (fetch)",
-          "gitlab-submit\tgit@gitlab.com:acme/widget.git (push)",
-        ].join("\n");
+        // `remote -v` is the URL table discovery reads; a BARE `remote` is the name
+        // list, which is what `git remote` actually prints and what the base-ref
+        // normalisation needs. Conflating them would feed URLs in as remote names.
+        return args[1] === "-v"
+          ? [
+              "gitlab-submit\thttps://github.com/acme/widget.git (fetch)",
+              "gitlab-submit\tgit@gitlab.com:acme/widget.git (push)",
+            ].join("\n")
+          : "gitlab-submit\n";
       }
       throw new Error(`Unexpected mutation: ${args.join(" ")}`);
     });
@@ -96,7 +109,10 @@ describe("forge pull-request destination resolution", () => {
     await expect(
       resolveForgePullRequestDestination({ registry, git, repoRoot: "/repo" }),
     ).resolves.toEqual(GITLAB_DESTINATION);
-    expect(git.mock.calls).toEqual([["/repo", ["remote", "-v"]]]);
+    expect(git.mock.calls).toEqual([
+      ["/repo", ["remote", "-v"]],
+      ["/repo", ["remote"], { reject: false }],
+    ]);
     expect(gitlabSubmit).not.toHaveBeenCalled();
   });
 });
@@ -143,10 +159,15 @@ describe("forge pull-request submission", () => {
     ]);
     const git = vi.fn(async (_root: string, args: string[]) => {
       if (args[0] === "remote") {
-        return [
-          "gitlab-submit\thttps://github.com/acme/widget.git (fetch)",
-          "gitlab-submit\tgit@gitlab.com:acme/widget.git (push)",
-        ].join("\n");
+        // `remote -v` is the URL table discovery reads; a BARE `remote` is the name
+        // list, which is what `git remote` actually prints and what the base-ref
+        // normalisation needs. Conflating them would feed URLs in as remote names.
+        return args[1] === "-v"
+          ? [
+              "gitlab-submit\thttps://github.com/acme/widget.git (fetch)",
+              "gitlab-submit\tgit@gitlab.com:acme/widget.git (push)",
+            ].join("\n")
+          : "gitlab-submit\n";
       }
       if (args[0] === "push") return "";
       throw new Error(`Unexpected git call: ${args.join(" ")}`);
@@ -170,6 +191,7 @@ describe("forge pull-request submission", () => {
     ).resolves.toEqual(outcome);
     expect(git.mock.calls).toEqual([
       ["/repo", ["remote", "-v"]],
+      ["/repo", ["remote"], { reject: false }],
       [
         "/repo",
         [

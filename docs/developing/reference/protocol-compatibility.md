@@ -101,11 +101,14 @@ does not require changing the `serverInfo` schema.
 | `serverRequests` | The daemon can send `serverRequest` and `serverRequestResolved`, and accepts `serverResponse`. Current daemons always advertise it. |
 | `attention` | The daemon accepts `presence`, publishes `attentionEvent`, and supports push registration and attention acknowledgement. It is advertised only when the attention system is composed. |
 | `act` | The daemon implements `publish.compose`. It is advertised only when that acting seam is composed. |
+| `review-cli` | The daemon wires the headless `rennet review` seam: the `repository.identify` read that resolves a checkout path to its canonical `owner/name` (D11). Any daemon built with this code advertises it unconditionally; its absence is what a pre-review-cli daemon shows. |
 
 The client does not send feature-specific frames or commands when the daemon did
 not advertise the matching key. A client without `act` disables Stop and publish
 composition with update-required copy. A client without `attention` stays silent
-on presence and push registration.
+on presence and push registration. `rennet review` refuses at connect when
+`review-cli` is absent, naming the minimum daemon version, rather than resolving
+against the wrong repository or base.
 
 ## Parse inbound frames tolerantly
 

@@ -7,6 +7,22 @@ Use this section to find the code that owns a Rennet behavior and the contract i
 must preserve. Start with the architecture pages, then follow the subsystem you
 are changing.
 
+## Built on T3 Code
+
+Rennet stands on the shoulders of [T3 Code](https://github.com/pingdotgg/t3code),
+the open-source coding agent from T3 Tools. Its server, provider layer, and thread
+UI are the engine under every Rennet review: the chat beside each surface, the work
+orders Rennet dispatches, and the harness sessions that persist across a reload all
+run on T3 Code, vendored into this monorepo rather than reimplemented. Rennet would
+be a far smaller, slower thing to build without it, and the project is glad to build
+on such good work. A huge thank-you to the T3 Code team.
+
+T3 Code is MIT licensed by T3 Tools Inc., and the upstream licence travels with the
+vendored snapshot unchanged. How the snapshot is taken, folded, and patched is in
+[T3 Code vendoring](./concepts/t3code-vendoring.md); how the daemon runs it as an
+owned local process, the one Rennet's own surfaces call the *chat sidecar*, is in
+[the T3 Code sidecar](./concepts/t3code-sidecar.md).
+
 ## Architecture tour
 
 ```mermaid

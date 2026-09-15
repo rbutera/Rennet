@@ -39,12 +39,26 @@ export function ConnectionsNotice() {
   );
 }
 
-/** A thread that exists but whose detail has not arrived over the sidecar socket yet. */
+/**
+ * A thread that exists but whose detail has not arrived over the sidecar socket yet. A
+ * skeleton, not a sentence: a live wait reads as a wait without a label to parse (Rai,
+ * 2026-09-14). The sr-only line keeps the state honest for a screen reader — and gives this
+ * package's test something to read back, since it renders nothing but React by design. The
+ * skeleton markup is inline `animate-pulse` rather than `@rennet/ui`'s `Skeleton`, which this
+ * package may not import.
+ */
 export function ThreadSyncingNotice() {
   return (
-    <p data-slot="t3-native-syncing" className="p-3 text-xs text-muted-foreground">
-      Connecting to the T3 Code sidecar…
-    </p>
+    <div
+      data-slot="t3-native-syncing"
+      role="status"
+      aria-label="Connecting to the chat sidecar"
+      className="flex flex-col gap-2.5 p-3"
+    >
+      <div className="h-3 w-2/3 animate-pulse rounded-md bg-line" />
+      <div className="h-3 w-1/2 animate-pulse rounded-md bg-line" />
+      <div className="h-3 w-4/5 animate-pulse rounded-md bg-line" />
+    </div>
   );
 }
 
@@ -56,7 +70,7 @@ export function ThreadSyncingNotice() {
 export function ThreadGoneNotice() {
   return (
     <p data-slot="t3-native-gone" className="p-3 text-xs text-muted-foreground">
-      This review's thread is no longer in the T3 Code sidecar. Nothing is being written to it.
+      This review's thread is no longer in the chat sidecar. Nothing is being written to it.
     </p>
   );
 }

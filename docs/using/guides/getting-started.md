@@ -15,8 +15,12 @@ If Rennet is not on this machine yet, [install it](./install-rennet.md) first.
 On a new client with no projects, Rennet opens a full-window welcome. It
 introduces the review model, applies appearance choices immediately, shows the
 tools detected in this environment, and lets you choose the orchestrator and
-Dual Harness mode. Dual Harness starts on when both Claude Code and Codex are
-available.
+Dual Harness mode. The orchestrator is the chat thread a review runs on — the
+one in the chat column. Choosing it enables that harness for reviews on this
+machine and routes the conversation to it, so a machine with both Claude Code
+and Codex runs the chat on the one you picked; the model council picks the
+model it answers on. The lens boards route on their own. Dual Harness starts on
+when both are available.
 
 If neither harness is detected, install [Claude Code or Codex](./install-a-coding-harness.md)
 and check again. The welcome does not replace the contextual
@@ -54,6 +58,53 @@ flowchart LR
   asks --> exit[Post review · Dispatch round · Open pull or merge request]
   exit -->|a round returns| boards
 ```
+
+## Review from the terminal
+
+You do not need the window to run a review. With the daemon running (`rennet
+serve`, or the desktop app open), `rennet review` opens one over the same front
+door a New Chat click uses and reads the result back from a path:
+
+```text
+rennet review main..feature/x        # a range in the current repository
+rennet review --pr 128               # a pull request by number
+```
+
+It resolves the repository at the given path (the current directory by default),
+adds it as a project if it is not one yet, and prints the review as the daemon
+produces it: the capture step, each lens lane as it settles, and each board write
+as it lands, one plain line each.
+
+Both forms are scoped to the repository you run them in, which matters in a
+workspace project that holds several repositories: a branch name and a pull
+request number are each unique only within one repository. `rennet review --pr
+128` reviews repository #128 of the checkout you are standing in, and refuses
+(naming the candidates) rather than guessing when two of the workspace's
+repositories both carry a #128 and neither is this one. The repository identity
+comes from the daemon, so the CLI never has to spell it. `rennet review` needs a
+daemon new enough to resolve that identity (Rennet server 0.1.5 or later); an
+older daemon is refused at connect, naming the version to update to, rather than
+reviewing against the wrong repository.
+
+When the boards settle it writes a single JSON
+document (the review, the range, a per-lens `lanes` array giving each lens's
+outcome, and every lens's board or its typed absence) to
+`<data dir>/reviews/<reviewId>.json` (or a path you pass with `--out`), and
+prints that absolute path as its last line, so a script can take `tail -1`. The
+path is always absolute, even when `--data-dir` is relative.
+
+The exit code carries the outcome: `0` when the boards settled, `1` when the
+daemon was not running or the review failed, was cancelled, or ran past
+`--timeout` (default half an hour). Once a session exists, a document is written
+whichever way it ends, so a script always has something to parse: a failure,
+cancellation, or timeout writes the review document with its reason, and even a
+capture-stage failure (before a review id exists) writes a small failure
+document, keyed by the session id, carrying `capture: "failed"`, the outcome,
+and the reason. Errors BEFORE a session is created write no document and print
+only to stderr: usage errors (`2`), a missing or incompatible daemon, and an
+invalid checkout or pull-request target. A review opened this way is an ordinary
+session: open it in the app by its id afterwards and its boards and transcript
+are where you left them.
 
 ## Add a project
 
@@ -195,21 +246,23 @@ and number, a local branch's name), the author with their forge avatar (your loc
 branches wear your own), CI as a green check, red cross, or copper dashed ring,
 lines added and removed, files touched, and when the change was created. A pull
 request's numbers come from the forge. A local branch's are measured on your
-machine: its committed diff against the project's primary branch, and the date of
-its first commit past it. A branch that is not ahead of the primary branch has
-nothing to review yet, so those cells read "—" rather than zero. Uncommitted edits
-are not counted in the lines. GitLab does not report line counts in its
-merge-request list, so GitLab rows show "—" there.
+machine, against the newest commit your clone holds for the project's primary
+branch — `origin/main` or `main`, whichever is ahead: its committed diff against
+that commit, and the date of its first commit past it. Rennet reads the refs your
+clone already holds, so a fetch is what moves those numbers on. A branch that is
+not ahead of the primary branch has nothing to review yet, so those cells read
+"—" rather than zero. Uncommitted edits are not counted in the lines. GitLab does
+not report line counts in its merge-request list, so GitLab rows show "—" there.
 
 A **Local** column states what is on your disk. A checked-out worktree says
-**clean** or **dirty** and how many commits it is ahead of and behind the primary
-branch; a bare branch with no checkout says only ahead and behind, because there
-is nothing to measure for cleanliness. A pull request you also have checked out
-locally reads **checked out** here, with a copper dot when that checkout is dirty;
-one you have not shows an em dash. As the canvas narrows the list folds from the
-right: files and created go first, then CI, the Local column, and the author's
-name, leaving the identity, the change, the author's face, the lines, and the
-activity.
+**clean** or **dirty** and how many commits it is ahead of and behind that same
+primary-branch commit; a bare branch with no checkout says only ahead and behind,
+because there is nothing to measure for cleanliness. A pull request you also have
+checked out locally reads **checked out** here, with a copper dot when that
+checkout is dirty; one you have not shows an em dash. As the canvas narrows the
+list folds from the right: files and created go first, then CI, the Local column,
+and the author's name, leaving the identity, the change, the author's face, the
+lines, and the activity.
 The back arrow or Escape leaves New Chat for the surface you came from. When the
 filter contains text, the first Escape clears it and the next leaves.
 
@@ -283,9 +336,9 @@ remains in the orchestrator chat beside it.
 
 What gets captured depends on the row. A pull-request row opens that pull
 request's diff. A local branch row captures that branch's own
-commits — everything since it left the project's primary branch — **without
-checking it out**. Nothing on disk moves, and you can review a branch you are not
-standing on.
+commits — everything since it left the newest commit your clone holds for the
+project's primary branch — **without checking it out**. Nothing on disk moves,
+and you can review a branch you are not standing on.
 
 That difference matters once you are reading. A working-tree capture is watched:
 edit the repository and the review says it went stale, and offers to regenerate.
@@ -347,7 +400,7 @@ returns to its board. Reloading the URL opens the same selection.
 
 | Board | Question |
 |---|---|
-| Design | What was this change supposed to do, according to its own specification? |
+| Design | What was this change supposed to do, according to its specification or its author? |
 | Sequence | In what order should I read the implementation? |
 | Decisions | Which implementation choices need explanation? |
 | Flagged | Where did automated analysis find a problem or a disagreement? |
@@ -359,17 +412,19 @@ words, or the reason it failed — rather than leaving a gap where a tab used to
 be. Reviewing a proposal before any code exists gives you a Design board and four
 lenses that say they found nothing to draft.
 
-Design reads the specification the branch was written against. When the branch
+Design reads the specification the branch was written against, when it has one. When the branch
 itself touches one in a format Rennet parses — an OpenSpec change, a Kiro
 feature, BMAD documents, a superpowers spec or plan, an ADR or a grill-me
 `CONTEXT.md` — Rennet renders that specification's own text straight onto the
 board, with no model turn and nothing sent to a provider. Otherwise a model
 reader looks through the checkout where specifications live, using the branch's
 own commit messages and pull request body as the clue, and it cites the line
-that ties the document to the branch so you can check the link. Repositories
-without a spec workflow are ordinary, and Rennet says so plainly: the Design
-board reads "No spec found for this branch.", which is a result rather than a
-gap.
+that ties the document to the branch so you can check the link. When there is no
+specification at all, the Design board is an overview drafted from the pull request
+description, the documentation the branch adds or changes, and the issues it links. The
+board labels itself an overview rather than a specification, and every part of it names
+the file it was read from. Only a branch with none of those three reads "No spec found
+for this branch.", which is a result rather than a gap.
 
 The board drafter writes each title and short intro. Design uses a wider
 structured measure for specification content. Sequence, Decisions, Flagged, and Noise use a
@@ -446,7 +501,7 @@ chat — a comment made on one surface is the same object everywhere. Diff line
 comments key to new-side line numbers, so a requested change carries a real
 diff position.
 
-**Say it in chat.** The chat column beside the surface is the review's T3 Code
+**Say it in chat.** The chat column beside the surface is the review's chat
 thread, and it travels with you across every board. It is **open when you arrive**
 — it holds the conversation about this review, not an optional extra panel — and
 `⌘J` closes it if you want the room. A close is yours: it stays shut, through every
@@ -455,15 +510,24 @@ runs a real turn on your own installed harness, working in this review's checkou
 and streams the answer back as it arrives. The thread persists in the sidecar, so it
 is still there after a reload. Asking about a highlighted span sends your question
 with the cited lines into the same thread and opens the chat on the answer.
-Nothing the thread says stages anything: you stage an ask yourself, from the board,
-a line, or a highlighted span.
+The thread knows it is this review's conversation, and it can use Rennet the way
+you do: read the boards, stage asks into your composer, compose a hand-off,
+dispatch a round. Staging is what it is steered toward, because a staged ask is
+what Rennet tracks — an ask it stages carries the thread as its author, joins the
+basket beside the ones you stage from a board, a line, or a highlighted span, and
+leaves only through the exit you click. Unstage it like any other ask, and the
+basket names it as coming from the chat thread.
+
+A session you opened before this release keeps the thread it already has: a
+thread's briefing and its tools are fixed when the thread is created, and Rennet
+never rewrites one under you. Archive that session and reopen it to get a briefed
+thread.
 
 If the thread is not there yet, the column says which kind of "not there" it is,
-and it never claims something is coming when nothing is. *Connecting to the T3 Code
-sidecar…* is a real wait — the thread exists and is arriving. *This review has no
-thread, and none is being opened* is settled, and carries the reason Rennet could
-not open one. *This review's thread is no longer in the T3 Code sidecar* means it
-was deleted. On a chat-only session — a new chat before its capture attaches — the
+and it never claims something is coming when nothing is. A skeleton placeholder is a
+real wait — the thread exists and is arriving. *This review has no thread, and none
+is being opened* is settled, and carries the reason Rennet could not open one. *This
+review's thread is no longer in the chat sidecar* means it was deleted. On a chat-only session — a new chat before its capture attaches — the
 column simply says no review is attached, because there is nothing to open a thread
 for yet.
 

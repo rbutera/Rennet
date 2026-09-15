@@ -23,6 +23,7 @@ import type {
   AnchorSpan,
   AskOccurrence,
   AskProjection,
+  Author,
   BenchmarkRun,
   ComposedHandoffBundle,
   DeltaDigestResult,
@@ -72,6 +73,7 @@ import {
   type PullRequestState,
   sha256Hex,
 } from "@rennet/protocol";
+import type { AppThreadServer } from "../app/app-mcp-server";
 import { deepLinkFor, type RaisedAttention } from "../attention-planner";
 import type { ResolvedForgePullRequestDestination } from "../forge-submission";
 import type { LandWorkBranchOutcome } from "../land-work-branch";
@@ -80,7 +82,9 @@ import {
   type ReviewIntelligenceSession,
 } from "../review-intelligence-session";
 import type { SettingsComposition } from "../settings";
+import type { ModelSelection } from "../t3/client";
 import type { T3SidecarSupervisor } from "../t3/supervisor";
+import type { ThreadBinding } from "../t3/threads";
 import type { WorkBranchState } from "../work-branch-state";
 
 /**
@@ -127,6 +131,36 @@ export interface DispatchDeps {
   readonly boundWorkspaceForReview?: (
     reviewId: string,
   ) => Promise<{ readonly root: string; readonly branch?: string } | undefined>;
+  /**
+   * What a SESSION thread is created with, beyond its cwd (session-thread-briefing 4.1):
+   * the briefing's fixed text, Rennet's app-tools address, and the council's routing for
+   * the `orchestrator-chat` job. Three host facts `bindReviewThread` assembles into one
+   * `createThread`; the review's own half (the patchset, the context directory, the tool
+   * names) it resolves itself, so the assembly stays in one readable place.
+   *
+   * Absent ⇒ this composition stood up no briefing (a hermetic `createServer` in a test),
+   * and the session thread is created bare on the sidecar's default model, exactly as
+   * every thread was before this change.
+   */
+  readonly sessionThread?: {
+    /** The briefing's fixed half — `SESSION_BRIEFING_FILE` off the shipped prompts dir. */
+    readonly briefingText: () => string | Promise<string>;
+    /**
+     * The app-tools `mcpServers` entry for one thread id. Rejects when the listener could
+     * not be bound, which the bind reports as "no tools attached" rather than as no thread.
+     */
+    readonly appServerFor: (threadId: string) => Promise<AppThreadServer>;
+    /**
+     * The council's `orchestrator-chat` selection for the tree this thread runs in, or
+     * `undefined` when no installed provider answers the job — the one case the bind logs
+     * and falls to the default.
+     *
+     * It takes the ROOT because availability is a property of the checkout, not of the
+     * daemon: a WSL-locus review is answered by the distro's harnesses, and the reviewer's
+     * enable choice is per host. Every other council site resolves the same way.
+     */
+    readonly modelSelection: (repoRoot: string) => Promise<ModelSelection | undefined>;
+  };
   /**
    * Where a background failure this layer cannot report to a caller goes (#872): today the
    * capture-time chat-thread bind, which is fire-and-forget by design and therefore has no
@@ -197,6 +231,17 @@ export interface DispatchDeps {
   readonly allowedRoots: Set<string>;
   /** Resolve a repository to review (Electron dialog, or the test-repo env). `null` = cancelled. */
   chooseRepository(): Promise<string | null>;
+  /**
+   * Resolve a checkout PATH to its canonical `owner/name` (headless-review-cli D11), the same
+   * identity `locals`/`prs` carry. The headless CLI sends its toplevel path here so the DAEMON
+   * produces the identity string it then mints and PR-scopes with, never parsing the remote
+   * itself. A pure read of the repo's origin remote; `forgeRepository` is absent for a
+   * local-only repo with no forge remote.
+   */
+  repositoryIdentify(input: { path: string }): Promise<{
+    repository: string;
+    forgeRepository?: ForgeRepoIdentity;
+  }>;
   /**
    * Open a GitHub pull request into a review (the front door's second source):
    * parse the ref (`owner/repo#123` or a PR URL), fetch + diff the PR against the
@@ -316,6 +361,16 @@ export interface DispatchDeps {
     /** The composed bundle's ordered, verbatim work-order prompt (issue #72). */
     prompt: string;
     readonly reviewId: string;
+    /**
+     * The review's thread, ALREADY BOUND by the caller through `bindReviewThread`.
+     *
+     * The handoff used to bind for itself on the same `{ kind: "session" }` key, which made
+     * it a second creation path: a handoff run before the dock was ever opened created the
+     * review's conversation with no briefing, no app tools and no council selection, and
+     * kept it that way for the thread's life. The binding now travels, so the one assembly
+     * point is the only thing that ever creates it.
+     */
+    readonly binding: ThreadBinding;
   }) => Promise<HandoffTurnOutcome>;
   /**
    * The handoff-bundle composer (issue #72, Model Council M24): the light-tier
@@ -658,6 +713,9 @@ export interface DispatchDeps {
       replacesSessionId?: string;
       target?: {
         branch: string;
+        /** The branch capture's base ref (headless-review-cli D2); branch arm only, not part
+         *  of the claim key. Absent ⇒ the project's primary branch, as before. */
+        base?: string;
         prNumber?: number;
         repository?: string;
         forgeRepository?: ForgeRepoIdentity;
@@ -790,6 +848,17 @@ export interface DispatchContext {
    * connections (which cannot register a push token).
    */
   deviceId?: string;
+  /**
+   * WHO is making this call, when the transport knows and the caller is not the reviewer
+   * at the keyboard (`session-thread-briefing`). The app-tools MCP server stamps
+   * `{ kind: "orchestrator", id: <threadId> }` from the address the call arrived on — never
+   * from anything the model sent — so a handler that records an author records the thread's,
+   * and a model that names itself the user changes nothing.
+   *
+   * Absent for every loopback and projected client call: the reviewer's own acts are
+   * authored by the reviewer, which is what the ask log already assumes.
+   */
+  author?: Author;
 }
 
 /** One command handler: the re-seated body of a former `switch` arm, keyed by command id. */

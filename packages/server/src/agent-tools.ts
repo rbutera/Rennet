@@ -38,19 +38,33 @@ export function appToolName(commandId: string): string {
   return `app_${commandId.replaceAll(".", "_")}`;
 }
 
+/** The registry rows the agent surface is a projection of, in registry order. */
+function agentExposedCommands(): CommandName[] {
+  return (Object.keys(commands) as CommandName[]).filter((id) => commands[id].exposure.agent);
+}
+
 /**
  * Build the `app_*` tool surface by iterating the command registry (#465): every row whose
  * `exposure.agent` is true becomes exactly one in-process tool, its args schema and label taken
  * from the row. Rule Zero: this is a plain projection — no per-tool allow/deny list, no gate.
  */
 export function buildAppTools(dispatch: AppToolDispatch): readonly AppTool[] {
-  return (Object.keys(commands) as CommandName[])
-    .filter((id) => commands[id].exposure.agent)
-    .map((id) => ({
-      name: appToolName(id),
-      commandId: id,
-      description: commands[id].label,
-      inputSchema: commands[id].args,
-      run: (input: unknown, ctx?: DispatchContext) => dispatch(id, input, ctx),
-    }));
+  return agentExposedCommands().map((id) => ({
+    name: appToolName(id),
+    commandId: id,
+    description: commands[id].label,
+    inputSchema: commands[id].args,
+    run: (input: unknown, ctx?: DispatchContext) => dispatch(id, input, ctx),
+  }));
+}
+
+/**
+ * Just the names, for a caller with no dispatch to bind — the session briefing, which tells
+ * the thread which tools it holds (session-thread-briefing 4.1).
+ *
+ * Derived from the SAME filter `buildAppTools` uses, so the briefing cannot name a tool the
+ * server does not serve or miss one it does; a test pins the two lists equal.
+ */
+export function appToolNames(): readonly string[] {
+  return agentExposedCommands().map(appToolName);
 }

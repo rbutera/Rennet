@@ -1,6 +1,6 @@
 import { type CommandName, commands } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
-import { appToolName, buildAppTools } from "./agent-tools";
+import { appToolName, appToolNames, buildAppTools } from "./agent-tools";
 
 // The registry-iteration proof (#465, task 2.4). The `app_*` surface is built by iterating the
 // command registry for `exposure.agent` rows — no hand-kept list. This asserts the surface is a
@@ -100,5 +100,15 @@ describe("app_* agent tool surface (#465)", () => {
     for (const wb of ["create", "schema", "apply", "describe", "events"]) {
       expect(tools.some((t) => t.name === wb || t.name === `app_${wb}`)).toBe(false);
     }
+  });
+
+  // `agent-tools.ts` says of `appToolNames`: "a test pins the two lists equal". It did not,
+  // and the briefing is what reads the name-only list — so the two could have drifted into
+  // a briefing naming tools the server does not serve, or missing ones it does, with every
+  // suite green. Order matters as much as membership: the briefing prints them in this
+  // order, and the caller that reads it has no way to tell a reordering from a rewrite.
+  it("names exactly what buildAppTools builds, in the same order", () => {
+    expect(appToolNames()).toEqual(buildAppTools(noop).map((tool) => tool.name));
+    expect(appToolNames().length).toBe(agentRows.length);
   });
 });

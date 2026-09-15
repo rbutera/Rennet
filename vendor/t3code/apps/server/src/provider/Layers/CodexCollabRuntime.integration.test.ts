@@ -777,6 +777,7 @@ describe("CodexSessionRuntime collab integration", () => {
     readonly threadId: string;
     readonly appServerArgs?: ReadonlyArray<string>;
     readonly sidecarMcpServerConfigured?: boolean;
+    readonly threadInstructions?: string;
   }) =>
     Effect.gen(function* () {
       const script = { rootThreadId: ROOT, recordAllRequests: true, notifications: [] };
@@ -799,6 +800,9 @@ describe("CodexSessionRuntime collab integration", () => {
         ...(options.appServerArgs ? { appServerArgs: options.appServerArgs } : {}),
         ...(options.sidecarMcpServerConfigured !== undefined
           ? { sidecarMcpServerConfigured: options.sidecarMcpServerConfigured }
+          : {}),
+        ...(options.threadInstructions !== undefined
+          ? { threadInstructions: options.threadInstructions }
           : {}),
       });
       yield* runtime.start();
@@ -849,6 +853,33 @@ describe("CodexSessionRuntime collab integration", () => {
     Effect.gen(function* () {
       const requests = yield* driveOneTurn({ threadId: "thread-mcp-no-reload" });
       assert.isFalse(requests.some((request) => request.method === "config/mcpServer/reload"));
+    }),
+  );
+
+  it.effect("carries the thread's briefing in the turn's developer instructions", () =>
+    Effect.gen(function* () {
+      // Codex has no system-prompt append, so the Claude leg's
+      // `systemPrompt.append` lands here instead. Asserted on the request the
+      // real runtime sent to a real app-server process, because that string is
+      // the only place the append actually exists.
+      const briefing = "You are the orchestrator of a Rennet review of feat/x.";
+      const requests = yield* driveOneTurn({
+        threadId: "thread-briefed",
+        threadInstructions: briefing,
+      });
+      const instructions = developerInstructionsOf(requests);
+      assert.include(instructions, briefing);
+      // After T3's own blocks, not instead of them.
+      assert.include(instructions, "<collaboration_mode>");
+      assert.isAbove(instructions.indexOf(briefing), instructions.indexOf("<runtime_info>"));
+    }),
+  );
+
+  it.effect("sends the same developer instructions when the thread has no briefing", () =>
+    Effect.gen(function* () {
+      const requests = yield* driveOneTurn({ threadId: "thread-unbriefed" });
+      const instructions = developerInstructionsOf(requests);
+      assert.isTrue(instructions.endsWith("</runtime_info>"));
     }),
   );
 

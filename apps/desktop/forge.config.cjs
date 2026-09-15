@@ -6,17 +6,27 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { flipFuses, FuseV1Options, FuseVersion } = require("@electron/fuses");
 
-// R2 packaging requirement: the Claude adapter uses @anthropic-ai/claude-agent-sdk,
-// which vendors a per-platform `claude` executable (~270 MB). Rennet spawns the
-// user's OWN installed binary via pathToClaudeCodeExecutable, so the SDK's bundled
-// executables must be stripped at package time. This mirrors T3 Code's
-// DESKTOP_FILE_EXCLUSIONS precedent. The SDK is not yet a production dependency
-// (its licence is not in the MIT-family gate and it fails the release-age policy;
-// see the follow-up bead), so this rule is dormant today and recorded ahead of
-// packaging so a future dependency addition cannot silently ship the binaries.
+// R2 packaging requirement: the Claude adapter depends on @anthropic-ai/claude-agent-sdk
+// (now a production dependency of @rennet/adapters and @rennet/server, 0.3.223). Its
+// per-platform package @anthropic-ai/claude-agent-sdk-<platform> carries a ~270 MB `claude`
+// executable as its only real payload, and the main package can vendor its own CLI binary
+// too. Rennet spawns the user's OWN installed binary via pathToClaudeCodeExecutable, so a
+// bundled harness binary is never used, and CLAUDE.md forbids shipping one. Strip both
+// shapes at package time. This mirrors T3 Code's DESKTOP_FILE_EXCLUSIONS precedent.
+//
+// NOTE these patterns are defence in depth: the blanket /^\/node_modules/ ignore below
+// already keeps node_modules out of the bundle, so on that path they never fire. The
+// load-bearing guard is the postPackage absence assertion (assertNoHarnessSdkPlatformArtifacts),
+// which fails the build if a platform-package artifact reaches the packaged app by ANY route
+// (a staged sidecar node_modules, a copied asset, a future change to the ignore list).
 const HARNESS_SDK_FILE_EXCLUSIONS = [
   /\/node_modules\/@anthropic-ai\/claude-agent-sdk\/vendor\//,
   /\/node_modules\/@anthropic-ai\/claude-agent-sdk\/.*\/(?:cli|claude)(?:\.exe)?$/,
+  // The per-platform packages: exclude each whole directory (its only real payload is the
+  // vendored `claude` executable). Anchored to a known OS token so it covers every arch and
+  // -musl variant without flagging an unrelated claude-agent-sdk-* dir, and never the main
+  // @anthropic-ai/claude-agent-sdk package handled by the two patterns above.
+  /\/node_modules\/@anthropic-ai\/claude-agent-sdk-(?:darwin|linux|win32)[^/]*\//,
 ];
 
 // Signing is CONDITIONAL on the presence of an Apple Developer ID identity in the
@@ -96,11 +106,19 @@ async function verifyPackagedNativePayload(_forgeConfig, packageResult) {
   }
 
   const checkerPath = path.join(__dirname, "../../scripts/check-native-artifact-layout.mjs");
-  const { assertNativeArtifactLayout } = await import(pathToFileURL(checkerPath).href);
+  const { assertNativeArtifactLayout, assertNoHarnessSdkPlatformArtifacts } = await import(
+    pathToFileURL(checkerPath).href
+  );
   const expectedPlatforms =
     platform === "win32" ? [`win32-${arch}`, "linux-x64"] : [`darwin-${arch}`];
   for (const outputPath of outputPaths) {
     await assertNativeArtifactLayout(packagedNativeRoot(outputPath, platform), expectedPlatforms);
+  }
+
+  // A harness SDK per-platform `claude` binary must never ship (dead weight + a bundled
+  // harness binary CLAUDE.md forbids). Fail the package if one reached the app by any route.
+  for (const outputPath of outputPaths) {
+    await assertNoHarnessSdkPlatformArtifacts(outputPath);
   }
 }
 

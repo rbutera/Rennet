@@ -13,6 +13,10 @@
     "nativeArtifactStagingTest": [
       "{workspaceRoot}/scripts/native-artifact-staging.mjs",
       "{workspaceRoot}/scripts/native-artifact-staging.test.mjs"
+    ],
+    "nativeArtifactLayoutTest": [
+      "{workspaceRoot}/scripts/check-native-artifact-layout.mjs",
+      "{workspaceRoot}/scripts/check-native-artifact-layout.test.mjs"
     ]
   },
   "targets": {
@@ -27,9 +31,14 @@
     },
     "typecheck": { "command": "pnpm exec tsc -p packages/server/tsconfig.json" },
     "test": {
-      "command": "pnpm exec vitest run packages/server/src && node --test scripts/native-artifact-staging.test.mjs",
+      "command": "pnpm exec vitest run packages/server/src && node --test scripts/native-artifact-staging.test.mjs scripts/check-native-artifact-layout.test.mjs",
       "dependsOn": ["build"],
-      "inputs": ["default", "^production", { "input": "nativeArtifactStagingTest" }]
+      "inputs": [
+        "default",
+        "^production",
+        { "input": "nativeArtifactStagingTest" },
+        { "input": "nativeArtifactLayoutTest" }
+      ]
     },
     "real-rounds": {
       "cache": false,

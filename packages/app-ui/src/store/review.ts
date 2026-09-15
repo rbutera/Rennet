@@ -1,4 +1,5 @@
 import {
+  type AskAuthor,
   type AskProjection,
   type CodeRef,
   type CommandInput,
@@ -90,6 +91,17 @@ export interface StagedAsk {
   readonly threadId?: string;
   /** The immutable board finding that originated this ask, when applicable. */
   readonly finding?: FindingRef;
+  /**
+   * WHO staged it — the reviewer (absent, the default) or the session thread through
+   * `rennet_app` (session-thread-briefing).
+   *
+   * The durable log has recorded this since the app tools shipped, stamped server-side from
+   * the call's own address, and this type did not declare it — so the field arrived in every
+   * `hydrateAsks` projection at runtime and was invisible to every renderer. The spec and
+   * three doc pages said the reviewer sees the thread's authorship on the ask; they were
+   * describing a value that existed and reached no pixel.
+   */
+  readonly author?: AskAuthor;
 }
 
 /**

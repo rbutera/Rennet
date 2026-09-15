@@ -1391,7 +1391,7 @@ describe("stopOwnedDaemon stops the owned T3 sidecar AFTER the daemon (t3code-si
       sleep: immediateSleep,
     });
     expect(stopSidecar).toHaveBeenCalledWith("/data");
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("T3 sidecar pid 4242"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("chat sidecar pid 4242"));
     // Positive control: the daemon outcome is unchanged by the sidecar step.
     expect(outcome).toEqual({ kind: "stopped" });
   });

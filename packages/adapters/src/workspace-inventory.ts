@@ -33,7 +33,7 @@ import {
   type WorktreeRow,
 } from "@rennet/protocol";
 import { execa } from "execa";
-import type { GitExec } from "./git-range-diff";
+import { type GitExec, isAncestor } from "./git-range-diff";
 
 /** The prefix of a Rennet sibling branch (`rennet/<branch>`, workspace `own`, D4). */
 export const SIBLING_BRANCH_PREFIX = "rennet/";
@@ -416,27 +416,6 @@ async function remoteTrackingRefs(
       const slash = rest.indexOf("/");
       return slash > 0 && rest.slice(slash + 1) === branch;
     });
-}
-
-/**
- * Is `ancestor` reachable from `descendant`? (`merge-base --is-ancestor`'s exit code.)
- *
- * Exported because the SIBLING BIND asks the same question with the same refs discipline —
- * both arguments FULLY QUALIFIED, so a tag of the branch's name cannot answer for it — and
- * a second spelling of this call is exactly how the two would drift apart.
- */
-export async function isAncestor(
-  git: GitExec,
-  repoRoot: string,
-  ancestor: string,
-  descendant: string,
-): Promise<boolean> {
-  try {
-    await git(repoRoot, ["merge-base", "--is-ancestor", ancestor, descendant]);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /** Where a session's work branch was actually pushed (workspace-settings D4/D5). */

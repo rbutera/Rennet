@@ -85,7 +85,7 @@ the highest-risk line.
 
 | Lens | Question |
 |---|---|
-| Design | What was this change supposed to do, according to its own specification? |
+| Design | What was this change supposed to do, according to its specification or its author? |
 | Sequence | In what order should I read the implementation? |
 | Decisions | Which implementation choices need explanation? |
 | Flagged | Where did automated analysis find a problem or disagreement? |
@@ -106,10 +106,9 @@ starts a daemon on the user's machine and connects to it over loopback. The
 daemon can also serve paired clients over a private network. Closing the desktop
 window does not stop the daemon.
 
-The daemon also runs a second local process, the T3 Code sidecar, built from the
-vendored T3 Code snapshot — every session's chat and every work order runs on a thread
-inside it, so it starts with the first review that opens a chat. It runs with T3
-telemetry off and no T3 Connect configuration, and its only egress is the same coding
+The daemon also runs a second local process, the chat sidecar — every session's chat
+and every work order runs on a thread inside it, so it starts with the first review
+that opens a chat. It runs with telemetry off, and its only egress is the same coding
 harness traffic to the provider, plus any MCP servers the user configured.
 
 Review state and project context stay with that daemon. Material selected for a

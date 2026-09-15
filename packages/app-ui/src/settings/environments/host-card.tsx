@@ -49,26 +49,6 @@ function daemonLine(host: SettingsHost): string {
   return "Not connected — daemon unreachable, version unknown";
 }
 
-/**
- * The owned T3 Code sidecar's line (t3code-sidecar-chat, 5.3): a second local process the
- * daemon owns, named as such, with what it reports. Absent until something asked for it.
- * The egress statement is copy, not a consent step.
- */
-function sidecarLine(host: SettingsHost): string | null {
-  const sidecar = host.daemon.t3Sidecar;
-  if (!sidecar || sidecar.state === "off") return null;
-  const state =
-    sidecar.state === "ready"
-      ? `ready${sidecar.port ? ` on 127.0.0.1:${sidecar.port}` : ""}`
-      : sidecar.state === "starting"
-        ? "starting"
-        : `degraded${sidecar.detail ? ` — ${sidecar.detail}` : ""}`;
-  // The three facts that used to sit beside the chat-engine control, moved here when the
-  // engine choice was deleted (t3-lens-threads 4.1): every session's chat is now a T3
-  // thread, so they are facts about the product, not about a choice. Copy, not a gate.
-  return `T3 Code sidecar (owned by this daemon) — ${state}; telemetry off, egress only through the coding harness. Threads are persisted harness sessions: they appear in the harness's own history, their token usage is reported by T3 Code's usage view rather than Rennet's seat usage, and T3 Code records a hidden checkpoint ref in the reviewed repository per turn, which ordinary pushes do not send.`;
-}
-
 /** The Remove confirmation's blast-radius sentence — names the counts it forgets. */
 function removeDescription(host: SettingsHost): string {
   const projects = host.projectCount ?? 0;
@@ -213,7 +193,6 @@ export function HostCard({ host }: { readonly host: SettingsHost }) {
 
       <div className="flex items-center gap-2 text-xs text-ink-soft">
         <span>{daemonLine(host)}</span>
-        {sidecarLine(host) ? <span data-slot="t3-sidecar-line">{sidecarLine(host)}</span> : null}
         {/* Reconnect dispatches the REAL re-handshake (C17 cluster 5, #533): disabled and
             reading "Connecting…" for exactly as long as the operation is in flight, then
             either the card flips reachable (the refreshed status says so) or the failure
@@ -273,4 +252,4 @@ export function HostCard({ host }: { readonly host: SettingsHost }) {
   );
 }
 
-export { daemonLine, removeDescription, sidecarLine };
+export { daemonLine, removeDescription };

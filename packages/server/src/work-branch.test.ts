@@ -264,6 +264,7 @@ describe("the push under `own` (task 2.4)", () => {
   };
   const DESTINATION = {
     remoteName: "origin",
+    remotes: ["origin"],
     target: { repo: { forge: "github", owner: "acme", name: "widget" } },
   } satisfies ResolvedForgePullRequestDestination;
 
@@ -509,6 +510,7 @@ describe("sibling collection (D5, task 2.6)", () => {
       },
       destination: {
         remoteName: "origin",
+        remotes: ["origin"],
         target: { repo: { forge: "github", owner: "acme", name: "widget" } },
       },
     });

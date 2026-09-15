@@ -61,6 +61,7 @@ import {
   ensurePrWorktree,
   execaGitFor,
   executeExternalCommand,
+  extractRelatedRefs,
   FileProjectStore,
   type ForgeDetectionDeps,
   GenerationStore,
@@ -83,6 +84,7 @@ import {
   listWorkspaces,
   loadConventionCatalogue,
   loadProjectDetail,
+  loadRelatedContextDossier,
   mapCouncilModel,
   matchWorktree,
   migrateLegacyGlobalConfig,
@@ -113,6 +115,7 @@ import {
   repositoryIdentity,
   resolveForgeRemote,
   resolveGitHubAuth,
+  resolvePrimaryBase,
   resolveTrackerConfig,
   detectForges as runForgeDetection,
   runGitHubDeviceFlow,
@@ -183,7 +186,7 @@ import {
   verifyFlaggedReview,
   workOrderContextFileFrom,
 } from "@rennet/core";
-import type { PromptContextFile } from "@rennet/prompts";
+import { type PromptContextFile, SESSION_BRIEFING_FILE } from "@rennet/prompts";
 import type {
   CodingHarnessSelection,
   ComposedHandoffBundle,
@@ -191,6 +194,7 @@ import type {
   CouncilHarnessId,
   DetectedForge,
   DetectedHarness,
+  DossierItem,
   DraftBoard,
   FlaggedReview,
   ForgeRepoIdentity,
@@ -221,6 +225,11 @@ import {
   serializeDossier,
   sha256Hex,
 } from "@rennet/protocol";
+import {
+  type AppMcpServer,
+  startAppMcpServer,
+  sweepStaleAppToolResults,
+} from "./app/app-mcp-server";
 import { createBenchmarkRecording } from "./benchmark-store";
 import {
   BOARD_MCP_SERVER_NAME,
@@ -267,6 +276,7 @@ import {
 import { composeGitHubTransport } from "./github-fetch";
 import { createGitHubTokenStore } from "./github-token-store";
 import { createLiveComposeBundle } from "./handoff-compose-live";
+import { memoiseOnlyAvailable } from "./harness-memo";
 import { InFlightReviews } from "./in-flight-reviews";
 import { landWorkBranch } from "./land-work-branch";
 import { sweepLegacyWorktrees } from "./legacy-worktrees";
@@ -353,10 +363,19 @@ import {
   type T3HandoffTurnOutcome,
   type T3TurnCheckpointRead,
 } from "./t3/handoff";
+import { resolveSessionThreadModel } from "./t3/orchestrator-chat";
 import { resolveProviderBinaries } from "./t3/resolve-provider-binaries";
 import { type SeatThreadWatch, watchSeatThread } from "./t3/seat-progress";
+import { readSeededProviderBinaries, sidecarBaseDir } from "./t3/sidecar";
 import { createT3SidecarSupervisor } from "./t3/supervisor";
-import { roundThreadTitle, type SeatKind, seatThreadTitle, sweepIfArchived } from "./t3/threads";
+import {
+  readBindings,
+  roundThreadTitle,
+  type SeatKind,
+  seatThreadTitle,
+  sweepIfArchived,
+  type ThreadBinding,
+} from "./t3/threads";
 import { QUIET_WORK_BRANCH_STATE, readWorkBranchState } from "./work-branch-state";
 import { worktreeClaimsIn } from "./worktree-claims";
 import { startWsListener, type WsListener } from "./ws-listener";
@@ -633,12 +652,27 @@ export async function captureBranchPatchset(input: {
   const headOid = (
     await input.git(root, ["rev-parse", "--verify", `${input.head}^{commit}`])
   ).trim();
-  const baseOid = (await input.git(root, ["merge-base", input.base, headOid])).trim();
+  // `input.base` is the project's primary branch NAME, and local `main` only moves
+  // when the reviewer pulls. Resolve the newest spelling of it instead
+  // (fresh-base-patchset, D1) so a branch cut from a fetched `origin/main` is not
+  // reviewed against wherever local `main` stopped, carrying every sibling's work.
+  const primary = await resolvePrimaryBase(input.git, root, {
+    primaryBranch: input.base,
+    head: headOid,
+  });
+  // No ref in this clone names `input.base` — a caller that passed an OID or `HEAD`,
+  // which git can still merge-base directly. Take it verbatim, as this path always did.
+  const baseOid =
+    primary.baseOid ?? (await input.git(root, ["merge-base", input.base, headOid])).trim();
   return captureRangePatchset(input.git, {
     root,
     locus: input.locus,
     baseOid,
     headOid,
+    // Only the resolved COMMIT is taken from the resolver. `baseRef` stays the name the
+    // caller passed, because this patchset's `baseRef` is what the own-branch pull request
+    // opens against, and a forge has no idea what `origin/main` means — GitHub answers 422
+    // for a `base` that is not one of its branches (fresh-base-patchset D4).
     baseRef: input.base,
     headRef: input.head,
     source: "local-branch",
@@ -1543,6 +1577,77 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return boardMcpServer;
   };
 
+  /**
+   * The daemon's loopback app-tools server (`session-thread-briefing`): `rennet_app`, the
+   * whole `exposure.agent` projection served to the review's session thread.
+   *
+   * ── THE SEAM ──────────────────────────────────────────────────────────────────
+   * `ensureAppMcpServer()` is what the session bind reaches for (`dispatch/chat.ts`
+   * `bindReviewThread`, cluster 4): await it, call `addressFor(threadId)`, and spread the
+   * result into `createThread({ mcpServers: { [name]: { url, bearerTokenEnvVar } } })`. It
+   * lives beside `ensureBoardMcpServer` because it is the same kind of thing — a listener
+   * the composition root owns and a bind addresses — and a bind that had to reach further
+   * than this for it would be a bind that started one.
+   *
+   * Started EAGERLY, unlike the board server: a board listener has nothing to serve until a
+   * generation opens a lane, while a session thread can be bound the moment a review is
+   * captured, and the url it is created with has to exist by then. Eager is also the house
+   * rule (#849, "almost nothing should be lazy in rennet"). The port is remembered in the
+   * sidecar's own base dir — a deterministic path, so this needs no running sidecar — and a
+   * restarted daemon comes back on the url its live threads were created with.
+   *
+   * A FAILED start is not memoised, so a transient bind failure costs one attempt rather
+   * than the app tools for the daemon's whole life; it does not fail the daemon either.
+   */
+  let appMcpServer: Promise<AppMcpServer> | null = null;
+  const ensureAppMcpServer = (): Promise<AppMcpServer> => {
+    appMcpServer ??= startAppMcpServer({
+      // The CURRENT sidecar's bearer, read per call for the reason the board server's is:
+      // a respawn replaces the environment every harness child inherits.
+      bearer: () => t3Sidecar.appBearer(),
+      // Late-bound, and this is why the option exists: `dispatch` is assigned far below this
+      // line and this listener binds before it. Read only when a call arrives.
+      dispatch: () => dispatch,
+      // Which review a thread is bound to, so a tool call that names no session gets the
+      // thread's own. The bindings file is the one place that mapping lives; a stale read
+      // is not possible because it is read per call, not captured. NOTE this is a REVIEW id
+      // (the T3 thread binding's own `sessionId` field is keyed on `reviewId` — `chat.ts`
+      // `bindReviewThread`), which is exactly right for this stamp and exactly wrong to reuse
+      // for a spill's directory (below; Codex re-review, P2).
+      sessionFor: (threadId) =>
+        readBindings(dataDir).find((row) => row.kind === "session" && row.threadId === threadId)
+          ?.sessionId,
+      // Where item 1's oversized-result spill lands (corrected by Codex's re-review, P2):
+      // resolved through the SAME review→session mapping every other durable read uses
+      // (`sessionIdForReview`, `boundRootForSession`), never through `sessionFor`'s review
+      // id directly. `sessionFor` above answers "which review", not "which session" — the
+      // two conflated meant a review bound to session `s1` spilled to the fallback tier
+      // (`sessionStore` has no row keyed on a review id) and archiving `s1` never reclaimed
+      // it. Late-bound, same as `sessionFor` above: `service`, `sessionIdForReview` and
+      // `boundRootForSession` are declared far below this line, but this lambda's BODY only
+      // runs once a call arrives, well after composition finishes.
+      spillOwnerFor: (threadId) => {
+        const reviewId = readBindings(dataDir).find(
+          (row) => row.kind === "session" && row.threadId === threadId,
+        )?.sessionId;
+        if (reviewId === undefined) return undefined;
+        const review = service.reviewById(reviewId);
+        if (review === null) return undefined;
+        const sessionId = sessionIdForReview(review);
+        const root = boundRootForSession(sessionId);
+        return root === undefined ? undefined : { sessionId, root };
+      },
+      stateDir: sidecarBaseDir(dataDir),
+    }).catch((error: unknown) => {
+      appMcpServer = null;
+      throw error;
+    });
+    return appMcpServer;
+  };
+  // Start it NOW (#849). Awaited near the end of composition, so `createRennetServer` does
+  // not resolve while the address a bind is about to ask for is still unbound.
+  const appMcpServerReady = ensureAppMcpServer();
+
   const resolveT3SeatRuntime = async (input: {
     /** The REPOSITORY the generation belongs to: the T3 project, and half the binding key. */
     readonly repoRoot: string;
@@ -1653,11 +1758,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const key = locus.kind === "wsl" ? `wsl:${locus.distro}:${distroCwd ?? ""}` : "host";
     let harness = claudeHarnesses.get(key);
     if (!harness) {
-      harness = createClaudeHarness({
-        env,
-        locus,
-        ...(distroCwd === undefined ? {} : { wslCwd: distroCwd }),
-      });
+      harness = memoiseOnlyAvailable(
+        claudeHarnesses,
+        key,
+        createClaudeHarness({
+          env,
+          locus,
+          ...(distroCwd === undefined ? {} : { wslCwd: distroCwd }),
+        }),
+        (result) => result.adapter !== null,
+      );
       claudeHarnesses.set(key, harness);
     }
     return harness;
@@ -1781,7 +1891,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           adapter: result.adapter,
         };
       })();
-      codexResolutions.set(key, resolution);
+      codexResolutions.set(
+        key,
+        memoiseOnlyAvailable(
+          codexResolutions,
+          key,
+          resolution,
+          (value) => value.availability.available,
+        ),
+      );
+      return codexResolutions.get(key) as Promise<CodexResolution>;
     }
     return resolution;
   }
@@ -3286,7 +3405,29 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     const round = roundWorkspaceRoots.get(sessionId);
     return [bound, round].filter((root): root is string => root !== undefined);
   });
-  const purgeContextForSession = (sessionId: string): void => void contextPurger.purge(sessionId);
+  /**
+   * The review-open related-context retrieval, held by REVIEW id so the Design lane can
+   * join the run already in flight (design-overview-fallback D3) instead of starting a
+   * second one.
+   *
+   * Process-local and deliberately small: one settled promise per open review, holding the
+   * dossier the store already has on disk. A daemon that restarted between the open and
+   * the drafting finds nothing here and reads the store directly, which is the same answer
+   * a settled promise would have given.
+   *
+   * The entry is dropped when the review's session is archived, below — the same boundary
+   * its context files go on, and for the same reason: after an archive nothing will read
+   * it again.
+   */
+  const relatedContextHolds = new Map<string, Promise<readonly DossierItem[] | undefined>>();
+  const purgeContextForSession = (sessionId: string): void => {
+    // Archive is the boundary for the held retrieval as much as for the files. Resolved by
+    // SESSION, because that is what the archive names, and a session holds at most one
+    // review — the reverse map `sessionIdForReview` builds.
+    const reviewId = sessionStore.load(sessionId)?.reviewId;
+    if (reviewId !== undefined) relatedContextHolds.delete(reviewId);
+    void contextPurger.purge(sessionId);
+  };
   /**
    * Every workspace a context directory could be UNDER, for the context sweep: every recorded
    * bound root — archived sessions included, since theirs is exactly what that sweep collects —
@@ -3392,6 +3533,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ),
     },
   );
+  // The app-tools spill's OWN fallback-tier sweep (item 1): a tool result that spilled
+  // because no session had resolved yet for the thread lands under the sidecar's base dir,
+  // outside every root `sweepOrphanedSessionContext` just covered above, so it needs its own
+  // age-based reclaim rather than an incarnation-stamped one.
+  sweepStaleAppToolResults(sidecarBaseDir(dataDir));
   // The worktree zoo's last rites (session-bound-workspace 5.5): one session now binds to one
   // workspace, so the per-round and per-review worktrees earlier versions left under the data
   // dir are removed here, once, and nothing recreates them. Fire and forget — a sweep must
@@ -3631,22 +3777,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // The handoff exit (t3-lens-threads 4.3): a composed work order runs as ONE turn on the
   // review's bound T3 thread. One engine, no switch — the review is what names the thread,
   // and the thread is keyed on the review's REPOSITORY ROOT, never a project id.
-  const runHandoffTurn = async (input: HandoffTurnInput): Promise<RoundWorkerTurnOutcome> => {
-    // The work order runs in the session's bound workspace, the same tree its seats read and
-    // the same one the round's turn takes — the binding is half the thread's key, so this is
-    // also what keeps chat, handoff and round on ONE thread. Bound here if nothing has.
-    const bound = await boundWorkspaceForReview(input.reviewId);
-    return runHandoffTurnOnThread(
-      bound === undefined
-        ? input
-        : {
-            ...input,
-            worktreePath: bound.root,
-            ...(bound.branch === undefined ? {} : { branch: bound.branch }),
-          },
-      t3Sidecar,
-    );
-  };
+  // The work order runs on the thread the DISPATCH bound (`dispatch/review.ts`, through
+  // `bindReviewThread`), in the session's bound workspace that bind resolved — which is the
+  // same tree its seats read and the round's turn takes. This wrapper no longer binds
+  // anything: binding here was a second creation path for the review's own conversation, and
+  // whichever path ran first decided whether the thread was ever briefed.
+  const runHandoffTurn = async (
+    input: HandoffTurnInput & { readonly binding: ThreadBinding },
+  ): Promise<RoundWorkerTurnOutcome> => runHandoffTurnOnThread(input, t3Sidecar);
   // B4 broadcast wiring (reconciliation 7, recorded): board events ride the EXISTING
   // WS push path — the runtime's store-append hook feeds `wsListener.broadcastBoardEvent`
   // (late-bound: `wsListener` is assigned below, read only when a board event fires), which
@@ -4067,10 +4205,46 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           designSources === null
             ? undefined
             : designSources.map(({ format, role, path }) => ({ format, role, path }));
+        // The related issues the host already fetched (design-overview-fallback D3). The
+        // DESIGN lane joins them — bounded — only when it is about to open its seat with
+        // no located specification; every other lane and both deterministic Design paths
+        // never call either of these.
+        //
+        // The held promise is the ONE retrieval this review ever runs. When the map has
+        // none — the daemon restarted, or the review was opened by a build before this
+        // one — the store is read directly under the SAME key the kick writes
+        // (`relatedContextDossierKey`), which is the answer a settled promise would have
+        // given; it is a synchronous file read, so it resolves before the ceiling can
+        // start mattering.
+        const liveReview = reviewNow();
+        const relatedContext = () =>
+          relatedContextHolds.get(liveReview.id) ??
+          Promise.resolve(loadRelatedContextDossier(liveReview, snapshotStore));
+        // Zero-cost and no egress: the refs the extractor finds in the branch name, the
+        // commit subjects and the PR paper, for the file the lane writes past its ceiling.
+        // Fail-safe like every other read on this path — `repoKeyOf` realpaths, and a
+        // tracker config that cannot be resolved is a file with no URLs, never a lane that
+        // cannot open.
+        const relatedRefs = () => {
+          try {
+            return extractRelatedRefs(
+              liveReview,
+              resolveTrackerConfig(
+                snapshotStore,
+                repoKeyOf(liveReview),
+                daemonSettingsStore.readState().config,
+              ),
+            );
+          } catch {
+            return [];
+          }
+        };
         return await roundsRuntime.runRound({
           ...input,
           ...(prPaper === undefined ? {} : { prPaper }),
           ...(designSourcePaths === undefined ? {} : { designSources: designSourcePaths }),
+          relatedContext,
+          relatedRefs,
           ...(assembleDesignBoardFor === undefined
             ? {}
             : { assembleDesignBoard: assembleDesignBoardFor }),
@@ -4915,6 +5089,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
 
   type PreparationTarget = {
     readonly branch: string;
+    /** The branch capture's base ref (headless-review-cli D2). The branch arm merge-bases
+     *  against it instead of the project's primary branch; ignored on the PR arm; never part
+     *  of the claim. Absent ⇒ the project's primary branch, exactly as before. */
+    readonly base?: string;
     readonly prNumber?: number;
     readonly repository?: string;
     readonly forgeRepository?: ForgeRepoIdentity;
@@ -5006,7 +5184,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             request.commandId,
             root,
             target.branch,
-            project?.primaryBranch ?? "HEAD",
+            // The explicit base (headless-review-cli D2) wins; absent ⇒ the project's primary
+            // branch, then `HEAD`, exactly the resolution this line has always done.
+            target.base ?? project?.primaryBranch ?? "HEAD",
           );
         } else {
           review =
@@ -5376,6 +5556,57 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // threads; the host resolves the bound root the wire never carries.
     purgeSessionContext: purgeContextForSession,
     boundWorkspaceForReview,
+    // What a SESSION thread is created with beyond its cwd (session-thread-briefing 4.1).
+    // `bindReviewThread` assembles these three with the review's own facts; the composition
+    // root is the only thing that can answer them, so they arrive as one dep rather than as
+    // a bind that reaches into the daemon's internals.
+    sessionThread: {
+      // Memoized by `createNodePromptReader`: the briefing is re-rendered on every bind and
+      // the prompt files ship beside the daemon, so this reads the file once per daemon.
+      briefingText: () => readPrompt(SESSION_BRIEFING_FILE),
+      appServerFor: async (threadId) => (await ensureAppMcpServer()).addressFor(threadId),
+      // The council's own routing for the job that has always named this thread, over an
+      // installed set that has to satisfy THREE things at once, because each of them vetoes
+      // a provider on its own:
+      //
+      //  1. the review's own locus-threaded probes — the SAME `adapter` / `codex.available`
+      //     pair every other council site resolves against. A WSL-locus review is answered
+      //     by the distro's harnesses, never the Windows host's;
+      //  2. the reviewer's enable choice for that host. Turning Codex off in Settings and
+      //     still getting a Codex conversation is the surface lying about its own switch;
+      //  3. what the RUNNING sidecar has a path for, read back off the settings it was
+      //     seeded with. The council may route the chat to Codex all it likes — a sidecar
+      //     with no `codex` binary cannot start a Codex session, and an ADOPTED sidecar's
+      //     binaries were resolved by a daemon this one never was.
+      //
+      // Nothing here is cached. It was, over a raw `resolveProviderBinaries` of its own, and
+      // that probe answers PARTIALLY on a transient failure — each harness is caught
+      // independently, so one bad moment for Codex discovery froze `{ claude }` for the
+      // daemon's whole life and quietly routed a stored Codex choice to Claude, with the
+      // cache-resetting `catch` never firing because nothing ever rejected. The per-repo
+      // probes underneath memoise where memoising is correct, and the bind resolves this
+      // once per THREAD (`creation` is a thunk), so there is nothing left to save.
+      modelSelection: (repoRoot) =>
+        resolveSessionThreadModel(repoRoot, {
+          // `turnRoot` by name as well as by value, because the locus-threading guard
+          // (`locus-harness-threading.test.ts`) enumerates these call sites by argument
+          // identifier: a WSL adapter BAKES its `--cd` at construction, so the root handed
+          // to the resolver is the tree every turn of that harness really runs in. This one
+          // arrives from `bindReviewThread` as the session's bound workspace.
+          claudeAvailable: async (turnRoot) => (await claudeAdapterForRepo(turnRoot)) !== null,
+          codexAvailable: async (turnRoot) => {
+            const locus = locusContextForRepo(turnRoot).locus;
+            return (await getCodexResolution(locus)).availability.available;
+          },
+          disabledHarnesses: (turnRoot) => {
+            const { locus } = locusContextForRepo(turnRoot);
+            const source = locus.kind === "wsl" ? `wsl:${locus.distro}` : "local";
+            return daemonSettingsStore.readState().config.hosts?.[source]?.disabledHarnesses ?? [];
+          },
+          sidecarBinaries: () => readSeededProviderBinaries(sidecarBaseDir(dataDir)),
+          overrides: councilOverrides,
+        }),
+    },
     // The ONE key a review's context files live under — the same id `purgeSessionContext`
     // is called with, so the handoff work order the dispatch writes is the one the archive
     // purges and the orphan sweep spares (review finding 1).
@@ -5411,11 +5642,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         const written: { discard(): void }[] = [];
         // The retrieval seat reads the dossier file this writes, so the lease is held for
         // the whole kick — an archive landing mid-retrieval defers its purge (finding 2).
-        // The `catch` on the voided promise is what the `try` below cannot do: it only sees a
-        // synchronous throw, and the lease now BINDS the workspace first, which rejects when
-        // the workspace cannot be made. Without it a failed kick is an unhandled rejection
+        // The `.catch` is what the `try` below cannot do: it only sees a synchronous
+        // throw, and the lease now BINDS the workspace first, which rejects when the
+        // workspace cannot be made. Without it a failed kick is an unhandled rejection
         // rather than the garnish the comment below promises.
-        void holdingReviewContext(review, () =>
+        //
+        // The settled promise is HELD by review id (D3) so the Design lane joins this
+        // exact run rather than starting a second retrieval, and a lane that joins after
+        // it settled resolves immediately. Held AFTER the `.catch`, which is what makes it
+        // safe to await a second time: the rejection is already handled, so the lane sees
+        // an honest `undefined` instead of a throw it would have to absorb.
+        const retrieval = holdingReviewContext(review, () =>
           runRelatedContextRetrieval(review, {
             councilOverrides,
             store: snapshotStore,
@@ -5443,6 +5680,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             for (const file of written) file.discard();
           }),
         ).catch(() => undefined);
+        relatedContextHolds.set(review.id, retrieval);
       } catch {
         // Retrieval is garnish on the open — a failed kick never surfaces here.
       }
@@ -5585,12 +5823,36 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                 repository: forgeRepositorySlug(legacyPrRef.repo),
                 forgeRepository: legacyPrRef.repo,
               };
+        const entryTarget = identityTarget ?? target;
+        // Resolve the target repository to its root BEFORE the reattach decision, so a workspace
+        // mint is repo-precise (headless-review-cli D11 follow-up, #952). Without a root the New
+        // Chat mint made `claimingSession` return the first live claimant, which in a multi-repo
+        // workspace can be a pre-#580 legacy session on the same branch that belongs to ANOTHER
+        // repo — a cross-match onto the wrong repo's boards. Best-effort: an identity read that
+        // fails falls back to the pre-existing (rootless) behaviour rather than blocking the mint.
+        let resolvedRoot: string | undefined;
+        if (entryTarget !== undefined) {
+          try {
+            resolvedRoot = await resolveProjectRepositoryRoot({
+              project: projectStore.list().find((entry) => entry.id === projectId),
+              target: entryTarget,
+              identityForRoot: (root) => repositoryIdentity(gitForRepo(root), root),
+            });
+          } catch {
+            resolvedRoot = undefined;
+          }
+        }
         const entered =
           target === undefined
             ? { session: mintSession(projectId), reattached: false }
             : replacesSessionId === undefined
-              ? sessionEntry.enter(projectId, identityTarget ?? target)
-              : sessionEntry.enterSuccessor(replacesSessionId, projectId, identityTarget ?? target);
+              ? sessionEntry.enter(projectId, entryTarget ?? target, resolvedRoot)
+              : sessionEntry.enterSuccessor(
+                  replacesSessionId,
+                  projectId,
+                  entryTarget ?? target,
+                  resolvedRoot,
+                );
         if (!entered.reattached) sessionStore.save(entered.session);
         const current = sessionStore.load(entered.session.id) ?? entered.session;
         const prepared =
@@ -5914,6 +6176,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
     discoverProject: ({ path, kind }) =>
       discoverProject(defaultProjectDiscoveryDeps(gitForRepo(path)), path, kind),
+    // Resolve a checkout path to its canonical `owner/name` (headless-review-cli D11), the SAME
+    // `repositoryIdentity` that stamps `locals`/`prs`. A read of the repo's origin remote so the
+    // headless CLI never spells the identity itself; grants nothing (Rule Zero).
+    repositoryIdentify: ({ path }) => repositoryIdentity(gitForRepo(path), path),
     // Rule Zero: the ungated filesystem browser. No allowedRoots assertion here —
     // it's the picker that produces paths for the gated commands, not one itself.
     listDir: (input) => listDir(input, defaultFsListDirDeps()),
@@ -6255,6 +6521,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       : undefined,
   });
 
+  // The app-tools listener, bound before this function resolves: a session bind asks it for
+  // the url a thread is created with, and an unbound listener would hand out a dead one. A
+  // failure does NOT fail the daemon — the thread opens without its tools, which the reviewer
+  // sees as a chat that cannot read the boards, and the log says why.
+  await appMcpServerReady.catch((error: unknown) => {
+    console.error("The app-tools MCP server could not start", error);
+  });
+
   void (async () => {
     // A captured review need not belong to a persisted Project. Rehydrate the exact roots owned
     // by durable rounds before recovery starts, just as repository.choose granted them before the
@@ -6294,6 +6568,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       .catch(() => {
         // A listener that never started, or one whose close threw, must not take the rest
         // of the shutdown sequence with it.
+      });
+    void appMcpServer
+      ?.then((server) => server.close())
+      .catch(() => {
+        // Same: a listener that never started must not stop the shutdown sequence.
       });
     void wsListener?.close();
   };

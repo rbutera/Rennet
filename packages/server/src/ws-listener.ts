@@ -42,6 +42,7 @@ import {
   MIN_COMPATIBLE_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
   parseSessionFrame,
+  REVIEW_CLI_FEATURE,
 } from "@rennet/protocol";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
@@ -663,6 +664,11 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
               serverRequests: true,
               ...(deps.attention ? { [ATTENTION_FEATURE]: true } : {}),
               ...(deps.act ? { [ACT_FEATURE]: true } : {}),
+              // Any daemon built with this code wires the `repository.identify` seam
+              // (headless-review-cli D11), so it advertises unconditionally: the flag says the
+              // CLI can trust the daemon to resolve its checkout path, and its ABSENCE is what a
+              // pre-review-cli daemon shows so the CLI refuses at connect.
+              [REVIEW_CLI_FEATURE]: true,
             },
           });
           // Connect-time replay (#383 batch): hand THIS newly authorized socket the outstanding

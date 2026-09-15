@@ -435,6 +435,49 @@ export const ThreadLinkedPullRequest = Schema.Struct({
 });
 export type ThreadLinkedPullRequest = typeof ThreadLinkedPullRequest.Type;
 
+/** A server name that is safe in every place a provider writes one.
+ *
+ * Codex takes its inline MCP configuration as `-c mcp_servers.<name>.<key>`,
+ * a DOTTED path: a name containing `.` silently becomes a nested table and the
+ * server never exists (verified against codex-cli 0.148.0, where
+ * `-c mcp_servers.board.design.url=…` produced a `design` sub-table under the
+ * server `board` and no server named `board.design`). Quoting the segment does
+ * not help. So the contract admits only a TOML bare key, which is the grammar
+ * every provider can carry — the schema telling the truth about what it
+ * accepts, rather than a validator bolted on downstream. */
+const TurnMcpServerName = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^[A-Za-z0-9_-]+$/),
+).check(Schema.isMaxLength(64));
+
+/** A POSIX environment-variable name. */
+const TurnMcpServerEnvVarName = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/),
+).check(Schema.isMaxLength(128));
+
+/** An MCP server the caller that starts a turn hands to that turn.
+ *
+ * The field names the ENVIRONMENT VARIABLE holding the credential; it never
+ * carries the credential itself. That is not caution, it is the only shape that
+ * can be true: a command is persisted to the event log and replayed from it,
+ * and the Claude SDK serialises its whole `mcpServers` option into a single
+ * `--mcp-config <json>` argument, so anything placed here would be both a
+ * durable database row and an argument on a child process's command line. The
+ * caller puts the secret in the provider child's environment and names it here;
+ * Codex consumes exactly this shape as `bearer_token_env_var`, and Claude
+ * expands `${VAR}` inside an MCP header, so only the name ever travels. */
+export const TurnMcpServer = Schema.Struct({
+  url: TrimmedNonEmptyString,
+  bearerTokenEnvVar: Schema.optional(TurnMcpServerEnvVarName),
+});
+export type TurnMcpServer = typeof TurnMcpServer.Type;
+
+/** Caller-supplied MCP servers by name. These ride ALONGSIDE whatever the
+ * server configures for the thread itself and whatever the user configured for
+ * the provider, and are merged at the adapter; a name the server owns wins a
+ * collision. */
+export const TurnMcpServers = Schema.Record(TurnMcpServerName, TurnMcpServer);
+export type TurnMcpServers = typeof TurnMcpServers.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -446,6 +489,19 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /** A briefing the thread's creator appends to the provider's system prompt,
+   * fixed at create exactly like the worktree. Every turn on the thread runs
+   * under it, including the ones the creator does not author (the user typing
+   * in the composer), which is why it is a THREAD fact and not a turn one: a
+   * provider session is built on the first turn and a turn that asks for
+   * nothing rides whatever the session holds. */
+  instructions: Schema.optional(TrimmedString),
+  /** MCP servers every turn on this thread gets, on the same reasoning. They
+   * are the session's base set; a turn may still add its own, and the adapter
+   * compares a later turn against the union. Each server names the environment
+   * variable holding its credential and never the credential — this command is
+   * persisted to the event store and replayed from it. */
+  mcpServers: Schema.optional(TurnMcpServers),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
@@ -748,6 +804,10 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /** See `OrchestrationThread.instructions`. */
+  instructions: Schema.optional(TrimmedString),
+  /** See `OrchestrationThread.mcpServers`. */
+  mcpServers: Schema.optional(TurnMcpServers),
   createdAt: IsoDateTime,
 });
 
@@ -883,6 +943,10 @@ const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /** See `OrchestrationThread.instructions`. */
+  instructions: Schema.optional(TrimmedString),
+  /** See `OrchestrationThread.mcpServers`. */
+  mcpServers: Schema.optional(TurnMcpServers),
   createdAt: IsoDateTime,
 });
 
@@ -901,48 +965,6 @@ const ThreadTurnStartBootstrap = Schema.Struct({
 
 export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
 
-/** A server name that is safe in every place a provider writes one.
- *
- * Codex takes its inline MCP configuration as `-c mcp_servers.<name>.<key>`,
- * a DOTTED path: a name containing `.` silently becomes a nested table and the
- * server never exists (verified against codex-cli 0.148.0, where
- * `-c mcp_servers.board.design.url=…` produced a `design` sub-table under the
- * server `board` and no server named `board.design`). Quoting the segment does
- * not help. So the contract admits only a TOML bare key, which is the grammar
- * every provider can carry — the schema telling the truth about what it
- * accepts, rather than a validator bolted on downstream. */
-const TurnMcpServerName = TrimmedNonEmptyString.check(
-  Schema.isPattern(/^[A-Za-z0-9_-]+$/),
-).check(Schema.isMaxLength(64));
-
-/** A POSIX environment-variable name. */
-const TurnMcpServerEnvVarName = TrimmedNonEmptyString.check(
-  Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/),
-).check(Schema.isMaxLength(128));
-
-/** An MCP server the caller that starts a turn hands to that turn.
- *
- * The field names the ENVIRONMENT VARIABLE holding the credential; it never
- * carries the credential itself. That is not caution, it is the only shape that
- * can be true: a command is persisted to the event log and replayed from it,
- * and the Claude SDK serialises its whole `mcpServers` option into a single
- * `--mcp-config <json>` argument, so anything placed here would be both a
- * durable database row and an argument on a child process's command line. The
- * caller puts the secret in the provider child's environment and names it here;
- * Codex consumes exactly this shape as `bearer_token_env_var`, and Claude
- * expands `${VAR}` inside an MCP header, so only the name ever travels. */
-export const TurnMcpServer = Schema.Struct({
-  url: TrimmedNonEmptyString,
-  bearerTokenEnvVar: Schema.optional(TurnMcpServerEnvVarName),
-});
-export type TurnMcpServer = typeof TurnMcpServer.Type;
-
-/** Caller-supplied MCP servers by name. These ride ALONGSIDE whatever the
- * server configures for the thread itself and whatever the user configured for
- * the provider, and are merged at the adapter; a name the server owns wins a
- * collision. */
-export const TurnMcpServers = Schema.Record(TurnMcpServerName, TurnMcpServer);
-export type TurnMcpServers = typeof TurnMcpServers.Type;
 
 /** The name the server owns for its own MCP endpoint. A caller cannot bind it.
  * Exported so every adapter refuses the same name, and so a test cannot drift
@@ -1331,6 +1353,10 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /** See `OrchestrationThread.instructions`. */
+  instructions: Schema.optional(TrimmedString),
+  /** See `OrchestrationThread.mcpServers`. */
+  mcpServers: Schema.optional(TurnMcpServers),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

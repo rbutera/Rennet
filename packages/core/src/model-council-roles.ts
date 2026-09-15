@@ -34,7 +34,7 @@ import { DEFAULT_CODEX_SECOND_SEAT_EFFORT, DEFAULT_CODEX_SECOND_SEAT_MODEL } fro
 import { JOB_CATALOGUE, resolveAssignment, scenarioFor } from "./model-council";
 
 /** The active review roles (the copy the surface lists). */
-export type ReviewRoleId = "lens-workers" | "second-seat";
+export type ReviewRoleId = "lens-workers" | "second-seat" | "orchestrator";
 
 /** One catalogue entry: a role, its surface copy, and its backing council job. */
 export interface ReviewRoleDef {
@@ -69,6 +69,28 @@ export const REVIEW_ROLE_CATALOGUE: readonly ReviewRoleDef[] = [
     hint: "The Codex second opinion paired against the Claude drafter on flagged lenses. Dual-provider only.",
     jobId: "lens-draft-flagged",
     dualOnly: true,
+  },
+  /**
+   * The review's own conversation — the thread in the chat column, and the seat that reads
+   * the boards and stages asks for the reviewer (session-thread-briefing 4.4).
+   *
+   * It is a catalogue row because the FIRST-RUN WELCOME already writes one. The welcome has
+   * asked "which harness orchestrates reviews?" since it shipped and called
+   * `settings.setRoleAssignment({ roleId: "orchestrator" })` with the answer — against a
+   * catalogue that had no such row, so `reviewRoleJobId` returned `undefined`, the row it
+   * read the assignment off never existed, and the write never happened. The choice was
+   * dead, and on a dual-harness host the `both` table sent the chat to Claude whatever the
+   * reviewer had clicked, under copy saying "Codex will orchestrate reviews".
+   *
+   * Adding the row is the whole fix: no second setting and no new job id (Decision 5 — the
+   * council's own `orchestrator-chat`), and `taskOverridesFor` walks `REVIEW_ROLE_JOB_IDS`,
+   * so the welcome's write now reaches `resolveAssignment` like any other role override.
+   */
+  {
+    id: "orchestrator",
+    label: "Orchestrator",
+    hint: "The review's own conversation — the thread you talk to, which reads the boards and stages asks for you.",
+    jobId: "orchestrator-chat",
   },
 ];
 

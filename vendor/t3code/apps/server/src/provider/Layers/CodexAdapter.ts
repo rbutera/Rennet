@@ -1877,6 +1877,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           // off the argument list would let a caller turn on the browser tool
           // block by naming its server `t3-code`.
           sidecarMcpServerConfigured: mcpSession !== undefined,
+          // The thread's briefing. Codex has no system-prompt append, so it
+          // goes where T3 already assembles its own instructions, after them.
+          ...(input.instructions !== undefined ? { threadInstructions: input.instructions } : {}),
         };
         const sessionScope = yield* Scope.make("sequential");
         let sessionScopeTransferred = false;

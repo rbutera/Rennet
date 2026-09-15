@@ -372,12 +372,12 @@ async function stopOwnedSidecar(dataDir: string, deps: StopOwnedDaemonDeps): Pro
     const outcome = await deps.stopSidecar(dataDir);
     if (outcome.kind === "timeout") {
       deps.warn(
-        `rennet: sent SIGTERM to owned T3 sidecar pid ${outcome.pid} but it is still running; the next start will reap it`,
+        `rennet: sent SIGTERM to owned chat sidecar pid ${outcome.pid} but it is still running; the next start will reap it`,
       );
     }
   } catch (error) {
     deps.warn(
-      `rennet: failed to stop the owned T3 sidecar: ${error instanceof Error ? error.message : String(error)}`,
+      `rennet: failed to stop the owned chat sidecar: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }

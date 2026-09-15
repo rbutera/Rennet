@@ -17,6 +17,7 @@ import {
   ThreadLinkedPullRequest,
   ThreadId,
   TurnId,
+  TurnMcpServers,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -34,6 +35,12 @@ export const ProjectionThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
+  // The thread's briefing and its MCP servers (see
+  // `OrchestrationThread.instructions`). Optional so a row read by a query that
+  // does not select the two columns still decodes; the reads that decide a
+  // provider session — the snapshot and the thread detail — do select them.
+  instructions: Schema.optional(Schema.NullOr(Schema.String)),
+  mcpServers: Schema.optional(Schema.NullOr(TurnMcpServers)),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,

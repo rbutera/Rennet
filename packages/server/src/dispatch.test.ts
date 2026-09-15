@@ -74,6 +74,7 @@ const DEFAULT_PR_TARGET = {
 } satisfies ForgePrSubmissionTarget;
 const DEFAULT_PR_DESTINATION = {
   remoteName: "origin",
+  remotes: ["origin"],
   target: DEFAULT_PR_TARGET,
 };
 const GITLAB_PR_TARGET = {
@@ -81,6 +82,7 @@ const GITLAB_PR_TARGET = {
 } satisfies ForgePrSubmissionTarget;
 const GITLAB_PR_DESTINATION = {
   remoteName: "origin",
+  remotes: ["origin"],
   target: GITLAB_PR_TARGET,
 };
 
@@ -302,7 +304,27 @@ function harness(
     ...(extra.inFlightReviews ? { inFlightReviews: extra.inFlightReviews } : {}),
     ...(extra.submitPullRequest ? { submitPullRequest: extra.submitPullRequest } : {}),
     ...(extra.draftDeltaDigest ? { draftDeltaDigest: extra.draftDeltaDigest } : {}),
-    ...(extra.runHandoffTurn ? { runHandoffTurn: extra.runHandoffTurn } : {}),
+    // A hand-off runs on the review's own T3 thread, bound through `bindReviewThread`
+    // before the turn (session-thread-briefing 4.1 — the one creation path). In production
+    // the pair always travel together: `create-server` composes both or neither. So a
+    // fixture that wires the turn wires the sidecar that gives it a thread; one that does
+    // not gets the honest `unavailable` the command now reports for a bind it cannot make.
+    ...(extra.runHandoffTurn
+      ? {
+          runHandoffTurn: extra.runHandoffTurn,
+          t3Sidecar: {
+            start: () => undefined,
+            threadFor: async () => ({
+              kind: "session" as const,
+              repositoryRoot: "/repo",
+              sessionId: "rv",
+              projectId: "p",
+              threadId: "handoff-thread",
+              createdAt: "2026-09-12T00:00:00.000Z",
+            }),
+          } as unknown as DispatchDeps["t3Sidecar"],
+        }
+      : {}),
     ...(extra.composeBundle ? { composeBundle: extra.composeBundle } : {}),
     ...(extra.onReviewOpened ? { onReviewOpened: extra.onReviewOpened } : {}),
     ...(extra.lensBoardForReview ? { lensBoardForReview: extra.lensBoardForReview } : {}),
@@ -335,6 +357,7 @@ function harness(
     processProject: () => Promise.resolve({ repos: [] }),
     discoverProject: ({ path, kind }) =>
       Promise.resolve({ path, kind, repos: [], primaryBranch: "main", source: "local" }),
+    repositoryIdentify: ({ path }) => Promise.resolve({ repository: path }),
     listDir: (input) =>
       Promise.resolve({
         path: input.path ?? "/home/rai",
@@ -2056,6 +2079,98 @@ describe("createDispatch — publish.compose + publish-ready + handoff-completed
     });
   });
 
+  it("opens the pull request against the branch name when the capture recorded origin/main", async () => {
+    // A working-tree capture records the spelling it MEASURED against, and the newest
+    // spelling of the primary branch is usually the remote-tracking one. A forge knows
+    // only its own branches: GitHub answers 422 for `base: "origin/main"`. The one seam
+    // that knows this repository's remotes strips the prefix here.
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>(async () => ({
+      url: "https://github.com/acme/widget/pull/11",
+      number: 11,
+      reused: false,
+    }));
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        capturePort: {
+          capture: () =>
+            Promise.resolve({
+              ...patchset(),
+              repository: {
+                ...patchset().repository,
+                headRef: "feat/reviewed",
+                baseRef: "origin/main",
+              },
+            }),
+        },
+        resolvePullRequestDestination: () =>
+          Promise.resolve({ ...DEFAULT_PR_DESTINATION, remotes: ["origin", "upstream"] }),
+        submitPullRequest,
+      },
+    );
+    const review = await capturedReview(dispatch);
+
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "pr",
+    })) as {
+      submission: { base: string; head: string };
+      target: ForgePrSubmissionTarget;
+      payload: string;
+      destination: string;
+      compositionId: string;
+    };
+
+    expect(composed.submission.base).toBe("main");
+    // The preview names what the forge will be asked for, not the local spelling.
+    expect(composed.destination).toBe("github:acme/widget · feat/reviewed → main");
+
+    await dispatch("publish.submitPr", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      target: composed.target,
+      submission: composed.submission as never,
+      payload: composed.payload,
+      compositionId: composed.compositionId,
+    });
+    expect(submitPullRequest.mock.calls[0]?.[0]?.submission.base).toBe("main");
+  });
+
+  it("keeps a branch whose own name starts with a segment that is not a remote", async () => {
+    // `origin/thing` is a perfectly good branch name in a clone with no remote called
+    // `origin`. Stripping on the slash alone would open the PR against `thing`.
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        capturePort: {
+          capture: () =>
+            Promise.resolve({
+              ...patchset(),
+              repository: {
+                ...patchset().repository,
+                headRef: "feat/reviewed",
+                baseRef: "origin/thing",
+              },
+            }),
+        },
+        resolvePullRequestDestination: () =>
+          Promise.resolve({ ...DEFAULT_PR_DESTINATION, remotes: ["upstream"] }),
+      },
+    );
+    const review = await capturedReview(dispatch);
+
+    const composed = (await dispatch("publish.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      mode: "pr",
+    })) as { submission: { base: string } };
+
+    expect(composed.submission.base).toBe("origin/thing");
+  });
+
   it("server-owns zero-ask PR readiness and refuses a preview made stale by a remote ask", async () => {
     const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>(async () => ({
       url: "https://github.com/acme/widget/pull/9",
@@ -3117,6 +3232,7 @@ function frontDoorHarness(seed: {
       discoverCalls.push(input);
       return Promise.resolve({ ...discovery, path: input.path, kind: input.kind });
     },
+    repositoryIdentify: ({ path }) => Promise.resolve({ repository: path }),
     listDir: (input) =>
       Promise.resolve({
         path: input.path ?? "/home/rai",
@@ -3939,7 +4055,7 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
     // the active defaults rather than a blank, every cell `default`.
     const roles = (view as unknown as { reviewRoles: ReviewRoleMapping[] }).reviewRoles;
     expect(roles).toEqual(reviewRoleMappings());
-    expect(roles.map((role) => role.id)).toEqual(["lens-workers", "second-seat"]);
+    expect(roles.map((role) => role.id)).toEqual(["lens-workers", "second-seat", "orchestrator"]);
     // The Flagged Second Seat does not run single-provider: an honest null, not a guess.
     const secondSeat = roles.find((role) => role.id === "second-seat");
     expect(secondSeat?.claudeOnly.value).toBeNull();

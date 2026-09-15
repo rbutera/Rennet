@@ -154,6 +154,33 @@ export function gitForRepoFactory(
 /** The host git runner — today's behaviour on macOS/Linux/native-Windows. */
 export const execaGit: GitExec = execaGitFor(HOST_LOCUS);
 
+/**
+ * Is `ancestor` reachable from `descendant`? (`merge-base --is-ancestor`'s exit code.)
+ *
+ * It lives here, beside `GitExec`, because three unrelated callers ask it — the sibling
+ * bind, the sibling collection, and the primary-base resolver — and a second spelling of
+ * this call is exactly how they would drift apart. The sibling callers pass refs FULLY
+ * QUALIFIED so a tag of the branch's name cannot answer for them; the resolver passes
+ * OIDs it has already read.
+ *
+ * The answer is the exit code: 0 = yes, 1 = no. `reject: true` is explicit because the
+ * only way to read an exit code through a stdout-shaped runner is to let it throw, and a
+ * runner that defaulted the other way would silently answer "yes" to everything.
+ */
+export async function isAncestor(
+  git: GitExec,
+  repoRoot: string,
+  ancestor: string,
+  descendant: string,
+): Promise<boolean> {
+  try {
+    await git(repoRoot, ["merge-base", "--is-ancestor", ancestor, descendant], { reject: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function parseChangedPaths(output: string): ChangedPath[] {
   const fields = output.split("\0");
   const paths: ChangedPath[] = [];

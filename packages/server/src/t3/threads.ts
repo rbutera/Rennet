@@ -351,6 +351,43 @@ export interface BindThreadInput {
   readonly worktreePath?: string;
   /** The branch that workspace has checked out; absent for a detached PR snapshot. */
   readonly branch?: string;
+  /**
+   * The id to create the thread WITH, when the caller already had to know it
+   * (session-thread-briefing 4.1). Only a `session` bind uses it: the app-tools url names
+   * the thread in its path, so the caller mints the id, builds the address, and hands both
+   * to the same create. Ignored when the binding already exists — an existing thread keeps
+   * the id, the briefing and the servers it was created with, for its whole life.
+   */
+  readonly threadId?: string;
+  /**
+   * What a SESSION thread is created with beyond its cwd, resolved LAZILY — the thunk is
+   * invoked only when a thread is actually about to be created, never on the ordinary
+   * lookup (session-thread-briefing 4.1).
+   *
+   * It is a thunk and not three fields because resolving it is not free: it reads the
+   * prompt file, renders the briefing, awaits the app listener's address and asks the
+   * council which provider this host has. Every `chat.t3Send` binds, and almost every bind
+   * finds an existing row — so as plain fields that whole resolution ran, and could block
+   * on harness discovery, purely to be discarded. As a thunk it runs once per thread, which
+   * is also how often its "no installed provider" line belongs in the log.
+   *
+   * A SESSION thread only; see the refusal in {@link findOrCreateBinding}. A returned
+   * `modelSelection` wins over {@link BindThreadInput.modelSelection}, which is the seats'
+   * own council routing and the sidecar's default for everyone else.
+   */
+  readonly creation?: () => Promise<SessionThreadCreation>;
+}
+
+/** The three things a session thread is created with beyond its cwd. */
+export interface SessionThreadCreation {
+  /** The session briefing, appended to the provider's system prompt for every turn. */
+  readonly instructions?: string;
+  /** The thread's base MCP servers — Rennet's app tools. */
+  readonly mcpServers?: Readonly<
+    Record<string, { readonly url: string; readonly bearerTokenEnvVar?: string }>
+  >;
+  /** The council's `orchestrator-chat` selection; absent ⇒ the sidecar's default. */
+  readonly modelSelection?: ModelSelection;
 }
 
 /** One creation per (data dir, repository root, key) in flight at a time. */
@@ -398,6 +435,18 @@ export function bindThread(input: BindThreadInput): Promise<ThreadBinding> {
 }
 
 async function findOrCreateBinding(input: BindThreadInput): Promise<ThreadBinding> {
+  // The briefing and the app tools belong to the REVIEW'S OWN conversation and to nothing
+  // else (session-thread-briefing, t3code-chat-surface spec). A seat carries its own
+  // briefing as the first turn of its lane and its own per-turn board address; a round
+  // thread is a coding agent's transcript. Passing the session's pair to either would put
+  // Rennet's app tools — `ask.stage`, `round.dispatch` — on a thread whose job is to draft
+  // a board, and would bill the append on every one of its turns. A programming error, so
+  // it is refused by name rather than silently dropped.
+  if (input.key.kind !== "session" && input.creation !== undefined) {
+    throw new Error(
+      `bindThread: a ${input.key.kind} thread carries no session briefing and no thread-level MCP servers`,
+    );
+  }
   const keyRoot = keyRootOf(input);
   const existing = findBinding(input.dataDir, keyRoot, input.key);
   if (existing) return existing;
@@ -427,12 +476,18 @@ async function findOrCreateBinding(input: BindThreadInput): Promise<ThreadBindin
     input.repositoryRoot,
     basename(input.repositoryRoot),
   );
+  // Only now, with a thread genuinely about to exist: the briefing is rendered, the app
+  // address awaited and the council asked exactly once per thread rather than once per send.
+  const created = input.creation === undefined ? {} : await input.creation();
   const threadId = await input.client.createThread({
     projectId,
     title: input.title,
-    modelSelection: input.modelSelection,
+    modelSelection: created.modelSelection ?? input.modelSelection,
+    ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
     ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
     ...(input.branch === undefined ? {} : { branch: input.branch }),
+    ...(created.instructions === undefined ? {} : { instructions: created.instructions }),
+    ...(created.mcpServers === undefined ? {} : { mcpServers: created.mcpServers }),
   });
   const binding: ThreadBinding = {
     // The KEY root, which is the bound workspace when there is one — see `keyRootOf`.

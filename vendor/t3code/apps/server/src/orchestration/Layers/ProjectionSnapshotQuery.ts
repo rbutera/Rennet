@@ -27,6 +27,7 @@ import {
   ProjectId,
   ThreadLinkedPullRequest,
   ThreadId,
+  TurnMcpServers,
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
@@ -98,6 +99,7 @@ const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
+    mcpServers: Schema.optional(Schema.NullOr(Schema.fromJsonString(TurnMcpServers))),
   }),
 );
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
@@ -465,6 +467,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          instructions,
+          mcp_servers_json AS "mcpServers",
           linked_pull_request_json AS "linkedPullRequest",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
@@ -1006,6 +1010,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          instructions,
+          mcp_servers_json AS "mcpServers",
           linked_pull_request_json AS "linkedPullRequest",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
@@ -1907,6 +1913,12 @@ pending_approval_requests AS (
                 interactionMode: row.interactionMode,
                 branch: row.branch,
                 worktreePath: row.worktreePath,
+                ...(row.instructions === null || row.instructions === undefined
+                  ? {}
+                  : { instructions: row.instructions }),
+                ...(row.mcpServers === null || row.mcpServers === undefined
+                  ? {}
+                  : { mcpServers: row.mcpServers }),
                 ...(row.linkedPullRequest === null
                   ? {}
                   : { linkedPullRequest: row.linkedPullRequest }),
@@ -2945,6 +2957,12 @@ pending_approval_requests AS (
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
+        ...(threadRow.value.instructions === null || threadRow.value.instructions === undefined
+          ? {}
+          : { instructions: threadRow.value.instructions }),
+        ...(threadRow.value.mcpServers === null || threadRow.value.mcpServers === undefined
+          ? {}
+          : { mcpServers: threadRow.value.mcpServers }),
         ...(threadRow.value.linkedPullRequest === null
           ? {}
           : { linkedPullRequest: threadRow.value.linkedPullRequest }),

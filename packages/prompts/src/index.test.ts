@@ -13,9 +13,12 @@ import {
   PROMPT_PARTIALS,
   REVIEW_DRAFT_VOICE_FILE,
   ROUND_REPORT_FILE,
+  SESSION_BRIEFING_FILE,
+  SESSION_BRIEFING_FIXED_MAX_BYTES,
   WRITE_WITH_TOOLS_MARKER,
   WRITE_WITH_TOOLS_PARTIAL_FILE,
 } from "./index.js";
+import { prohibitions } from "./test/prohibitions.js";
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
 
@@ -244,6 +247,99 @@ describe("lens prompt manifest", () => {
     expect(normalized).toContain("Cite the code that implements a requirement through `trace`");
   });
 
+  it("tells the Design seat to draft an overview from the three sources before it settles absent", () => {
+    const text = readFileSync(join(srcDir, LENS_PROMPT_FILES.design), "utf8");
+    // Scope every assertion to the overview arm itself: a sentence that only exists
+    // elsewhere in the prompt (the spec-backed `set_document` block names stats too)
+    // must not be able to satisfy these.
+    const start = text.indexOf("## When there is no specification");
+    const end = text.indexOf("## Document opening");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const arm = text.slice(start, end).replace(/\s+/g, " ");
+
+    // The three sources, IN ORDER — position, not membership, because the order is what
+    // fixes which source the intro is distilled from when several exist (design D1).
+    const prAt = arm.indexOf("The pull request's title and description in `pr.md`");
+    const docsAt = arm.indexOf("Documentation this branch adds or modifies");
+    const issuesAt = arm.indexOf("The related issues in `related-context.md`");
+    expect(prAt).toBeGreaterThan(-1);
+    expect(docsAt).toBeGreaterThan(prAt);
+    expect(issuesAt).toBeGreaterThan(docsAt);
+
+    // The documentation rule names the extensions, the reviewed tree, and the diff the
+    // seat runs when the index did not list every file. The diff COMMAND is the task
+    // layer's — `investigate-before-you-draft` says so, because a working-tree review
+    // diffs the pinned reviewed tree and not `base..head` — so the arm supplies only the
+    // pathspec, and the `<range>` template it used to carry is gone.
+    expect(arm).toContain("every `.md`, `.mdx`, `.rst` or `.txt` file");
+    expect(arm).toContain("read at the reviewed tree");
+    expect(arm).toContain(
+      "run the task layer's diff command with `--name-status -- '*.md' '*.mdx' 'docs/'`",
+    );
+    expect(arm, "the arm still templates its own range").not.toContain("<range>");
+    // A GitHub ref the host could not body out is the seat's own fetch, not a second
+    // host retrieval.
+    expect(arm).toContain("gh issue view <n>");
+
+    // The two stats that make the board unmistakably an overview, and the counts it
+    // must NOT carry because it read no specification (design D4).
+    expect(arm).toContain("`Format` → `Overview`");
+    expect(arm).toContain("`Specification` → `none found`");
+    expect(arm).toContain("No capability, requirement or task stats");
+    // The intro's opening sentence is fixed, so every overview announces itself the
+    // same way rather than in whatever voice the seat reached for.
+    expect(arm).toContain(
+      '"No specification was found for this branch; this overview is drafted from"',
+    );
+
+    // Provenance: a stated decision is not an inferred one, wherever it was stated — a
+    // document on the branch states decisions too (design D4) — and an acceptance
+    // criterion carries the tracker item as its source label.
+    expect(arm).toContain("`inferred: false`");
+    expect(arm).toContain('sourced to that path under the label "PR description"');
+    expect(arm).toContain("A decision a document states is a `decision` too, sourced to that file");
+    expect(arm).toContain(
+      "sourced to the `related-context.md` path under the item id as its label",
+    );
+
+    // The spec-backed sections that follow are SCOPED, so the seat drafting an overview
+    // does not read "the specification's exact change name" or the capability/requirement
+    // /task stats of "Document opening" as instructions for its own board (design D4).
+    const opening = text.slice(text.indexOf("## Document opening"));
+    expect(opening).toMatch(
+      /^## Document opening\n\nThis section, "Compose the document" and "Requirements, scenarios, and spec deltas"\ndescribe a specification-backed board; an overview follows the section above where\nthey differ\./,
+    );
+    // The sentence names the sections it scopes, so the NEXT two headings must be those
+    // two, in that order — a section inserted between them would be unscoped and green.
+    const headings = [...opening.matchAll(/^## (.+)$/gm)].map((match) => match[1]);
+    expect(headings.slice(0, 3)).toEqual([
+      "Document opening",
+      "Compose the document",
+      "Requirements, scenarios, and spec deltas",
+    ]);
+
+    // The absence survives, and it is CONDITIONED on all three sources being empty —
+    // an overview arm that could still settle on a branch with a PR body would be the
+    // bug this change exists to remove.
+    expect(arm).toContain(
+      "Only when all three sources are empty — no `pr.md` listed, no documentation file in the change, and `related-context.md` absent or naming no item — call `settle_absent`",
+    );
+    expect(arm).toContain("say in its note that you looked for all three");
+    expect(arm).toContain("Never draft an overview while this branch has a specification");
+
+    // The closing ending paragraph must not still call absence "the other ending": with
+    // the overview arm in place, absence is what is left when the search AND the three
+    // sources come up empty.
+    const closing = text.slice(text.indexOf("{{write-with-tools}}")).replace(/\s+/g, " ");
+    expect(closing).toContain(
+      "`settle_absent` is the ending when the search and all three overview sources come up empty",
+    );
+    expect(closing).not.toContain("`settle_absent` is the other ending");
+    // ...and `add_decision` is described for both endings, not the spec-backed one alone.
+    expect(closing).toContain("a decision the specification or an overview source states");
+  });
+
   it("keeps the lens lane vocabulary honest about what Design now owns", () => {
     // Design emits no coverage mapping, so no prompt may tell a sibling seat to omit
     // "requirement coverage" as Design's lane — that would drop the material entirely.
@@ -430,6 +526,88 @@ describe("lens prompt manifest", () => {
     expect(text.length).toBeGreaterThan(500);
     expect(text).not.toContain("post-process"); // #737: the file it cited is gone
     expect(text.replace(/\s+/g, " ")).toContain("under their own name");
+  });
+
+  /**
+   * The session thread's briefing (`session-thread-briefing` 2.1). Two things are pinned
+   * here that no other prompt file needs: its SIZE, because the briefing is a system-prompt
+   * append — a prefix re-read on every round trip of every turn for the thread's life — and
+   * the ABSENCE of any prohibition, because Decision 3 says the thread can do everything the
+   * reviewer can and the briefing steers rather than forbids.
+   */
+  it("briefs the session thread with a map, a steer, and no prohibition", () => {
+    const text = readFileSync(join(srcDir, SESSION_BRIEFING_FILE), "utf8");
+    const normalized = text.replace(/\s+/g, " ");
+    // The fixed half's budget. `SESSION_BRIEFING_MAX_BYTES` (4,096) covers fixed + dynamic,
+    // so pinning the file here is what leaves the patchset, context and tool lines room.
+    expect(new TextEncoder().encode(text).length, "fixed briefing bytes").toBeLessThanOrEqual(
+      SESSION_BRIEFING_FIXED_MAX_BYTES,
+    );
+    expect(text).toMatch(/^# /);
+
+    // Identity and division of labour: who it is, who already read the change, who judges.
+    expect(normalized).toContain("conversation of one Rennet review session");
+    expect(normalized).toContain("Design, Sequence, Decisions, Flagged, Noise");
+    expect(normalized).toContain("drafted by seats that already read it");
+    expect(normalized).toContain("coding rounds run on their own threads");
+    expect(normalized).toContain("Rennet has no backend");
+    // Capability, then the steer — in that order, because the steer is a steer.
+    expect(normalized).toContain("Everything the reviewer can");
+    expect(normalized.indexOf("Everything the reviewer can")).toBeLessThan(
+      normalized.indexOf("stage an ask"),
+    );
+    expect(normalized).toContain("Staging is the path Rennet tracks");
+    expect(normalized).toContain("Editing the checkout yourself is fine");
+    // The tools it reaches the review through, and the anchored-question contract.
+    for (const tool of [
+      "`app_session_list`",
+      "`app_review_load`",
+      "`app_board_read`",
+      "`app_patchset_readSpan`",
+      "`app_patchset_readEvidence`",
+      "`app_ask_stage`",
+    ]) {
+      expect(text, `the briefing names ${tool}`).toContain(tool);
+    }
+    expect(normalized).toContain("`Code reference: {…}`");
+    expect(normalized).toContain("Retrieve it first");
+    // No tool's input schema is restated: the schemas travel with the tool list.
+    expect(text).not.toContain("```json");
+    expect(text).not.toMatch(/"type"\s*:/);
+
+    // The briefing carries its OWN short register and no shared partial (Rai, 2026-09-12):
+    // `reader-voice.md` is 2,847 B of board-prose guidance against a 4,096 B ceiling that
+    // also has to hold the review's lines, and its ground rules tell a writer not to name
+    // lenses or boards — which is the opposite of what this thread does for the reviewer.
+    // So the file carries no marker at all, and this asserts that for EVERY partial the
+    // manifest knows, not just the one that was removed.
+    for (const marker of Object.keys(PROMPT_PARTIALS)) {
+      expect(text, `the briefing carries no ${marker}`).not.toContain(marker);
+    }
+    expect(text, "a marker of any shape").not.toMatch(/\{\{[\w-]+\}\}/);
+    expect(text).not.toContain("## Explain the change and its mechanism");
+    expect(expandPromptPartials(text, partials), "nothing to splice").toBe(text);
+    // Its own register, in the briefing's own words.
+    expect(normalized).toContain("Lead with the consequence, then the mechanism");
+    expect(normalized).toContain("cite it by path and line range");
+
+    // Decision 3: the briefing forbids nothing.
+    expect(prohibitions(text), "the briefing forbids nothing").toEqual([]);
+    // Positive control, one per pattern: each phrase is proven able to fire. Without this
+    // the assertion above passes for a file that simply never matched anything. The last
+    // one is wrapped MID-PHRASE across a line break, the way every sentence in these
+    // hard-wrapped files is — the detector's first version split on `\n` and could not see
+    // it, which left three of its four patterns dead while the test read as four checks.
+    for (const sentence of [
+      "Never edit the checkout.",
+      "Do not commit anything.",
+      "Do not push this branch.",
+      "You must not open the pull request.",
+      "Don't touch the base branch.",
+      "You really must\nnot open the pull request without asking.",
+    ]) {
+      expect(prohibitions(`${text}\n${sentence}\n`), sentence).toHaveLength(1);
+    }
   });
 
   it("fails when a manifest entry points at a missing file", () => {

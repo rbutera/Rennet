@@ -350,6 +350,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          ...(command.instructions !== undefined ? { instructions: command.instructions } : {}),
+          ...(command.mcpServers !== undefined ? { mcpServers: command.mcpServers } : {}),
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },

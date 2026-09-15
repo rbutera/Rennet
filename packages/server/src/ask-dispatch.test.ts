@@ -227,4 +227,63 @@ describe("ask.* dispatch — the sole write path (B11 2.3)", () => {
     });
     expect(store.read(SID)).toHaveLength(3);
   });
+
+  // ── Both reviewers' cluster-3 finding 4 ─────────────────────────────────────
+  // `ctx.author` is set only by the app-tools MCP server, stamped from the ADDRESS a call
+  // arrived on (`app-mcp-server.ts`'s `callTool`), never from anything the model put in
+  // `input.ask`. This is the REAL dispatch → store → `ask.read` round trip proving that
+  // stamp actually reaches the durable projection — the existing "context delivery" spy
+  // test above only proves `ctx` reaches the handler, not that the handler does anything
+  // with it or that a reader ever sees it.
+  it("ask.stage stamps the author from ctx (never from the input) and it reads back through ask.read", async () => {
+    const { handlers } = harness();
+
+    // A thread-originated stage: ctx carries the orchestrator author, exactly as
+    // `app-mcp-server.ts` stamps it from the address (`{ kind: "orchestrator", id: threadId }`).
+    await handlers["ask.stage"](
+      {
+        sessionId: SID,
+        ask: { id: "a1", anchor: "src/x.ts:10", type: "comment", body: "from the thread" },
+      },
+      { author: { kind: "orchestrator", id: "thread-9" } },
+    );
+    const afterThread = (await handlers["ask.read"]({ sessionId: SID })) as {
+      projection: AskProjection;
+    };
+    expect(afterThread.projection.stagedAsks.a1?.author).toEqual({
+      kind: "orchestrator",
+      id: "thread-9",
+    });
+
+    // A client that names itself in the INPUT is ignored — the ctx stamp is the only source.
+    // This is what closes the spoofing hole `author` on the schema would otherwise open.
+    await handlers["ask.stage"](
+      {
+        sessionId: SID,
+        ask: {
+          id: "a2",
+          anchor: "src/x.ts:11",
+          type: "comment",
+          body: "spoofed",
+          author: { kind: "orchestrator", id: "not-the-real-thread" },
+        },
+      },
+      undefined,
+    );
+    const afterSpoof = (await handlers["ask.read"]({ sessionId: SID })) as {
+      projection: AskProjection;
+    };
+    expect(afterSpoof.projection.stagedAsks.a2?.author).toBeUndefined();
+
+    // The reviewer's own stage — the loopback/projected connection, no ctx at all — carries
+    // no author, the default the schema already treats as "the reviewer".
+    await handlers["ask.stage"]({
+      sessionId: SID,
+      ask: { id: "a3", anchor: "src/x.ts:12", type: "comment", body: "from the reviewer" },
+    });
+    const afterReviewer = (await handlers["ask.read"]({ sessionId: SID })) as {
+      projection: AskProjection;
+    };
+    expect(afterReviewer.projection.stagedAsks.a3?.author).toBeUndefined();
+  });
 });

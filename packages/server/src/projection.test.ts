@@ -20,6 +20,7 @@ import {
   projectBoardProjection,
   projectCommandOutput,
   projectProgressEvent,
+  projectRepositoryIdentity,
   redactAbsolutePaths,
   resolveCommandInput,
   scrubProjectedValue,
@@ -93,6 +94,50 @@ describe("outbound structural projection", () => {
     expect(JSON.stringify(out)).not.toContain(HOME);
     // Without an attention-capable context, the projected review omits the summary entirely.
     expect(projected.attention).toBeUndefined();
+  });
+
+  it("projects the review NESTED at result.review for review.handoff.run (h)", () => {
+    // `review.handoff.run` with status "ran" carries the newly-captured review at
+    // `result.review`, not at the top level. Its `repositoryRoot`/`patchsets[].repository`
+    // point at a git-common-dir OUTSIDE every known root (a data volume, say), which the
+    // blanket root/home scrub does not catch. Before the nested-review projection, the host
+    // path crossed to a paired client verbatim.
+    const external = "/srv/handoff/checkout";
+    const nestedReview = {
+      ...review,
+      repositoryRoot: external,
+      patchsets: [
+        {
+          id: "ps1",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          repository: { ...provenance, root: external, commonDir: `${external}/.git` },
+          files: [],
+        },
+      ],
+    };
+    const out = projectCommandOutput(
+      "review.handoff.run",
+      {
+        status: "ran",
+        result: {
+          review: nestedReview,
+          turnDiff: "",
+          filesTouched: [],
+          carriedForward: 0,
+          orphaned: 0,
+        },
+      },
+      ctx,
+    ) as { result: { review: Record<string, unknown> } };
+
+    const projected = out.result.review;
+    expect((projected.repositoryRoot as { repoKey: string }).repoKey).toBeTruthy();
+    const ps = (projected.patchsets as Record<string, unknown>[])[0] as Record<string, unknown>;
+    const prov = ps.repository as Record<string, { repoKey: string }>;
+    expect(prov.root?.repoKey).toBeTruthy();
+    expect(prov.commonDir?.repoKey).toBeTruthy();
+    // The external host path must not cross the projected connection anywhere in the frame.
+    expect(JSON.stringify(out)).not.toContain(external);
   });
 
   it("attaches the additive attention summary when the daemon advertises attention (#383)", () => {
@@ -783,6 +828,7 @@ const PATH_FIELD_CLASSIFICATIONS: Readonly<Record<string, PathClassification>> =
   ...classified("host-path-projected", [
     "repository.choose.input.path",
     "repository.choose.output.path",
+    "repository.identify.input.path",
     "review.capture.input.repoPath",
     "review.openPr.input.repoPath",
     "review.checkFreshness.input.repoPath",
@@ -1101,5 +1147,182 @@ describe("createCachedProjectionContext (perf audit §4 H3)", () => {
     contextOf();
     contextOf();
     expect(listProjects).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("repository.identify output projection (#952)", () => {
+  it("redacts a local-only git-common-dir identity that lies outside every root and home", () => {
+    // A local-only repo or a linked worktree with no forge remote: the identity IS the durable
+    // git-common-dir, an absolute host path, and forgeRepository is absent. Outside every known
+    // root and the home dir the blanket scrub alone would ship its host spelling to a projected
+    // client. The fixture is a plain host-path identity with nothing else to catch it, so only the
+    // command-specific guard stands between the common-dir and the wire.
+    const out = projectCommandOutput(
+      "repository.identify",
+      { repository: "/srv/git/common/repo-b.git" },
+      ctx,
+    ) as { repository: string };
+    expect(out.repository).not.toContain("/srv/git");
+    expect(out.repository).toBe("<path>");
+  });
+
+  it("scrubs a common-dir under a known root to that root's reference spelling", () => {
+    const out = projectCommandOutput(
+      "repository.identify",
+      { repository: `${REPO}/.git` },
+      ctx,
+    ) as { repository: string };
+    expect(out.repository).not.toContain(REPO);
+    expect(out.repository).toContain("<rennet>");
+  });
+
+  it("leaves an owner/name slug untouched when a forge remote names the repo", () => {
+    // The identity the CLI mints and PR-scopes with — NOT a host path — must cross a projected
+    // connection unchanged, so the guard touches only the path-valued (forgeless) case.
+    const identity = {
+      repository: "acme/widget",
+      forgeRepository: { forge: "github", owner: "acme", name: "widget" },
+    };
+    expect(projectCommandOutput("repository.identify", identity, ctx)).toEqual(identity);
+  });
+});
+
+describe("session + project repository-identity projection (the P1, #952)", () => {
+  // A local-only checkout (or a linked worktree with no forge remote) stamps
+  // `SessionModel.repository` with the durable git-common-dir — an ABSOLUTE HOST PATH. It rides to
+  // the sidebar via `SidebarSession.repository` and to `project.detail`'s rows the same way. These
+  // fixtures put that common-dir OUTSIDE every registered root and the home dir, so the blanket root
+  // scrub cannot touch it and ONLY the new identity scrub stands between the host path and a
+  // projected client. `repositoryRoot`/`boundRoot` are deliberately absent from the sidebar shape.
+  const COMMON_DIR = "/srv/git/common/repo-b.git";
+  const localOnlySession = {
+    id: "s1",
+    projectId: "p1",
+    target: "your-branch",
+    claim: { branch: "feat/x" },
+    repository: COMMON_DIR,
+    createdAt: 1,
+  };
+
+  it("scrubs a common-dir session identity out of session.list to a projected client", () => {
+    const out = projectCommandOutput("session.list", { sessions: [localOnlySession] }, ctx) as {
+      sessions: { repository: string }[];
+    };
+    expect(out.sessions[0]?.repository).not.toContain("/srv/git");
+    expect(out.sessions[0]?.repository).toBe("<path>");
+  });
+
+  it("scrubs the minted session's common-dir identity out of session.mint", () => {
+    const out = projectCommandOutput(
+      "session.mint",
+      { session: localOnlySession, reattached: false },
+      ctx,
+    ) as { session: { repository: string }; reattached: boolean };
+    expect(out.session.repository).not.toContain("/srv/git");
+    expect(out.session.repository).toBe("<path>");
+  });
+
+  it("leaves an owner/name slug on a session byte-identical (the single-repo / forge wire)", () => {
+    const slugSession = { ...localOnlySession, repository: "acme/widget" };
+    const out = projectCommandOutput(
+      "session.mint",
+      { session: slugSession, reattached: true },
+      ctx,
+    ) as { session: { repository: string } };
+    expect(out.session.repository).toBe("acme/widget");
+  });
+
+  it("passes a null minted session through untouched", () => {
+    const out = projectCommandOutput("session.mint", { session: null, reattached: false }, ctx) as {
+      session: null;
+    };
+    expect(out.session).toBeNull();
+  });
+
+  it("scrubs a common-dir under a known root to that root's display token", () => {
+    const out = projectCommandOutput(
+      "session.list",
+      { sessions: [{ ...localOnlySession, repository: `${REPO}/.git` }] },
+      ctx,
+    ) as { sessions: { repository: string }[] };
+    expect(out.sessions[0]?.repository).not.toContain(REPO);
+    expect(out.sessions[0]?.repository).toContain("<rennet>");
+  });
+
+  it("scrubs the common-dir identity on project.detail's local-work and PR rows", () => {
+    const out = projectCommandOutput(
+      "project.detail",
+      {
+        viewer: { login: "rai" },
+        locals: [{ id: "l1", repository: COMMON_DIR, branch: "feat/x" }],
+        prs: [{ id: "pr1", number: 3, repository: COMMON_DIR, branch: "feat/y" }],
+        truncated: false,
+      },
+      ctx,
+    ) as { locals: { repository: string }[]; prs: { repository: string }[] };
+    expect(out.locals[0]?.repository).toBe("<path>");
+    expect(out.prs[0]?.repository).toBe("<path>");
+  });
+});
+
+describe("projectRepositoryIdentity whole-value classification (#952, Codex F1)", () => {
+  // A `repository` identity is structural, so an unlocalizable host path is redacted WHOLE. The
+  // free-text regex under-redacts exactly the spellings that matter on a bare identity.
+  it("redacts a root-level single-segment common-dir the free-text regex would miss", () => {
+    expect(projectRepositoryIdentity("/repo.git", ctx)).toBe("<path>");
+  });
+
+  it("redacts a path with spaces whole, never leaving the suffix (no `<path> NVMe/x.git`)", () => {
+    const out = projectRepositoryIdentity("/Volumes/External NVMe/shared.git", ctx);
+    expect(out).toBe("<path>");
+    expect(out).not.toContain("NVMe");
+    expect(out).not.toContain("shared");
+  });
+
+  it("redacts a UNC share the drive-letter regex would miss", () => {
+    const out = projectRepositoryIdentity("\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo\\.git", ctx);
+    expect(out).toBe("<path>");
+    expect(out).not.toContain("wsl.localhost");
+  });
+
+  it("redacts a Windows drive path in either slash spelling", () => {
+    expect(projectRepositoryIdentity("C:\\Git Repos\\shared.git", ctx)).toBe("<path>");
+    expect(projectRepositoryIdentity("C:/Git/shared.git", ctx)).toBe("<path>");
+  });
+
+  it("keeps a common-dir under a known root as that root's display token", () => {
+    expect(projectRepositoryIdentity(`${REPO}/.git`, ctx)).toBe("<rennet>/.git");
+  });
+
+  it("leaves a forge owner/name slug (incl. a GitLab subgroup) byte-identical", () => {
+    expect(projectRepositoryIdentity("acme/widget", ctx)).toBe("acme/widget");
+    expect(projectRepositoryIdentity("group/subgroup/project", ctx)).toBe("group/subgroup/project");
+  });
+
+  it("never attributes a root-PREFIX sibling to that root's token (`<rennet>-secret`)", () => {
+    // `/home/rai/dev/rennet-secret` is NOT under `/home/rai/dev/rennet`; a bare substring scrub
+    // produced `<rennet>-secret/.git`, falsely tagging a different repo as this one. Boundary match
+    // must not do that. Here it is still under HOME, so it anchors to `~` (home hidden), never to
+    // the rennet root token, and never as a raw absolute path.
+    const out = projectRepositoryIdentity(`${REPO}-secret/.git`, ctx);
+    expect(out).toBe("~/dev/rennet-secret/.git");
+    expect(out).not.toContain("<rennet>-secret");
+    expect(out).not.toContain("/home/rai");
+  });
+
+  it("redacts a root-PREFIX sibling outside home WHOLE (pure prefix collision)", () => {
+    // A root NOT under home, so the collision cannot fall through to the `~` anchor.
+    const offHome = buildProjectionContext(["/srv/repos/rennet"], "/other/home");
+    const out = projectRepositoryIdentity("/srv/repos/rennet-secret/.git", offHome);
+    expect(out).toBe("<path>");
+    expect(out).not.toContain("rennet-secret");
+  });
+
+  it("redacts a sibling that only shares the HOME prefix, not a `~ssa` disclosure", () => {
+    // `/home/raissa/...` shares the `/home/rai` prefix but is a different home; boundary match only.
+    const out = projectRepositoryIdentity("/home/raissa/private/repo.git", ctx);
+    expect(out).toBe("<path>");
+    expect(out).not.toContain("raissa");
+    expect(out).not.toContain("private");
   });
 });

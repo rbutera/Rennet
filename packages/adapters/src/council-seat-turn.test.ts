@@ -114,7 +114,7 @@ describe("councilSeatTurn — the Claude branch", () => {
       { availability: { installed: ["claude-code" as const] } },
     );
     expect("failure" in seat ? seat.failure : null).toBe(
-      "T3 sidecar unavailable: sidecar exited (code 1, signal null)",
+      "chat sidecar unavailable: sidecar exited (code 1, signal null)",
     );
     // No session was ever opened — resolution failed before any harness was touched.
     expect(state.spec).toBeUndefined();
@@ -145,7 +145,7 @@ describe("councilSeatTurn — the Claude branch", () => {
         { availability: { installed: ["claude-code" as const, "codex" as const] } },
       );
       expect("failure" in seat ? seat.failure : null, job).toContain(
-        "runs only on a T3 sidecar seat",
+        "runs only on a chat sidecar seat",
       );
     }
     expect(state.spec).toBeUndefined();

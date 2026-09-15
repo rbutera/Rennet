@@ -1144,6 +1144,148 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect(
+    "recovers a briefed thread's instructions and servers when a non-turn path (feedback upload) triggers the recovery",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const threadId = asThreadId("thread-feedback-recover-briefed");
+        const instructions = "You are the orchestrator of a Rennet review of feat/x.";
+        const mcpServers = {
+          rennet_app: {
+            url: "http://127.0.0.1:7391/app/threads/thread-feedback-recover-briefed",
+            bearerTokenEnvVar: "RENNET_APP_BEARER",
+          },
+        };
+
+        yield* provider.startSession(threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId,
+          cwd: "/tmp/feedback-project-briefed",
+          runtimeMode: "full-access",
+          instructions,
+          mcpServers,
+        });
+
+        // The runtime is cleared (a daemon restart, a dead child) and the
+        // NEXT thing that touches the thread is `uploadFeedback` rather than
+        // `sendTurn` — a recovery path that never carries the thread's
+        // briefing on its own input. `resolveRoutableSession`/
+        // `recoverSessionForThread` are shared by every recovery path, so the
+        // briefing has to come from the persisted thread record, not from
+        // whatever this particular caller happened to pass in.
+        yield* routing.codex.stopSession(threadId);
+        routing.codex.startSession.mockClear();
+        routing.codex.uploadFeedback.mockClear();
+
+        yield* provider.uploadFeedback({ threadId });
+
+        assert.strictEqual(routing.codex.startSession.mock.calls.length, 1);
+        const resumedStartInput = routing.codex.startSession.mock.calls[0]?.[0];
+        assert.equal(
+          (resumedStartInput as { instructions?: unknown } | undefined)?.instructions,
+          instructions,
+        );
+        assert.deepEqual(
+          (resumedStartInput as { mcpServers?: unknown } | undefined)?.mcpServers,
+          mcpServers,
+        );
+
+        // And the session that came back from that recovery keeps serving
+        // turns on the briefing: a later turn that supplies neither still
+        // reaches the Codex adapter without the session ever having been
+        // restarted bare.
+        routing.codex.sendTurn.mockClear();
+        yield* provider.sendTurn({
+          threadId,
+          input: "what branch am I reviewing?",
+          attachments: [],
+        });
+        assert.strictEqual(routing.codex.startSession.mock.calls.length, 1);
+        assert.strictEqual(routing.codex.sendTurn.mock.calls.length, 1);
+      }),
+  );
+
+  it.effect(
+    "keeps a second recovery's servers as what the prior recovery actually started, not the original thread payload",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const threadId = asThreadId("thread-feedback-recover-double");
+        const instructions = "You are the orchestrator of a Rennet review of feat/x.";
+        const appServer = {
+          app: {
+            url: "http://127.0.0.1:7391/app/threads/thread-feedback-recover-double",
+            bearerTokenEnvVar: "RENNET_APP_BEARER",
+          },
+        };
+        const boardServer = {
+          board: {
+            url: "http://127.0.0.1:7391/board/design",
+            bearerTokenEnvVar: "RENNET_BOARD_TOKEN",
+          },
+        };
+
+        yield* provider.startSession(threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId,
+          cwd: "/tmp/feedback-project-double-recover",
+          runtimeMode: "full-access",
+          instructions,
+          mcpServers: appServer,
+        });
+
+        // First recovery: a turn asks for its own server on top of the
+        // thread's. The recovered session itself starts on the union
+        // correctly (`effectiveMcpServers` is computed and passed to
+        // `adapter.startSession` either way) -- the bug is in what gets
+        // PERSISTED afterwards for the NEXT recovery to read back.
+        yield* routing.codex.stopSession(threadId);
+        routing.codex.startSession.mockClear();
+
+        yield* provider.sendTurn({
+          threadId,
+          input: "pull in the design board too",
+          attachments: [],
+          mcpServers: boardServer,
+        });
+
+        assert.strictEqual(routing.codex.startSession.mock.calls.length, 1);
+        const firstRecoveryInput = routing.codex.startSession.mock.calls[0]?.[0];
+        assert.deepEqual(
+          (firstRecoveryInput as { mcpServers?: unknown } | undefined)?.mcpServers,
+          { ...appServer, ...boardServer },
+        );
+
+        // Second recovery, through a path (feedback upload) that carries
+        // NEITHER the thread's briefing nor any turn-specific server on its
+        // own input. It has to read back the set the FIRST recovery's
+        // session actually held -- app AND board -- rather than the
+        // original thread-level payload alone: `upsertSessionBinding` after
+        // the first recovery used to omit `instructions`/`mcpServers`
+        // entirely, and the directory's merge keeps a key it was never
+        // given, so the persisted binding quietly reverted to the thread's
+        // bare `app` server and this recovery lost `board` silently.
+        yield* routing.codex.stopSession(threadId);
+        routing.codex.startSession.mockClear();
+
+        yield* provider.uploadFeedback({ threadId });
+
+        assert.strictEqual(routing.codex.startSession.mock.calls.length, 1);
+        const secondRecoveryInput = routing.codex.startSession.mock.calls[0]?.[0];
+        assert.equal(
+          (secondRecoveryInput as { instructions?: unknown } | undefined)?.instructions,
+          instructions,
+        );
+        assert.deepEqual(
+          (secondRecoveryInput as { mcpServers?: unknown } | undefined)?.mcpServers,
+          { ...appServer, ...boardServer },
+        );
+      }),
+  );
+
   it.effect("rejects feedback for providers that do not support uploads", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -1631,6 +1773,60 @@ routing.layer("ProviderServiceLive routing", (it) => {
       // compares against the session it just recovered.
       const sentTurn = routing.claude.sendTurn.mock.calls[0]?.[0];
       assert.deepEqual((sentTurn as { mcpServers?: unknown } | undefined)?.mcpServers, mcpServers);
+    }),
+  );
+
+  it.effect("recovers a stale claudeAgent session on the thread's briefing and servers", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      // What the reactor puts on every turn of a briefed thread: the thread's
+      // own briefing and the union of the thread's servers with the turn's.
+      const instructions = "You are the orchestrator of a Rennet review of feat/x.";
+      const mcpServers = {
+        rennet_app: {
+          url: "http://127.0.0.1:7391/app/threads/thread-claude-briefed",
+          bearerTokenEnvVar: "RENNET_APP_BEARER",
+        },
+      };
+
+      const initial = yield* provider.startSession(asThreadId("thread-claude-briefed"), {
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: claudeAgentInstanceId,
+        threadId: asThreadId("thread-claude-briefed"),
+        cwd: "/tmp/project-claude-briefed",
+        runtimeMode: "full-access",
+        instructions,
+        mcpServers,
+      });
+
+      // A provider fixes its system prompt when the session process is created.
+      // A recovery that dropped the briefing would run every turn after a
+      // daemon restart unbriefed — the thread silently stops being what it was
+      // created as, and nothing errors. `ProviderSendTurnInput` is re-decoded
+      // here and strips any key it does not declare, so this also proves the
+      // field survives that hop.
+      yield* routing.claude.stopAll();
+      routing.claude.startSession.mockClear();
+      routing.claude.sendTurn.mockClear();
+
+      yield* provider.sendTurn({
+        threadId: initial.threadId,
+        input: "what branch am I reviewing?",
+        attachments: [],
+        instructions,
+        mcpServers,
+      });
+
+      assert.equal(routing.claude.startSession.mock.calls.length, 1);
+      const resumedStartInput = routing.claude.startSession.mock.calls[0]?.[0];
+      assert.equal(
+        (resumedStartInput as { instructions?: unknown } | undefined)?.instructions,
+        instructions,
+      );
+      assert.deepEqual(
+        (resumedStartInput as { mcpServers?: unknown } | undefined)?.mcpServers,
+        mcpServers,
+      );
     }),
   );
 

@@ -122,7 +122,7 @@ describe("t3 supervisor: eager start (#849)", () => {
     expect(s.status().state).toBe("off");
 
     // The honest answer is still there for whoever asks — the existing shape #849 keeps.
-    await expect(s.ensure()).rejects.toThrow(/vendored T3 Code server bundle is not built/);
+    await expect(s.ensure()).rejects.toThrow(/chat sidecar server bundle is not built/);
     expect(s.status().state).toBe("degraded");
   }, 20_000);
 });

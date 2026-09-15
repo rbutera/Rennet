@@ -49,9 +49,13 @@ describe("locus threading in MAIN", () => {
     // There is NO zero-arg form — the default parameter was removed, so
     // `getCodexResolution()` no longer typechecks. Exact, not `>=`: a new host-default site
     // added later must fail this, not slip under a floor.
-    expect(calls).toHaveLength(2);
+    //
+    // The THIRD is the session thread's council routing (session-thread-briefing 4.1): which
+    // harness the review's own conversation may run on is a property of the checkout, and it
+    // resolves its `locus` from the same `locusContextForRepo(turnRoot)` every seat does.
+    expect(calls).toHaveLength(3);
     expect(calls.filter((arg) => arg === "HOST_LOCUS")).toHaveLength(0);
-    expect(calls.filter((arg) => arg.startsWith("locus"))).toHaveLength(2);
+    expect(calls.filter((arg) => arg.startsWith("locus"))).toHaveLength(3);
   });
 
   // The CONSUMER half, restored (#681 residue / C14 D3). Folding the three read-pipeline
@@ -64,8 +68,10 @@ describe("locus threading in MAIN", () => {
   // was addressed with. A project path, a workspace path, or a host default reddens this.
   it("passes a caller-owned turn root into every claudeAdapterForRepo consumer", () => {
     const calls = callArgs("claudeAdapterForRepo");
-    // Exact, not `>=`. TWO consumers: the flagged runner and the noise runner, both on
-    // the `turnRoot` local. The third was the round worker's own coding turn, gone with the
+    // Exact, not `>=`. THREE consumers: the flagged runner, the noise runner, and the
+    // session thread's council routing (session-thread-briefing 4.1 — which harness the
+    // review's own conversation may run on is a property of the checkout, exactly like a
+    // seat's), all on a `turnRoot`. The next was the round worker's own coding turn, gone with the
     // ephemeral round leg (session-bound-workspace D2 — a round is a turn on the session's
     // bound T3 thread now, and reaches no adapter here); the fourth was the coverage seat
     // (#681), gone with the coverage turn; the fifth was the review-ask run port, gone with
@@ -79,8 +85,8 @@ describe("locus threading in MAIN", () => {
     // harness actually runs in. Resolving from the repository while the turn asks for the
     // bound worktree silently drops the request. The two are the same value for a branch
     // review on the reviewer's own checkout and differ exactly when it matters.
-    expect(calls).toHaveLength(2);
-    expect(calls.filter((arg) => arg === "turnRoot")).toHaveLength(2);
+    expect(calls).toHaveLength(3);
+    expect(calls.filter((arg) => arg === "turnRoot")).toHaveLength(3);
     for (const arg of calls) {
       expect(
         ["turnRoot", "repoRoot"],

@@ -54,6 +54,7 @@ import {
   projectLogoMimeSchema,
   projectLogoSchema,
   projectProcessRunSchema,
+  projectRepositoryAddressSchema,
   projectSchema,
   projectVisibilitySchema,
   prSubmissionSchema,
@@ -143,6 +144,25 @@ const definitions = {
     // its injected chooser. Optional keeps every pre-#379 caller (which sent `{}`) valid.
     input: z.object({ path: z.string().optional() }),
     output: z.object({ path: z.string().nullable() }),
+  },
+  // Resolve a checkout PATH to its canonical `owner/name` (headless-review-cli D11). The
+  // headless `rennet review` CLI cannot spell `owner/name` itself: a `.git` suffix or a case
+  // difference would fork the `(repository, branch)` claim and mint a second session beside the
+  // one the reviewer has open. So it sends the toplevel path and the DAEMON derives the identity
+  // (the same `repositoryIdentity` that stamps `locals`/`prs`, #580), returning the string the
+  // CLI then mints and PR-scopes with. A read; it grants nothing and mutates nothing.
+  // `forgeRepository` is absent for a local-only repo with no forge remote (then `repository` is
+  // the durable git-common-dir identity). Gated behind the `review-cli` feature flag: a daemon
+  // that predates this command never advertises the flag, so the CLI refuses at connect rather
+  // than reaching an unknown command.
+  "repository.identify": {
+    input: z.object({ path: z.string().min(1) }),
+    // The identity the CLI mints and PR-scopes with: `owner/name` with a forge remote, else the
+    // durable git-common-dir string with `forgeRepository` absent. This is exactly the wire-safe
+    // `projectRepositoryAddressSchema` shape (`locals`/`prs` carry the same pair), and reusing it
+    // adds its `forgeRepositoryMatchesLegacy` refine so a slug and a structured identity can never
+    // be returned CONTRADICTING each other (#952 (a)) — a hand-rolled twin here allowed exactly that.
+    output: projectRepositoryAddressSchema,
   },
   "review.capture": {
     input: z.object({
@@ -1583,6 +1603,15 @@ const definitions = {
         commandId: commandIdSchema,
         /** The claimed branch. Absent mints a no-target session (claims nothing). */
         branch: z.string().min(1).optional(),
+        /**
+         * The ref the branch capture takes its merge-base against, instead of the project's
+         * primary branch (headless-review-cli D2). Applies to the BRANCH arm only: beside
+         * `prNumber` it has no effect, because the PR carries its own base, and it is NOT part
+         * of the `(repository, branch)` claim key, so two mints of one branch with different
+         * bases reattach to one session and the second base is not re-applied. Absent ⇒ the
+         * capture is byte-for-byte as before this field existed.
+         */
+        base: z.string().min(1).optional(),
         /** The claimed branch's PR number, when the row was a pull request. */
         prNumber: z.number().int().positive().optional(),
         /**
@@ -1786,18 +1815,46 @@ const definitions = {
   },
 } as const;
 
-/** The #465 v1 agent inventory — the only rows the orchestrator's app tools expose
- * today, mapped by inspection of the resolution's list against the commands that
- * actually exist. `projects.add` needs a DiscoveryResult it cannot fabricate, so its
- * two prerequisites are exposed with it: `repository.choose` (grant/obtain the path)
- * and `project.discover` (read-only discovery → the DiscoveryResult). Without them
- * the add-project tool was uncompletable. `navigate` (#480) stays UNEXPOSED and
- * unregistered: it is a client-locus command, and the dispatch table's compile-time
- * exhaustiveness guard would force a HOST handler for it — that is client execution.
- * C11 landed the command menu without it and no command by that name exists. The
- * `session.*` READS exist (host-locus) but stay UNEXPOSED to the agent — they are
- * client-surface reads, not app tools. None invented. */
+/** The agent inventory — the rows the session thread's `rennet_app` tools expose,
+ * decided PER ROW for that thread's job (`session-thread-briefing` D4) and never
+ * derived from a blanket rule. `buildAppTools` and the app-tools MCP server iterate
+ * this flag, so adding a row here IS adding a tool; the row-by-row rationale lives in
+ * `docs/developing/reference/command-menu-exposure.md`.
+ *
+ * The #465 v1 set (the acts) is the second group below. `projects.add` needs a
+ * DiscoveryResult it cannot fabricate, so its two prerequisites are exposed with it:
+ * `repository.choose` (grant/obtain the path) and `project.discover` (read-only
+ * discovery → the DiscoveryResult). Without them the add-project tool was
+ * uncompletable. `navigate` (#480) stays UNEXPOSED and unregistered: it is a
+ * client-locus command, and the dispatch table's compile-time exhaustiveness guard
+ * would force a HOST handler for it — that is client execution. C11 landed the command
+ * menu without it and no command by that name exists.
+ *
+ * `session-thread-briefing` adds two groups. The READS are what the thread needs to
+ * know which review the reviewer means and what its boards concluded — a workspace maps
+ * many repos onto one identity, so the thread resolves a branch by LISTING sessions and
+ * loading one, never by assuming the session it is bound to. The ACTS are the paths
+ * Rennet tracks and receipts: an ask the reviewer sends, a composed handoff, a drafted
+ * PR body, a dispatched round. The thread is steered toward them by its briefing and
+ * forbidden nothing (Rule Zero) — it keeps every capability its harness has.
+ *
+ * Deliberately still out: `ask.retire`/`ask.restore` and `ask.dismissFinding` (the
+ * reviewer's own ledger acts), `review.regenerate` and `review.refine` (model spend the
+ * reviewer commissions), and every `publish.*` row — nothing another human can see gets
+ * published without Rai clicking post. None invented. */
 const AGENT_EXPOSED = new Set<string>([
+  // ── Reads: what the reviewer is looking at (session-thread-briefing D4) ──
+  "board.read",
+  "session.list",
+  "review.load",
+  "patchset.readEvidence",
+  "patchset.readSpan",
+  "ask.read",
+  "session.rounds",
+  "session.transcript",
+  "review.deltaDigest",
+  "review.symbolLookup",
+  // ── The #465 v1 acts ────────────────────────────────────────────────────
   "ask.stage",
   "repository.choose",
   "project.discover",
@@ -1811,6 +1868,13 @@ const AGENT_EXPOSED = new Set<string>([
   "settings.setRepoVisibility",
   "settings.resetRepoValue",
   "settings.pinRepoValue",
+  // ── Acts through the paths Rennet tracks (session-thread-briefing D4) ────
+  "ask.unstage",
+  "ask.edit",
+  "ask.quoteReply",
+  "review.handoff.compose",
+  "review.draftPrBody",
+  "round.dispatch",
 ]);
 
 /**

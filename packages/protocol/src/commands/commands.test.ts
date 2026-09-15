@@ -106,6 +106,7 @@ const ABSORBED_IDS = [
   "publish.review",
   "publish.submitPr",
   "repository.choose",
+  "repository.identify",
   "review.capture",
   "review.checkFreshness",
   "review.deltaDigest",
@@ -167,21 +168,43 @@ const ABSORBED_IDS = [
   "worktrees.remove",
 ] as const;
 
-// The #465 v1 agent inventory, mapped by inspection (the session.* reads exist but stay
-// unexposed; no navigate command exists yet). Mirrors AGENT_EXPOSED in index.ts so an
-// exposure edit is deliberate.
+// The agent inventory: the rows the session thread's `rennet_app` tools expose. Mirrors
+// AGENT_EXPOSED in index.ts so an exposure edit is deliberate — a row added there and not
+// here (or here and not there) reddens the two assertions below, in both directions.
 // `repository.choose` + `project.discover` are the add-project prerequisites (the
 // tool cannot fabricate a DiscoveryResult); `navigate` stays out (a client-locus row
-// would force a host dispatch handler, and C11 shipped the menu without one). Kept sorted — the invariant
+// would force a host dispatch handler, and C11 shipped the menu without one).
+// `session-thread-briefing` D4 added the ten reads the thread needs to know which review
+// the reviewer means (`session.list` → `review.load` → `board.read`, plus the patchset,
+// ask, round and symbol reads) and the six acts on the paths Rennet tracks and receipts
+// (ask edit/unstage/quote-reply, handoff compose, PR-body draft, round dispatch). Every
+// `publish.*` row and the reviewer's own ledger acts stay out; the rationale per row is in
+// `docs/developing/reference/command-menu-exposure.md`. Kept sorted — the invariant
 // test compares against the alphabetically sorted list of agent-exposed ids.
 const AGENT_INVENTORY = [
+  "ask.edit",
+  "ask.quoteReply",
+  "ask.read",
   "ask.stage",
+  "ask.unstage",
+  "board.read",
+  "patchset.readEvidence",
+  "patchset.readSpan",
   "project.discover",
   "projects.add",
   "projects.list",
   "repository.choose",
   "review.capture",
+  "review.deltaDigest",
+  "review.draftPrBody",
+  "review.handoff.compose",
+  "review.load",
   "review.openPr",
+  "review.symbolLookup",
+  "round.dispatch",
+  "session.list",
+  "session.rounds",
+  "session.transcript",
   "settings.get",
   "settings.pinRepoValue",
   "settings.resetRepoValue",
@@ -202,7 +225,7 @@ const MENU_INVENTORY: readonly string[] = [];
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(113);
+    expect(ABSORBED_IDS).toHaveLength(114);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {
@@ -548,5 +571,32 @@ describe("command registry invariants (#465)", () => {
     expect(isCommandName("app.bootstrap")).toBe(true);
     expect(isCommandName("canvas.read")).toBe(false);
     expect(isCommandName("ordering.approve")).toBe(false);
+  });
+});
+
+describe("repository.identify output consistency (#952 (a))", () => {
+  // The output now reuses `projectRepositoryAddressSchema`, whose `forgeRepositoryMatchesLegacy`
+  // refine forbids a slug and a structured identity that name different repos. The hand-rolled
+  // twin this replaced allowed exactly that contradiction to be returned.
+  it("accepts a consistent owner/name slug beside its structured forge identity", () => {
+    const consistent = {
+      repository: "acme/widget",
+      forgeRepository: { forge: "github", owner: "acme", name: "widget" },
+    };
+    expect(parseCommandOutput("repository.identify", consistent)).toEqual(consistent);
+  });
+
+  it("accepts a forgeless local-only common-dir identity", () => {
+    const forgeless = { repository: "/srv/git/common/repo-b.git" };
+    expect(parseCommandOutput("repository.identify", forgeless)).toEqual(forgeless);
+  });
+
+  it("rejects a slug that contradicts its structured forge identity", () => {
+    expect(() =>
+      parseCommandOutput("repository.identify", {
+        repository: "acme/widget",
+        forgeRepository: { forge: "github", owner: "other", name: "repo" },
+      }),
+    ).toThrow();
   });
 });

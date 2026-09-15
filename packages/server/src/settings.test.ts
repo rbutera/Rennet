@@ -616,8 +616,15 @@ describe("createSettingsComposition — council review-role mappings (C16, #485)
   it("reads the council defaults with no override stored — honest-present, never empty", async () => {
     const composition = createSettingsComposition(statefulDeps().deps);
     const roles = composition.reviewRoles();
-    expect(roles.map((role) => role.id)).toEqual(["lens-workers", "second-seat"]);
+    expect(roles.map((role) => role.id)).toEqual(["lens-workers", "second-seat", "orchestrator"]);
     expect(roles).toEqual(reviewRoleMappings());
+    // The review's own conversation is a control now, not a dead row: the first-run welcome
+    // writes this role's `dual` cell and `bindReviewThread` spends it
+    // (session-thread-briefing 4.4). Both single-provider columns are real — the chat runs
+    // on whichever harness the host has.
+    expect(cell(roles, "orchestrator", "dual")?.value).not.toBeNull();
+    expect(cell(roles, "orchestrator", "claudeOnly")?.value).not.toBeNull();
+    expect(cell(roles, "orchestrator", "codexOnly")?.value).not.toBeNull();
     // The Flagged Second Seat is a DUAL-only construct: honest-null single-provider.
     expect(cell(roles, "second-seat", "dual")?.value).not.toBeNull();
     expect(cell(roles, "second-seat", "claudeOnly")).toEqual({ value: null, layer: "default" });
@@ -631,7 +638,9 @@ describe("createSettingsComposition — council review-role mappings (C16, #485)
       version: 1,
       routing: {
         task: {
-          "orchestrator-chat": { dual: { model: "haiku", effort: "low" } },
+          // NOT `orchestrator-chat`: that job backs the live Orchestrator role now
+          // (session-thread-briefing 4.4), so an override on it is honoured rather than
+          // merely readable. The three below still back no control.
           "self-consistency": { dual: { model: "haiku", effort: "low" } },
           adjudication: { dual: { model: "haiku", effort: "low" } },
           "board-post-process": { dual: { model: "haiku", effort: "low" } },
@@ -649,6 +658,7 @@ describe("createSettingsComposition — council review-role mappings (C16, #485)
     expect((await reopened.get()).reviewRoles?.map((role) => role.id)).toEqual([
       "lens-workers",
       "second-seat",
+      "orchestrator",
     ]);
     expect(cell(reopened.reviewRoles(), "lens-workers", "dual")?.value).toEqual({
       model: "sonnet-5",

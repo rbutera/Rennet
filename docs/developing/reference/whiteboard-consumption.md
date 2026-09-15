@@ -157,8 +157,9 @@ than reconstructing them from section elements.
 A successful absence has no board or board-meta row. Its durable home is the
 generation's `absentLenses` map. `board.read` pairs `board: null` with that reason
 code, keeping it distinct from a board that has not arrived yet. Design's reason is
-`no-spec` — the branch has no specification to read — and the finished board views
-drop the Design tab rather than showing an empty board.
+`no-spec` — the branch has no specification to read, and no pull request description,
+documentation change or related issue to draft an overview from either — and the
+finished board views drop the Design tab rather than showing an empty board.
 
 A drafter that fails also has no board row. The generation records the reason in
 `failedLenses` and, when the failing path named one, its typed account in
