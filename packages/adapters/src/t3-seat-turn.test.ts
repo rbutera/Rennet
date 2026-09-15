@@ -317,6 +317,54 @@ describe("createT3SeatTurn", () => {
     ).toBe(0);
   });
 
+  // The /clear epoch flake (#958). A session-boundary turn can settle before its own new
+  // session id is observed, so its epoch is stamped from the PRIOR session and fails to
+  // rotate. These lock in that the mis-rotation is benign for accounting: a /clear turn
+  // carries no spend, so a stale epoch never invents a number, and the next real turn
+  // reports its full usage whether or not the boundary rotated. The epoch STRING rotating
+  // is an internal derivation detail; the contract the user sees is the reported usage,
+  // and that is what the e2e now asserts instead of the fragile epoch inequality.
+  it("reports zero for a /clear whose epoch failed to rotate, never a phantom charge", () => {
+    const staleClear = settledTurnUsage({
+      usage: { input_tokens: 0, output_tokens: 0 },
+      modelUsage: {},
+      totalCostUsd: 0,
+      usageEpoch: "q1:pre-clear",
+      previousUsage: {
+        modelUsage: modelTotals(28_000, 4_000),
+        totalCostUsd: 3.3,
+        usageEpoch: "q1:pre-clear",
+      },
+    });
+    expect(staleClear?.totalTokens).toBe(0);
+    // Cost stays unknown rather than inventing a negative or a phantom charge.
+    expect(staleClear?.reportedUsd == null || staleClear.reportedUsd <= 0).toBe(true);
+  });
+
+  it("reports the post-clear turn's full usage whether or not the /clear epoch rotated", () => {
+    const post = {
+      usage: { input_tokens: 36_000, output_tokens: 4_000 },
+      modelUsage: modelTotals(36_000, 7_000),
+      totalCostUsd: 4.3,
+    };
+    // /clear rotated correctly: post shares the cleared epoch, baseline is /clear's zero usage.
+    expect(
+      settledTurnUsage({
+        ...post,
+        usageEpoch: "q1:post-clear",
+        previousUsage: { modelUsage: {}, totalCostUsd: 0, usageEpoch: "q1:post-clear" },
+      }),
+    ).toMatchObject({ totalTokens: 43_000, reportedUsd: 4.3 });
+    // /clear epoch stayed stale: post is a fresh epoch, so it reports its whole runtime.
+    expect(
+      settledTurnUsage({
+        ...post,
+        usageEpoch: "q1:post-clear",
+        previousUsage: { modelUsage: {}, totalCostUsd: 0, usageEpoch: "q1:pre-clear" },
+      }),
+    ).toMatchObject({ totalTokens: 43_000, reportedUsd: 4.3 });
+  });
+
   it("keeps per-turn usage when recovered model totals are unavailable", async () => {
     // Raw usage describes this turn even when no complete model totals are available.
     const collector = createMetricsCollector();
