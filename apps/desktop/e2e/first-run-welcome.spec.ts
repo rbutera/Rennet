@@ -1,7 +1,7 @@
 import { rmSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { WsRennetBridge } from "@rennet/client";
-import { completeWelcome, launchRennet, makeTempDir, seedReviewRepo } from "./harness";
+import { launchRennet, makeTempDir, seedReviewRepo } from "./harness";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The first-run welcome (C21), driven in the real app.
@@ -28,6 +28,7 @@ test("the first-run welcome is what a first run gets, and completing it is what 
 
   try {
     const page = await application.firstWindow();
+    await page.emulateMedia({ reducedMotion: "no-preference" });
 
     // ── The wizard IS the first run, and the shell is not merely hidden behind it ──
     // `routes/app.tsx` unmounts the shell rather than hiding it: a mounted underlay still
@@ -43,15 +44,89 @@ test("the first-run welcome is what a first run gets, and completing it is what 
     // absent at unit level (`first-run-welcome.dom.test.tsx`); here the cause is what is pinned.
     expect(await page.locator("[data-screen]").count()).toBe(0);
 
+    await expect(page.locator(".welcome-shell")).toHaveCSS("-webkit-app-region", "drag");
+    await expect(page.locator(".welcome-main")).toHaveCSS("-webkit-app-region", "no-drag");
+
+    await page.getByRole("button", { name: "Start", exact: true }).click();
+
     // ── Step 1 — Appearance. The choice is applied and PERSISTED as it is made, not on exit ──
-    await page.getByRole("button", { name: "Continue to Rennet" }).click();
     await page
-      .getByRole("radiogroup", { name: "Color scheme" })
+      .getByRole("group", { name: "Color scheme" })
       .getByRole("button", { name: "Dark" })
       .click();
     // An EXPLICIT dark resolves to dark whatever the host machine prefers, so this is the
     // one appearance assertion that is deterministic on any reviewer’s screen.
     await expect(page.locator("html")).toHaveAttribute("data-scheme", "dark");
+
+    for (const scheme of ["Light", "Dark"]) {
+      await page
+        .getByRole("group", { name: "Color scheme" })
+        .getByRole("button", { name: scheme, exact: true })
+        .click();
+      for (const [token, color] of [
+        ["top", "#f2b032"],
+        ["mid", "#e8641f"],
+        ["bottom", "#d42c3b"],
+      ]) {
+        await expect(page.locator("html")).toHaveCSS(`--rn-art-${token}`, color);
+      }
+    }
+
+    const canvas = await page.locator(".welcome-constellation canvas").elementHandle();
+    await page.getByRole("button", { name: "GitHub", exact: true }).click();
+    const darkBackdrop = await page
+      .locator(".welcome-shell")
+      .evaluate((element) => getComputedStyle(element).background);
+    await expect(
+      page.locator('.rn-theme-preview[data-rn-theme="github"][data-scheme="dark"]'),
+    ).toBeVisible();
+    await expect(
+      page.locator('.rn-theme-preview[data-rn-theme="github"][data-scheme="light"]'),
+    ).toBeHidden();
+    await page
+      .getByRole("group", { name: "Color scheme" })
+      .getByRole("button", { name: "Light", exact: true })
+      .click();
+    await expect(page.locator("html")).toHaveAttribute("data-scheme", "light");
+    await expect(
+      page.locator('.rn-theme-preview[data-rn-theme="github"][data-scheme="light"]'),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        page.locator(".welcome-shell").evaluate((element) => getComputedStyle(element).background),
+      )
+      .not.toBe(darkBackdrop);
+    expect(
+      await canvas?.evaluate(
+        (element) => element === document.querySelector(".welcome-constellation canvas"),
+      ),
+    ).toBe(true);
+    if (process.platform === "darwin") {
+      const logo = await page.locator('.welcome-header [role="img"]').boundingBox();
+      expect(logo?.x).toBeGreaterThanOrEqual(100);
+    }
+    await page
+      .getByRole("group", { name: "Color scheme" })
+      .getByRole("button", { name: "Dark", exact: true })
+      .click();
+
+    for (const viewport of [
+      { width: 1520, height: 1000 },
+      { width: 1420, height: 900 },
+      { width: 1280, height: 720 },
+      { width: 980, height: 640 },
+    ]) {
+      await page.setViewportSize(viewport);
+      for (const selector of [".welcome-panel", ".welcome-arrival"]) {
+        const bounds = await page.locator(selector).boundingBox();
+        expect(bounds).not.toBeNull();
+        expect((bounds?.y ?? 0) + (bounds?.height ?? 0)).toBeLessThanOrEqual(viewport.height);
+      }
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: /^Continue$/ }).scrollIntoViewIfNeeded();
+    await expect(page.getByRole("button", { name: /^Continue$/ })).toBeInViewport();
+    await page.setViewportSize({ width: 980, height: 640 });
 
     // ── Step 2 — Tools. Detection is DISCLOSED, never claimed: git is required and present,
     // and this environment's harnesses are switched off, so their rows say so. ──
@@ -84,27 +159,35 @@ test("the first-run welcome is what a first run gets, and completing it is what 
     // is not a button working, and only driving it proves which; `first-run-welcome.dom.test.tsx`
     // carries the same drive at unit level, all the way to New Chat.
     await proceed.click();
-    await expect(page.getByText("Add the code you’re responsible for.")).toBeVisible();
+    await expect(page.getByText("Your code, wherever it lives.")).toBeVisible();
 
     // The step chips are real navigation, not decoration: a completed step is revisitable and
     // the appearance chosen above survived the round trip.
     await page
       .getByRole("navigation", { name: "Welcome progress" })
-      .getByText("Appearance")
+      .getByRole("button", { name: /Appearance/ })
       .click();
-    // Step 1 replays its opening (the hero is the stage's entry, and the appearance card is
-    // revealed by the arrow), so the arrow — not the card — is what proves we landed.
-    await expect(page.getByRole("button", { name: "Continue to Rennet" })).toBeVisible();
-    await page.getByRole("button", { name: "Continue to Rennet" }).click();
     await expect(page.getByText("Choose your appearance")).toBeVisible();
     await expect(page.locator("html")).toHaveAttribute("data-scheme", "dark");
 
-    // ── The skip's own honesty ──
-    // Every other spec walks past this wizard with `settings.completeWelcome`. If that command
-    // were not the real dismissal, those specs would be stepping around the welcome by some
-    // side door and proving nothing about the app a user gets. So: run it, and the wizard is
-    // gone, the shell is up, and the projects front door is what is behind it.
-    await completeWelcome(page);
+    // Completing setup does not require adding a project or granting disk access.
+    for (let step = 0; step < 4; step++) {
+      const artwork = page.locator(".welcome-constellation canvas");
+      const before = await artwork.screenshot();
+      await page.waitForTimeout(250);
+      expect(await artwork.screenshot()).not.toEqual(before);
+      const panel = await page.locator(".welcome-panel").boundingBox();
+      expect((panel?.y ?? 0) + (panel?.height ?? 0)).toBeLessThanOrEqual(640);
+      await page.getByRole("button", { name: /^Continue$/ }).click();
+    }
+    const readyArtwork = page.locator(".welcome-constellation canvas");
+    const readyBefore = await readyArtwork.screenshot();
+    await page.waitForTimeout(250);
+    expect(await readyArtwork.screenshot()).not.toEqual(readyBefore);
+    const ready = await page.locator(".welcome-panel").boundingBox();
+    expect((ready?.y ?? 0) + (ready?.height ?? 0)).toBeLessThanOrEqual(640);
+    await expect(page.getByRole("button", { name: "Add", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Start a new chat" }).click();
     await expect(page.locator('[data-screen="add-project-entry"]')).toBeVisible({
       timeout: 60_000,
     });

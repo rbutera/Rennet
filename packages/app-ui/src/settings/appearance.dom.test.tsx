@@ -166,37 +166,31 @@ describe("AppearancePage — replay the first-run welcome", () => {
         throw new Error("the replay must not add a project");
       },
     });
-    const { user, findByText, findAllByText, findByLabelText } = mount(
+    const { user, findByText } = mount(
       <RennetRouterApp bridge={bridge} history={memoryHistory("/settings/appearance")} />,
     );
 
     await user.click(await findByText("Replay the first-run welcome"));
     await findByText("You stopped writing the code. You still have to answer for it.");
+    await user.click(await findByText("Start", { exact: true }));
 
-    // Appearance → Tools → Review setup → Project. The intro arrow reveals the appearance
-    // card; from there every step is its own Continue.
-    await user.click(await findByLabelText("Continue to Rennet"));
+    // Appearance → Tools → Review setup → Access.
     await user.click(await findByText("Continue"));
     await user.click(await findByText("Continue"));
     await user.click(await findByText("Continue"));
 
-    // The Project step offers the project this client ALREADY has — no picker required.
-    await user.click(await findByText("Continue with atlas"));
+    // Optional access does not require selecting a project.
+    await user.click(await findByText("Continue"));
 
-    // Ready summarises that same project, and its button writes the completion stamp.
+    // Ready completes setup without adding or modifying projects.
     await findByText("Make the next change digestible.");
-    expect((await findAllByText("atlas")).length).toBeGreaterThan(0);
     await user.click(await findByText("Start a new chat"));
 
     // The shell is back: the `settings.get` refetch after `completeWelcome` cleared the
     // replay request, so the startup gate stops electing the wizard. The welcome's own
     // headline is gone — the assertion is about what MOUNTED, not about a settings field.
     await waitFor(() =>
-      expect(
-        document.body.textContent?.includes(
-          "You stopped writing the code. You still have to answer for it.",
-        ),
-      ).toBe(false),
+      expect(document.body.textContent?.includes("Make the next change digestible.")).toBe(false),
     );
     expect(added).toEqual([]);
     cleanup();

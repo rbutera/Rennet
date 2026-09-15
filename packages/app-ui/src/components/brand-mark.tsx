@@ -1,7 +1,6 @@
 // The real Rennet brand mark (issue #43): the liquid sphere, carried as the authored
 // geometry from `brand/exports/logo/svg/mark-color.svg`. In-app chrome uses the COLOUR
-// sphere in both schemes — the gradients ARE the mark, so it does not swap with the
-// scheme the way a single-ink glyph does.
+// sphere in both schemes, with body colors drawn from the selected theme.
 //
 // The art is square (viewBox 0 0 100 100): a clipped disc filled by one linear body
 // gradient plus a radial shade and a radial highlight. `size` is BOTH the rendered
@@ -134,16 +133,11 @@ export const GitHubIcon = ({ className, ...rest }: SVGProps<SVGSVGElement>) => (
  * are document-global, so a fixed id would make every instance point at the FIRST
  * mount's gradients — and lose them entirely when that instance unmounts.
  */
-// The sphere's authored palette, copied from `brand/exports/logo/svg/mark-color.svg`
-// (the body stops are also `--rennet-sphere-*` in `brand/tokens.css`). These are
-// ARTWORK values, not interface colour: they are the mark, and they read identically in
-// every scheme — which is the opposite of what a `--rn-…` theme token is for. That is
-// why the token rule, which governs every styling colour in this package, is lifted for
-// exactly these five constants and nothing else in the file.
+// App themes recolor the authored sphere; standalone artwork keeps its original palette.
 /* eslint-disable rennet/no-hardcoded-hex -- brand artwork, deliberately scheme-invariant */
-const SPHERE_TOP = "#f3b437";
-const SPHERE_MID = "#e8641f";
-const SPHERE_BOTTOM = "#d42c3b";
+const SPHERE_TOP = "var(--rn-art-top, #f3b437)";
+const SPHERE_MID = "var(--rn-art-mid, #e8641f)";
+const SPHERE_BOTTOM = "var(--rn-art-bottom, #d42c3b)";
 const SPHERE_HIGHLIGHT = "#fff3d6";
 const SPHERE_SHADE = "#7a1020";
 /* eslint-enable rennet/no-hardcoded-hex */

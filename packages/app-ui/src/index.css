@@ -10,8 +10,7 @@
  * decorative type, the processing orb's masked conic ring, and the diff/syntax
  * vocabulary consumed by generated code markup.
  *
- * The old styles.css / tokens.css / canvas.css glass world is deleted. One
- * seamless opaque window; separation by surface steps and hairlines.
+ * The app uses a theme-derived gradient with glass for navigation, panes and overlays.
  */
 
 @import "tailwindcss";
@@ -315,69 +314,8 @@
   }
 }
 
-/* First-run welcome. The wizard styles itself with Tailwind utilities; what stays here
- * is what utilities cannot express — the code rain's sub-ramp decorative type with its
- * syntax tones, and the theme-preview miniature's 8px faux-diff. */
+/* Miniature appearance previews use decorative faux-code below the reading ramp. */
 @layer components {
-  /* The code rain stays hand-written CSS: its 9px type is below the ramp floor (the
-   * design-ramp test pins this exact selector and value as decorative micro-type),
-   * and per-fragment placement rides inline styles from the fragment catalogue in
-   * first-run-welcome.tsx. */
-  .rn-code-fragment {
-    position: absolute;
-    margin: 0;
-    padding: 7px 9px;
-    border-left: 1px solid color-mix(in srgb, var(--rn-line-strong) 65%, transparent);
-    color: var(--rn-ink-faint);
-    font: 9px / 1.62 var(--font-mono);
-    white-space: pre;
-    opacity: 0.58;
-    /* Infinite idle motion only changes transforms; including opacity here would
-       promote a repaint channel the performance fix deliberately removed. */
-    will-change: transform;
-  }
-  .rn-code-fragment > span {
-    display: block;
-    min-height: 1.62em;
-  }
-  /* The prototype's syntax hues are fixed values chosen against one theme. These ride
-   * the shared --rn-syn-* code palette instead, so the rain retints as the reader
-   * tries theme packs on the very screen it drifts behind. */
-  .rn-code-field [data-tone="keyword"] {
-    color: var(--rn-syn-kw);
-  }
-  .rn-code-field [data-tone="function"] {
-    color: var(--rn-syn-fn);
-  }
-  .rn-code-field [data-tone="type"] {
-    color: var(--rn-syn-type);
-  }
-  .rn-code-field [data-tone="string"] {
-    color: var(--rn-syn-str);
-  }
-  .rn-code-field [data-tone="literal"] {
-    color: var(--rn-syn-num);
-  }
-  .rn-code-field [data-tone="comment"] {
-    color: var(--rn-syn-cmt);
-    font-style: italic;
-  }
-  .rn-code-field [data-tone="hunk"] {
-    color: var(--rn-ink-faint);
-  }
-  .rn-code-field [data-tone="remove"] {
-    color: var(--rn-del-ink);
-  }
-  .rn-code-field [data-tone="add"] {
-    color: var(--rn-add-ink);
-  }
-  .rn-code-particle {
-    position: absolute;
-    color: var(--rn-ink-faint);
-    font: var(--text-xs) var(--font-mono);
-    opacity: 0.7;
-  }
-  /* The theme-preview miniature's faux diff: 8px, the ramp's other pinned exemption. */
   .rn-theme-preview code {
     display: block;
     margin-top: 17px;
@@ -520,5 +458,122 @@
   }
   .rtok-variable {
     color: var(--rn-syn-var);
+  }
+}
+
+:root {
+  --rn-backdrop-secondary: #e8641f;
+  --rn-app-backdrop:
+    radial-gradient(
+      ellipse at 12% 38%,
+      color-mix(in srgb, var(--rn-accent) 14%, transparent),
+      transparent 58%
+    ),
+    radial-gradient(
+      ellipse at 88% 90%,
+      color-mix(in srgb, var(--rn-backdrop-secondary) 7%, transparent),
+      transparent 55%
+    ),
+    var(--rn-canvas);
+  --rn-glass-fill: color-mix(in srgb, var(--rn-surface) 76%, transparent);
+  --rn-glass-line: color-mix(in srgb, var(--rn-ink) 12%, transparent);
+  --rn-art-top: #f2b032;
+  --rn-art-mid: #e8641f;
+  --rn-art-bottom: #d42c3b;
+}
+:root[data-rn-theme] {
+  --rn-backdrop-secondary: var(--rn-model);
+  --rn-art-top: var(--rn-accent-fill);
+  --rn-art-mid: var(--rn-model);
+  --rn-art-bottom: var(--rn-syn-kw);
+}
+.rennet-layout {
+  background: var(--rn-app-backdrop);
+}
+:root[data-scheme="light"] .rennet-layout {
+  --rn-app-backdrop:
+    radial-gradient(
+      ellipse at 12% 38%,
+      color-mix(in srgb, var(--rn-accent-fill) 28%, transparent),
+      transparent 65%
+    ),
+    radial-gradient(
+      ellipse at 88% 90%,
+      color-mix(in srgb, var(--rn-backdrop-secondary) 16%, transparent),
+      transparent 65%
+    ),
+    var(--rn-canvas);
+  --rn-glass-fill: color-mix(in srgb, var(--rn-surface) 60%, transparent);
+}
+.rennet-layout .rennet-workspace,
+.rennet-layout [data-screen="new-chat"],
+.rennet-layout [data-screen="archived"],
+.rennet-layout [data-screen="project-indexing"] {
+  background: transparent;
+}
+.rennet-sidebar[data-open="true"],
+[data-slot="t3-chat-dock"],
+[data-slot="session-top-bar"][data-floating="false"],
+[data-screen="settings"] > header,
+[data-screen="settings"] nav[aria-label="Settings pages"] {
+  background: var(--rn-glass-fill);
+  border-color: var(--rn-glass-line);
+  backdrop-filter: blur(18px) saturate(1.1);
+}
+.rennet-outlet {
+  background: color-mix(in srgb, var(--rn-surface) 24%, transparent);
+}
+[data-slot="dialog-content"],
+[data-slot="sheet-content"],
+[data-slot="popover-content"],
+[data-slot="dropdown-menu-content"],
+[data-slot="context-menu-content"],
+[data-slot="select-content"] {
+  background: color-mix(in srgb, var(--rn-overlay) 88%, transparent);
+  border-color: var(--rn-glass-line);
+  backdrop-filter: blur(24px) saturate(1.15);
+  box-shadow:
+    0 16px 48px rgb(0 0 0 / 0.16),
+    inset 0 1px 0 color-mix(in srgb, var(--rn-ink) 6%, transparent);
+}
+[data-slot="t3-native-chat"],
+[data-slot="t3-thread-view"] {
+  --background: transparent;
+  --app-chrome-background: var(--rn-glass-fill);
+  --chat-composer-glass-surface: var(--rn-glass-fill);
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --rn-glass-fill: var(--rn-surface);
+  }
+  [data-slot="dialog-content"],
+  [data-slot="sheet-content"],
+  [data-slot="popover-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="select-content"] {
+    background: var(--rn-overlay);
+    backdrop-filter: none;
+  }
+}
+
+[data-material="glass"] {
+  background: var(--rn-glass-fill);
+  border-color: var(--rn-glass-line);
+  backdrop-filter: blur(18px);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--rn-ink) 5%, transparent);
+}
+
+:root[data-scheme="light"] .rennet-outlet {
+  background: transparent;
+}
+:root[data-scheme="light"] [data-material="glass"] {
+  box-shadow:
+    0 4px 20px color-mix(in srgb, var(--rn-ink) 5%, transparent),
+    inset 0 1px 0 rgb(255 255 255 / 0.8);
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-scheme="light"] .rennet-layout {
+    --rn-glass-fill: var(--rn-surface);
   }
 }

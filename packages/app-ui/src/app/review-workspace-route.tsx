@@ -328,7 +328,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
     // the frame's `overflow-hidden`; they share ONE primary scroller now. That scroller is
     // also what C20's floating-chip clearance hangs off, so the board reads correctly under
     // the state-3 chip layer instead of starting beneath them.
-    <div className="relative flex h-full min-h-0 flex-col bg-canvas">
+    <div className="rennet-workspace relative flex h-full min-h-0 flex-col">
       {/* One line, above the branch so it is present on the hand-off too — the surface where a
           stale review would be posted under the reviewer's own name. It reads and it offers a
           button; it blocks nothing and every view stays exactly as reachable as before. */}

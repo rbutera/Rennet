@@ -3,10 +3,9 @@ import type {
   DetectedForge,
   ForgeHostDetection,
   HarnessHostDetection,
-  Project,
   SettingsView,
 } from "@rennet/protocol";
-import { Button, cn } from "@rennet/ui";
+import { Button, cn, Toggle } from "@rennet/ui";
 import {
   ArrowLeft,
   ArrowRight,
@@ -14,7 +13,6 @@ import {
   CheckCircle2,
   Code,
   ExternalLink,
-  FolderOpen,
   HardDrive,
   MessageCircleMore,
   Monitor,
@@ -26,272 +24,23 @@ import {
   TerminalSquare,
   TriangleAlert,
 } from "lucide-react";
-import { type AnimationSequence, stagger, useAnimate, useReducedMotion } from "motion/react";
-import {
-  type CSSProperties,
-  type ReactNode,
-  type RefObject,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { Icon } from "../components/icon";
 import { LiquidSphere } from "../components/liquid-sphere";
 import { useBridge, useCommand, useMutation, useRefreshCommand } from "../data";
-import { AddProjectFlow } from "../project/add-project-dialog";
 import { newChatPath } from "../routes/url";
 import { AgentMark, type AgentToolId } from "../settings/assets/agent-marks";
 import { THEME_PACKS, type ThemePackId } from "../settings/assets/theme-packs";
 import { type SourceControlToolId, ToolMark } from "../settings/assets/tool-marks";
 import { useThemePref } from "../settings/theme-pref";
 import { useConnectionCapabilities } from "../shell/connection-capabilities";
+import { useMacTrafficLights } from "../shell/corner-slot";
+import { WelcomeConstellation } from "./welcome-constellation";
+import "./welcome.css";
 import { RennetLockup } from "../shell/sidebar/lockup";
 
-const STEP_LABELS = ["Appearance", "Tools", "Review setup", "Project", "Ready"] as const;
-
-const REVIEW_WORDS = [
-  "digestible",
-  "reviewable",
-  "traceable",
-  "explainable",
-  "navigable",
-  "manageable",
-  "readable",
-  "coherent",
-  "focused",
-  "structured",
-  "grounded",
-  "inspectable",
-  "verifiable",
-  "defensible",
-  "deliberate",
-  "rigorous",
-  "legible",
-  "intelligible",
-  "searchable",
-  "actionable",
-] as const;
-
-/** A syntax tone. Every tone resolves to a `--rn-syn-*`/diff token in `index.css`,
- *  so the code rain recolours with the theme pack the reader is choosing on this
- *  very screen — the prototype's fixed hues could not. */
-type CodeTone =
-  | "keyword"
-  | "function"
-  | "type"
-  | "string"
-  | "literal"
-  | "comment"
-  | "hunk"
-  | "remove"
-  | "add";
-
-interface CodeToken {
-  readonly tone?: CodeTone;
-  readonly text: string;
-}
-
-interface CodeFragment {
-  /** Absolute placement inside the code field, as authored in the prototype. */
-  readonly place: CSSProperties;
-  readonly lines: readonly (readonly CodeToken[])[];
-}
-
-const CODE_FRAGMENTS: readonly CodeFragment[] = [
-  {
-    place: { left: "1%", top: "4%" },
-    lines: [
-      [
-        { tone: "keyword", text: "export async function" },
-        { tone: "function", text: " listProjectFiles" },
-        { text: "(root: string) {" },
-      ],
-      [
-        { tone: "keyword", text: "  const" },
-        { text: " entries = " },
-        { tone: "keyword", text: "await" },
-        { text: " fs.readdir(root, {" },
-      ],
-      [{ text: "    withFileTypes: " }, { tone: "literal", text: "true" }, { text: "," }],
-      [{ text: "  });" }],
-      [
-        { tone: "keyword", text: "  return" },
-        { text: " entries.filter((entry) => entry.isFile());" },
-      ],
-      [{ text: "}" }],
-    ],
-  },
-  {
-    place: { left: "33%", top: "1%" },
-    lines: [
-      [
-        { tone: "function", text: "it" },
-        { text: "(" },
-        { tone: "string", text: '"keeps the claimed target stable"' },
-        { text: ", " },
-        { tone: "keyword", text: "async" },
-        { text: " () => {" },
-      ],
-      [
-        { tone: "keyword", text: "  const" },
-        { text: " session = " },
-        { tone: "keyword", text: "await" },
-        { text: " createSession(project);" },
-      ],
-      [
-        { tone: "keyword", text: "  await" },
-        { text: " git.checkout(" },
-        { tone: "string", text: '"feature/review"' },
-        { text: ");" },
-      ],
-      [{ text: "" }],
-      [
-        { tone: "keyword", text: "  const" },
-        { text: " result = " },
-        { tone: "keyword", text: "await" },
-        { text: " session.refresh();" },
-      ],
-      [
-        { tone: "function", text: "  expect" },
-        { text: "(result.target).toEqual(session.target);" },
-      ],
-      [{ text: "});" }],
-    ],
-  },
-  {
-    place: { right: "1%", top: "9%" },
-    lines: [
-      [
-        { tone: "keyword", text: "const" },
-        { text: " head = " },
-        { tone: "keyword", text: "await" },
-        { text: " git.revParse(" },
-        { tone: "string", text: '"HEAD"' },
-        { text: ");" },
-      ],
-      [{ tone: "keyword", text: "if" }, { text: " (head !== snapshot.head) {" }],
-      [{ text: "  cache.invalidate(project.id);" }],
-      [{ text: "}" }],
-    ],
-  },
-  {
-    place: { left: "7%", top: "36%" },
-    lines: [
-      [{ tone: "keyword", text: "type" }, { tone: "type", text: " ReviewState" }, { text: " =" }],
-      [{ text: "  | { status: " }, { tone: "string", text: '"idle"' }, { text: " }" }],
-      [
-        { text: "  | { status: " },
-        { tone: "string", text: '"reading"' },
-        { text: "; files: number }" },
-      ],
-      [
-        { text: "  | { status: " },
-        { tone: "string", text: '"ready"' },
-        { text: "; findings: Finding[] };" },
-      ],
-    ],
-  },
-  {
-    place: { right: "4%", top: "40%" },
-    lines: [
-      [{ tone: "hunk", text: "@@ -118,7 +118,9 @@" }],
-      [{ tone: "remove", text: "- return publish(review)" }],
-      [{ tone: "add", text: "+ const draft = await preview(review)" }],
-      [{ tone: "add", text: "+ return reviewer.decide(draft)" }],
-    ],
-  },
-  {
-    place: { left: "26%", top: "24%" },
-    lines: [
-      [
-        { tone: "keyword", text: "const" },
-        { text: " controller = " },
-        { tone: "keyword", text: "new" },
-        { tone: "type", text: " AbortController" },
-        { text: "();" },
-      ],
-      [{ tone: "keyword", text: "try" }, { text: " {" }],
-      [{ tone: "keyword", text: "  await" }, { text: " runner.start({" }],
-      [{ text: "    target: session.target," }],
-      [{ text: "    signal: controller.signal," }],
-      [{ text: "  });" }],
-      [{ text: "} " }, { tone: "keyword", text: "finally" }, { text: " {" }],
-      [{ text: "  controller.abort();" }],
-      [{ text: "}" }],
-    ],
-  },
-  {
-    place: { right: "25%", top: "30%" },
-    lines: [
-      [
-        { tone: "keyword", text: "const" },
-        { text: " reads = " },
-        { tone: "keyword", text: "await" },
-        { tone: "type", text: " Promise" },
-        { text: ".all([" },
-      ],
-      [{ text: "  claude.review(evidence)," }],
-      [{ text: "  codex.review(evidence)," }],
-      [{ text: "]);" }],
-      [{ tone: "keyword", text: "return" }, { text: " compare(reads);" }],
-    ],
-  },
-  {
-    place: { left: "2%", bottom: "5%" },
-    lines: [
-      [{ tone: "comment", text: "// Never infer a new target after the session starts." }],
-      [{ tone: "keyword", text: "const" }, { text: " claimedTarget = session.target;" }],
-      [{ text: "" }],
-      [{ tone: "keyword", text: "return" }, { text: " review.run({" }],
-      [{ text: "  projectId," }],
-      [{ text: "  target: claimedTarget," }],
-      [{ text: "});" }],
-    ],
-  },
-  {
-    place: { right: "6%", bottom: "9%" },
-    lines: [
-      [{ tone: "keyword", text: "if" }, { text: " (!validation.ok) {" }],
-      [
-        { tone: "keyword", text: "  throw new" },
-        { tone: "type", text: " InvalidReviewError" },
-        { text: "(" },
-      ],
-      [{ text: "    validation.rejectedItems," }],
-      [{ text: "  );" }],
-      [{ text: "}" }],
-    ],
-  },
-  {
-    place: { left: "39%", bottom: "3%" },
-    lines: [
-      [{ tone: "keyword", text: "switch" }, { text: " (event.type) {" }],
-      [
-        { tone: "keyword", text: "  case" },
-        { tone: "string", text: '"review.completed"' },
-        { text: ":" },
-      ],
-      [{ tone: "keyword", text: "    return" }, { text: " { ...state, result: event.result };" }],
-      [
-        { tone: "keyword", text: "  case" },
-        { tone: "string", text: '"review.failed"' },
-        { text: ":" },
-      ],
-      [{ tone: "keyword", text: "    return" }, { text: " { ...state, error: event.error };" }],
-      [{ text: "}" }],
-    ],
-  },
-];
-
-const CODE_PARTICLES = Array.from({ length: 38 }, (_, index) => ({
-  id: `code-particle-${index}`,
-  symbol: index % 4 === 0 ? "+" : index % 4 === 1 ? "-" : index % 4 === 2 ? "{" : "@",
-  left: `${21 + index * 1.55}%`,
-  top: `${31 + (index % 7) * 8}%`,
-  tone: index % 5 === 1 ? "remove" : index % 5 === 0 || index % 5 === 2 ? "add" : undefined,
-}));
+const STEP_LABELS = ["Appearance", "Tools", "Review setup", "Access", "Ready"] as const;
 
 function errorText(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
@@ -299,10 +48,7 @@ function errorText(reason: unknown): string {
 
 function StepProgress({ step, onStep }: { step: number; onStep(next: number): void }) {
   return (
-    <nav
-      className="flex items-center gap-[3px] rounded-full border border-line bg-surface px-1.5 py-1"
-      aria-label="Welcome progress"
-    >
+    <nav className="welcome-progress" aria-label="Welcome progress">
       {STEP_LABELS.map((label, index) => {
         // Three states, not two: a DONE step reads green-outlined with its tick, an
         // ACTIVE one gold-filled, a future one plain. Collapsing done into "not
@@ -312,6 +58,7 @@ function StepProgress({ step, onStep }: { step: number; onStep(next: number): vo
           <button
             type="button"
             key={label}
+            aria-label={label}
             disabled={index > step}
             aria-current={index === step ? "step" : undefined}
             data-state={state}
@@ -338,6 +85,73 @@ function StepProgress({ step, onStep }: { step: number; onStep(next: number): vo
   );
 }
 
+const REVIEW_SUBJECTS = [
+  "code review",
+  "AI-generated diffs",
+  "HITL",
+  "pull requests",
+  "spec-driven development",
+  "understanding code",
+  "code ownership",
+  "large changes",
+  "refactoring",
+  "review conversations",
+  "agentic engineering",
+  "finding regressions",
+  "reading unfamiliar code",
+  "technical decisions",
+  "test coverage",
+  "review handoffs",
+  "shipping changes",
+  "working with agents",
+];
+const REVIEW_QUALITIES = [
+  "easy to digest",
+  "manageable",
+  "transparent",
+  "better",
+  "easier",
+  "fun",
+  "efficient",
+  "clearer",
+  "less overwhelming",
+  "more focused",
+  "more approachable",
+  "more deliberate",
+];
+
+function WelcomeRefrain({ paused }: { paused: boolean }) {
+  const [subject, setSubject] = useState(0);
+  const [quality, setQuality] = useState(0);
+  useEffect(() => {
+    if (paused) return;
+    const subjects = setInterval(
+      () => setSubject((value) => (value + 1) % REVIEW_SUBJECTS.length),
+      3100,
+    );
+    const qualities = setInterval(
+      () => setQuality((value) => (value + 1) % REVIEW_QUALITIES.length),
+      4300,
+    );
+    return () => {
+      clearInterval(subjects);
+      clearInterval(qualities);
+    };
+  }, [paused]);
+  return (
+    <p className="welcome-refrain">
+      <span className="sr-only">Rennet makes code review easy to digest.</span>
+      <span aria-hidden="true">Rennet makes</span>{" "}
+      <span key={`subject-${subject}`} className="welcome-refrain-subject" aria-hidden="true">
+        {REVIEW_SUBJECTS[subject]}
+      </span>{" "}
+      <span key={`quality-${quality}`} className="welcome-refrain-quality" aria-hidden="true">
+        {REVIEW_QUALITIES[quality]}.
+      </span>
+    </p>
+  );
+}
+
 function WelcomeShell({
   step,
   onStep,
@@ -347,494 +161,113 @@ function WelcomeShell({
   onStep(next: number): void;
   children: ReactNode;
 }) {
-  return (
-    <div className="min-h-dvh overflow-hidden bg-canvas text-ink">
-      {step > 0 ? (
-        <header className="flex h-14 items-center justify-between border-b border-line bg-canvas px-7">
-          {/* The same lockup the sidebar's row carries, at the 56px title-bar height the
-           *  rest of the shell uses (was a one-off 58px):
-           *  the LIVE sphere at 32px with the wordmark drawn at HALF its height — 16px,
-           *  ~68.6px wide on the authored 480.168:112 window — and the authored gap,
-           *  32 × 24/126 ≈ 6.1px, taken as `gap-1.5`. Both halves are decorative and the
-           *  name rides the wrapper, so the assembly reads as one image called Rennet.
-           *  Resting: the wizard is configuring the client, not running a review. */}
-          <span className="flex items-center gap-1.5" role="img" aria-label="Rennet">
-            <LiquidSphere size={32} state="resting" className="shrink-0" />
-            <RennetLockup part="wordmark" size={16} className="w-auto" />
-          </span>
-          <span className="flex items-center gap-1.5 text-xs text-ink-faint">
-            <Icon icon={ShieldCheck} className="size-3.5 text-green" /> Local by default
-          </span>
-        </header>
-      ) : null}
-      {/* `key={step}` REMOUNTS the stage, which is what re-runs `step-in` — a CSS
-       *  animation on a persistent node fires once and never again. */}
-      <main
-        key={step}
-        className={cn(
-          "animate-welcome-step motion-reduce:animate-none",
-          step === 0 ? "min-h-dvh" : "min-h-[calc(100dvh-56px)]",
-        )}
-      >
-        {children}
-      </main>
-      <footer className="fixed bottom-3.5 left-1/2 z-50 -translate-x-1/2">
-        <StepProgress step={step} onStep={onStep} />
-      </footer>
-    </div>
-  );
-}
-
-function CodeField() {
+  const mac = useMacTrafficLights();
+  const [started, setStarted] = useState(false);
+  const [motionPaused, setMotionPaused] = useState(true);
+  const intro = step === 0 && !started;
   return (
     <div
-      // The field dims as a whole (the prototype's `.diff-field { opacity: .72 }`) on top
-      // of the per-fragment .58, so the rain reads as texture behind the stage, not as a
-      // second column of text competing with it.
-      className="rn-code-field pointer-events-none absolute inset-0 overflow-hidden opacity-[.72] max-md:opacity-20"
-      aria-hidden="true"
+      className="welcome-shell"
+      data-welcome-step={step}
+      data-welcome-intro={intro}
+      data-mac-traffic-lights={mac}
     >
-      {CODE_FRAGMENTS.map((fragment, index) => (
-        <pre
-          className="rn-code-fragment"
-          data-fragment
-          // biome-ignore lint/suspicious/noArrayIndexKey: the fragment catalogue is a fixed literal
-          key={index}
-          style={fragment.place}
-        >
-          {fragment.lines.map((line, lineIndex) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: fixed literal, never reordered
-            <span key={lineIndex}>
-              {line.map((token, tokenIndex) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: fixed literal, never reordered
-                <span key={tokenIndex} data-tone={token.tone}>
-                  {token.text}
-                </span>
-              ))}
-            </span>
-          ))}
-        </pre>
-      ))}
-      {CODE_PARTICLES.map((particle) => (
-        <span
-          className="rn-code-particle"
-          data-particle
-          data-tone={particle.tone}
-          key={particle.id}
-          style={
-            {
-              left: particle.left,
-              top: particle.top,
-            } as CSSProperties
-          }
-        >
-          {particle.symbol}
+      <WelcomeConstellation step={step} intro={intro} onPauseChange={setMotionPaused} />
+      <header className="welcome-header">
+        <span className="flex items-center gap-1.5" role="img" aria-label="Rennet">
+          <LiquidSphere size={32} state="resting" className="shrink-0" />
+          <RennetLockup part="wordmark" size={16} className="w-auto" />
         </span>
-      ))}
+        {!intro && <StepProgress step={step} onStep={onStep} />}
+      </header>
+      <div className="welcome-layout">
+        <aside className="welcome-scene">
+          {!intro &&
+            (step === 0 ? (
+              <div className="welcome-arrival">
+                <h1>
+                  Welcome to your new <em>Review Harness.</em>
+                </h1>
+                <WelcomeRefrain paused={motionPaused} />
+              </div>
+            ) : (
+              <div className="welcome-scene-caption">
+                <p>
+                  {
+                    [
+                      "",
+                      "The tools you already trust.",
+                      "Independent reads. Your judgement.",
+                      "Start with the source.",
+                      "You’re ready for the next change.",
+                    ][step]
+                  }
+                </p>
+                <span>No Rennet backend. Your agents connect to their providers.</span>
+              </div>
+            ))}
+        </aside>
+        <main key={step} className="welcome-main animate-welcome-step motion-reduce:animate-none">
+          {intro ? (
+            <section className="welcome-opening">
+              <h1>
+                You stopped writing the code. <br />
+                You still have to answer for it.
+              </h1>
+              <Button onClick={() => setStarted(true)}>
+                Start <Icon icon={ArrowRight} />
+              </Button>
+            </section>
+          ) : (
+            children
+          )}
+        </main>
+      </div>
     </div>
   );
 }
 
-/** The reel carries the whole sentence per row, with row 0 repeated at the end so the
- *  wrap from the last word back to the first is a continued scroll, not a jump. */
-const REVIEW_WORD_REEL = [...REVIEW_WORDS, REVIEW_WORDS[0]];
-
-/** Hand-built reel keyframes: hold each sentence still, then move one row. `times` is
- *  normalised over the whole cycle, so the pair (hold, move) repeats per word — which
- *  means `cycle` (the animation's duration in seconds) has to come from here too, or a
- *  change to hold/move silently rescales every hold against a stale duration. */
-function reelKeyframes(): { positions: string[]; times: number[]; cycle: number } {
-  const hold = 1.55;
-  const move = 0.35;
-  const segment = hold + move;
-  const cycle = REVIEW_WORDS.length * segment;
-  const positions: string[] = [];
-  const times: number[] = [];
-  for (let index = 0; index < REVIEW_WORDS.length; index += 1) {
-    const current = `${-(index / REVIEW_WORD_REEL.length) * 100}%`;
-    const next = `${-((index + 1) / REVIEW_WORD_REEL.length) * 100}%`;
-    if (index === 0) {
-      positions.push(current);
-      times.push(0);
-    }
-    positions.push(current, next);
-    times.push((index * segment + hold) / cycle, ((index + 1) * segment) / cycle);
-  }
-  return { positions, times, cycle };
-}
-
-/** Where the reel sits once it has scrolled through every word — the offset the
- *  reduced-motion path jumps straight to, so the sentence still reads complete. */
-const REEL_FINAL_OFFSET = `${-((REVIEW_WORD_REEL.length - 1) / REVIEW_WORD_REEL.length) * 100}%`;
-
-// The opening animates by data attribute, not by class, so the utilities on these
-// elements stay free to change without silently unhooking a motion sequence.
-const OPENING_TAGLINE = "[data-opening-tagline]";
-const INTRO_ARROW = "[data-intro-arrow]";
-const REVIEW_TAGLINE = "[data-review-tagline]";
-const SENTENCE_REEL = "[data-sentence-reel]";
-const LOGO_MARK = "[data-logo-mark]";
-const LOGO_WORDMARK = "[data-logo-wordmark]";
-const APPEARANCE_PANEL = "[data-appearance-panel]";
-
-// The wordmark's wipe, on the opening sequence's clock. Named because the sphere settles
-// from working to resting the moment the wipe lands — the assembly is complete there, not
-// at the end of the whole sequence — and a start/duration written twice would drift apart.
-const WORDMARK_WIPE_AT = 0.94;
-const WORDMARK_WIPE_DURATION = 0.86;
-
-/** What the hero's sphere is drawn at before its span has been measured — mid-range for
- *  the clamp below, so the one pre-measurement frame is never a zero-sized engine. */
-const HERO_MARK_FALLBACK = 112;
-
-/**
- * The rendered width of `ref`'s element in px. `LiquidSphere` takes a pixel size and the
- * hero's mark is a PERCENTAGE of a clamped container, so the sphere has to be told what
- * that percentage currently resolves to.
- *
- * `ResizeObserver` where it works, a window `resize` listener where there is no
- * constructor at all, and the fallback until a real measurement arrives — happy-dom has
- * the constructor but lays nothing out, so every measurement there is 0 and the guard is
- * what keeps the test environment on the fallback instead of on a zero-sized sphere.
- */
-function useMeasuredWidth(ref: RefObject<HTMLElement | null>, fallback: number): number {
-  const [width, setWidth] = useState(fallback);
-  useEffect(() => {
-    const node = ref.current;
-    if (!node) return;
-    // `offsetWidth`, NOT `getBoundingClientRect().width`: the hero's mark span starts the
-    // opening at `scale(0.92)`, and a client rect is the TRANSFORMED box, so measuring it
-    // shrank the sphere to 133 inside its own 145px span and left it there — the span's
-    // layout width never changes, so no observer callback ever corrected it.
-    const measure = () => {
-      if (node.offsetWidth > 0) setWidth(node.offsetWidth);
-    };
-    measure();
-    if (typeof ResizeObserver !== "function") {
-      window.addEventListener("resize", measure);
-      return () => window.removeEventListener("resize", measure);
-    }
-    const observer = new ResizeObserver(measure);
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [ref]);
-  return width;
-}
-
-/** The run-of-the-wizard treatments, written once because five stages share them. */
-const EYEBROW = "m-0 mb-[7px] text-2xs font-bold tracking-[0.12em] text-accent uppercase";
 const INLINE_ERROR =
   "mt-3 mb-0 rounded-control border border-danger bg-danger-soft px-3 py-2.5 text-xs text-ink";
-const CONTENT_STAGE =
-  "mx-auto w-[min(900px,calc(100vw-48px))] pt-[clamp(54px,8vh,94px)] pb-[120px] max-md:pt-10";
-const STAGE_H1 =
-  "m-0 mb-3 font-display text-display leading-[1.05] font-medium tracking-[-0.035em]";
+const CONTENT_STAGE = "welcome-panel";
+const STAGE_H1 = "welcome-heading";
 const STAGE_P = "m-0 max-w-[610px] leading-[1.65] text-ink-soft";
 const PLAIN_NOTE =
   "mt-[18px] flex items-center gap-2.5 text-xs text-ink-faint [&>svg]:size-[18px] [&>svg]:shrink-0 [&>svg]:text-green";
 
-type Cubic = [number, number, number, number];
-const EASE_OUT: Cubic = [0.16, 1, 0.3, 1];
-const EASE_IN: Cubic = [0.4, 0, 1, 1];
-const EASE_GATHER: Cubic = [0.76, 0, 0.24, 1];
-
-interface WelcomeIdleAnimation {
-  keyframes: {
-    x: number[];
-    y: number[];
-    rotate?: number[];
-  };
-  transition: {
-    duration: number;
-    repeat: number;
-    ease: "linear" | "easeInOut";
-  };
-}
-
-interface WelcomeIdleControl {
-  pause(): void;
-  play(): void;
-  stop(): void;
-}
-
-interface WelcomeVisibilityTarget {
-  readonly hidden: boolean;
-  addEventListener(type: "visibilitychange", listener: () => void): void;
-  removeEventListener(type: "visibilitychange", listener: () => void): void;
-}
-
-export function welcomeFragmentIdleAnimation(
-  index: number,
-  width: number,
-  height: number,
-): WelcomeIdleAnimation {
-  const directionX = index % 2 === 0 ? 1 : -1;
-  const directionY = index % 3 === 0 ? -1 : 1;
-  const travelX = width * (0.2 + (index % 4) * 0.055);
-  const travelY = height * (0.12 + (index % 5) * 0.035);
-  return {
-    keyframes: {
-      x: [0, directionX * travelX, -directionX * travelX * 0.72, directionX * travelX * 0.38, 0],
-      y: [0, directionY * travelY * 0.55, -directionY * travelY, directionY * travelY * 0.7, 0],
-      rotate: [0, directionX * 7, -directionX * 5, directionX * 3, 0],
-    },
-    transition: { duration: 17 + index * 1.15, repeat: Infinity, ease: "linear" },
-  };
-}
-
-export function welcomeParticleIdleAnimation(index: number): WelcomeIdleAnimation {
-  return {
-    keyframes: {
-      x: [0, ((index % 5) - 2) * 8, 0],
-      y: [0, ((index % 7) - 3) * 6, 0],
-    },
-    transition: {
-      duration: 5.5 + (index % 8) * 0.44,
-      repeat: Infinity,
-      ease: "easeInOut",
-    },
-  };
-}
-
-export function bindWelcomeIdleLoops(
-  loops: readonly WelcomeIdleControl[],
-  target: WelcomeVisibilityTarget,
-): () => void {
-  const sync = () => {
-    for (const loop of loops) {
-      if (target.hidden) loop.pause();
-      else loop.play();
-    }
-  };
-  sync();
-  target.addEventListener("visibilitychange", sync);
-  return () => {
-    target.removeEventListener("visibilitychange", sync);
-    for (const loop of loops) loop.stop();
-  };
-}
-
 function ThemePreview({ id }: { id: ThemePackId }) {
-  const scheme = id === "affineur" || id === "github" ? "light" : "dark";
   return (
-    // `rn-theme-preview` stays a class: the 8px faux-diff inside it is decorative
-    // micro-type below the ramp floor, pinned by selector in design-ramp.test.ts.
-    <span
-      className="rn-theme-preview block h-[104px] rounded-control border border-line bg-canvas p-[11px] text-left text-ink [@media(max-height:760px)]:h-[78px]"
-      data-rn-theme={id === "affineur" ? undefined : id}
-      data-scheme={scheme}
-      aria-hidden="true"
-    >
-      <i className="flex gap-1">
-        <b className="size-[5px] rounded-full bg-current opacity-30" />
-        <b className="size-[5px] rounded-full bg-current opacity-30" />
-        <b className="size-[5px] rounded-full bg-current opacity-30" />
-      </i>
-      <code>
-        <span className="text-del-ink">−</span> const answer = draft
-        <br />
-        <strong className="text-add-ink">+</strong> const answer = evidence
-      </code>
-    </span>
+    <>
+      {(["light", "dark"] as const).map((scheme) => (
+        <span
+          key={scheme}
+          className="rn-theme-preview block h-[104px] rounded-control border border-line bg-canvas p-[11px] text-left text-ink [@media(max-height:760px)]:h-[78px]"
+          data-rn-theme={id === "affineur" ? undefined : id}
+          data-scheme={scheme}
+          aria-hidden="true"
+        >
+          <i className="flex gap-1">
+            <b className="size-[5px] rounded-full bg-current opacity-30" />
+            <b className="size-[5px] rounded-full bg-current opacity-30" />
+            <b className="size-[5px] rounded-full bg-current opacity-30" />
+          </i>
+          <code>
+            <span className="text-del-ink">−</span> const answer = draft
+            <br />
+            <strong className="text-add-ink">+</strong> const answer = evidence
+          </code>
+        </span>
+      ))}
+    </>
   );
 }
 
 function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onContinue(): void }) {
-  const [scope, animate] = useAnimate();
-  const reduceMotion = useReducedMotion();
-  const [started, setStarted] = useState(false);
-  // The hero's sphere reports the opening: it WORKS while the logo is assembling and
-  // settles the moment the wordmark's wipe lands. Reduced motion has no assembly to
-  // report — its opening is a 0.18s cross-fade — so it stays resting throughout.
-  const [wipeLanded, setWipeLanded] = useState(false);
-  const markState = started && !wipeLanded && !reduceMotion ? "working" : "resting";
-  const heroMark = useRef<HTMLSpanElement | null>(null);
-  const heroMarkSize = useMeasuredWidth(heroMark, HERO_MARK_FALLBACK);
   const { themePack, setThemePack } = useThemePref();
   const { mutate: setAppearance } = useMutation("settings.setAppearance", {
     invalidates: ["settings.get"],
   });
   const [appearanceError, setAppearanceError] = useState<string>();
-
-  useEffect(() => {
-    const root = scope.current;
-    if (!root) return;
-    const fragments = [...root.querySelectorAll("[data-fragment]")];
-    const particles = [...root.querySelectorAll("[data-particle]")];
-
-    // Reduced motion gets its own DESIGNED opening, not the full one at 0.01s: the
-    // same states in the same order, arriving in 0.18s with no drift, no gather and
-    // no looping reel — which is jumped straight to its final offset so the sentence
-    // still reads complete rather than mid-scroll.
-    if (!started) {
-      if (reduceMotion) {
-        const controls = animate([
-          [OPENING_TAGLINE, { opacity: 1, y: 0 }, { duration: 0.18 }],
-          [INTRO_ARROW, { opacity: 1, scale: 1 }, { at: 0.1, duration: 0.18 }],
-        ]);
-        return () => controls.stop();
-      }
-
-      const oneShots = [
-        animate(OPENING_TAGLINE, { opacity: 1, y: 0 }, { duration: 0.8, ease: EASE_OUT }),
-        animate(
-          INTRO_ARROW,
-          { opacity: 1, scale: 1 },
-          { delay: 0.48, duration: 0.5, ease: EASE_OUT },
-        ),
-      ];
-      // Infinite idle motion is transform-only. Animating opacity repaints the code field
-      // every frame; its depth comes from the static fragment and particle CSS instead.
-      const loops = [
-        ...fragments.map((node, index) => {
-          const idle = welcomeFragmentIdleAnimation(index, root.clientWidth, root.clientHeight);
-          return animate(node, idle.keyframes, idle.transition);
-        }),
-        // Particles drift on their own before the click, so the field stays alive without
-        // reopening an opacity repaint channel.
-        ...particles.map((node, index) => {
-          const idle = welcomeParticleIdleAnimation(index);
-          return animate(node, idle.keyframes, idle.transition);
-        }),
-      ];
-      // Motion keeps repeat-forever controls running in a hidden window. Park both the
-      // fragment and particle loops there; the finite opening one-shots can finish normally.
-      const stopLoops = bindWelcomeIdleLoops(loops, document);
-      return () => {
-        stopLoops();
-        for (const control of oneShots) control.stop();
-      };
-    }
-
-    if (reduceMotion) {
-      const controls = animate([
-        [INTRO_ARROW, { opacity: 0, scale: 0.9 }, { duration: 0.08 }],
-        [OPENING_TAGLINE, { opacity: 0 }, { at: 0, duration: 0.08 }],
-        ["[data-fragment], [data-particle]", { opacity: 0 }, { duration: 0.08 }],
-        [LOGO_MARK, { opacity: 1, scale: 1, filter: "blur(0px)" }, { at: 0, duration: 0.18 }],
-        [
-          LOGO_WORDMARK,
-          { opacity: 1, x: 0, clipPath: "inset(0 0% 0 0)" },
-          { at: 0, duration: 0.18 },
-        ],
-        [REVIEW_TAGLINE, { opacity: 1, y: 0 }, { at: 0.08, duration: 0.18 }],
-        [`${REVIEW_TAGLINE} > span`, { opacity: 1, y: 0 }, { at: 0.08, duration: 0.18 }],
-        [SENTENCE_REEL, { y: REEL_FINAL_OFFSET }, { at: 0.08, duration: 0 }],
-        [
-          APPEARANCE_PANEL,
-          { visibility: "visible", opacity: 1, y: 0, scale: 1, filter: "blur(0px)" },
-          { at: 0.32, duration: 0.18 },
-        ],
-      ]);
-      return () => controls.stop();
-    }
-
-    // The gather target is measured from the MARK, not from a viewport fraction: the
-    // code converges on the logo that is assembling, wherever the responsive hero put
-    // it, instead of on a guessed point that drifts with the window.
-    const rootBounds = root.getBoundingClientRect();
-    const mark = root.querySelector(LOGO_MARK);
-    const markBounds = mark?.getBoundingClientRect();
-    const targetX = markBounds
-      ? markBounds.left - rootBounds.left + markBounds.width * 0.63
-      : root.clientWidth / 2;
-    const targetY = markBounds
-      ? markBounds.top - rootBounds.top + markBounds.height * 0.5
-      : Math.max(120, root.clientHeight * 0.2);
-
-    const gather: AnimationSequence = fragments.map((node, index) => {
-      const bounds = node.getBoundingClientRect();
-      return [
-        node,
-        {
-          x: targetX - (bounds.left - rootBounds.left + bounds.width / 2),
-          y: targetY - (bounds.top - rootBounds.top + bounds.height / 2),
-          opacity: [0.66, 0.8, 0],
-          scale: [1, 0.72, 0.16],
-          filter: ["blur(0px)", "blur(0px)", "blur(2px)"],
-        },
-        { at: 0.08 + index * 0.035, duration: 1.42, ease: EASE_GATHER },
-      ];
-    });
-    const gatherParticles: AnimationSequence = particles.map((node, index) => {
-      const bounds = node.getBoundingClientRect();
-      const orbitX = ((index % 7) - 3) * 5;
-      const orbitY = ((index % 5) - 2) * 4;
-      return [
-        node,
-        {
-          x: targetX - (bounds.left - rootBounds.left + bounds.width / 2) + orbitX,
-          y: targetY - (bounds.top - rootBounds.top + bounds.height / 2) + orbitY,
-          opacity: [0.7, 1, 0],
-          scale: [1, 0.82, 0.1],
-          rotate: index % 2 === 0 ? 80 : -80,
-        },
-        { at: 0.12 + (index % 11) * 0.025, duration: 1.28, ease: EASE_GATHER },
-      ];
-    });
-
-    const controls = animate([
-      [INTRO_ARROW, { opacity: 0, scale: 0.74, rotate: -8 }, { duration: 0.25, ease: EASE_IN }],
-      [
-        OPENING_TAGLINE,
-        { opacity: 0, y: -8, filter: "blur(4px)" },
-        { at: 0, duration: 0.42, ease: EASE_IN },
-      ],
-      ...gather,
-      ...gatherParticles,
-      [
-        LOGO_MARK,
-        { opacity: 1, scale: 1, filter: "blur(0px)" },
-        { at: 0.78, duration: 0.72, ease: EASE_OUT },
-      ],
-      [
-        LOGO_WORDMARK,
-        { opacity: 1, x: 0, clipPath: "inset(0 0% 0 0)" },
-        { at: WORDMARK_WIPE_AT, duration: WORDMARK_WIPE_DURATION, ease: EASE_OUT },
-      ],
-      [
-        `${REVIEW_TAGLINE} > span`,
-        { opacity: 1, y: 0 },
-        { at: 1.38, duration: 0.5, delay: stagger(0.08), ease: EASE_OUT },
-      ],
-      [REVIEW_TAGLINE, { opacity: 1, y: 0 }, { at: 1.38, duration: 0.5, ease: EASE_OUT }],
-      [
-        APPEARANCE_PANEL,
-        { visibility: "visible", opacity: 1, y: 0, scale: 1, filter: "blur(0px)" },
-        { at: 2.76, duration: 0.68, ease: EASE_OUT },
-      ],
-    ]);
-
-    // The sphere's settle, on the sequence's own clock and from the sequence's own
-    // numbers: a value animation started in the same tick with the wipe's `at` as its
-    // delay, so "resting" lands exactly when the wordmark finishes wiping in rather than
-    // at the end of the whole opening (a further 1.6s of appearance panel).
-    const settle = animate(0, 1, {
-      delay: WORDMARK_WIPE_AT,
-      duration: WORDMARK_WIPE_DURATION,
-      onComplete: () => setWipeLanded(true),
-    });
-
-    const reel = reelKeyframes();
-    const wordShuffle = animate(
-      SENTENCE_REEL,
-      { y: reel.positions },
-      {
-        delay: 1.68,
-        duration: reel.cycle,
-        times: reel.times,
-        repeat: Infinity,
-        ease: "linear",
-      },
-    );
-    const stopWordShuffle = bindWelcomeIdleLoops([wordShuffle], document);
-
-    return () => {
-      controls.stop();
-      settle.stop();
-      stopWordShuffle();
-    };
-  }, [animate, reduceMotion, scope, started]);
 
   async function chooseScheme(scheme: AppearanceScheme): Promise<void> {
     setAppearanceError(undefined);
@@ -855,125 +288,14 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
   }
 
   return (
-    <section
-      className="relative min-h-dvh overflow-hidden px-[4vw] pt-[clamp(48px,6vh,82px)] pb-[118px] [@media(max-height:760px)]:pt-5"
-      ref={scope}
-    >
-      <CodeField />
-      <div className="relative z-[2] grid min-h-[292px] content-start justify-items-center text-center">
-        {/* The hero is the app's real mark, live: the sphere lands from a blurred scale
-         *  while the wordmark wipes in beside it, and the sphere RIPPLES until that wipe
-         *  finishes. The halves keep the sidebar row's proportion — the wordmark's height
-         *  is half the mark's, so their widths are 1 : 2.14 on the authored 480.168:112
-         *  window — which is why the container clamp is narrower than the old 2:9.6
-         *  assembly's: 320–500px here puts the mark between 93 and 145px across the
-         *  viewport range, the size the mark reads at rather than the size the wordmark
-         *  needs. Motion animates these SPANS, never their contents, so the sphere is free
-         *  to be a canvas; the code-field's gather target is measured from the mark span
-         *  for the same reason. */}
-        <div
-          className="mt-[clamp(42px,7vh,72px)] flex w-[clamp(320px,34vw,500px)] items-center justify-center gap-[clamp(12px,1.5vw,22px)] [@media(max-height:760px)]:mt-5"
-          role="img"
-          aria-label="Rennet"
-        >
-          <span
-            className="w-[29%] shrink-0"
-            data-logo-mark
-            ref={heroMark}
-            style={{ opacity: 0, transform: "scale(0.92)", filter: "blur(2px)" }}
-          >
-            <LiquidSphere size={heroMarkSize} state={markState} />
-          </span>
-          <span
-            className="w-[62%] shrink-0 [&>svg]:h-auto [&>svg]:w-full"
-            data-logo-wordmark
-            style={{
-              opacity: 0,
-              transform: "translateX(-14px)",
-              clipPath: "inset(0 100% 0 0)",
-            }}
-          >
-            <RennetLockup size={100} part="wordmark" />
-          </span>
-        </div>
-        <div className="relative mt-5 grid min-h-[70px] w-[min(860px,90vw)] place-items-center">
-          <p
-            className="absolute inset-0 m-0 grid place-items-center text-lg leading-[1.35] tracking-[-0.015em] text-ink-soft xl:text-2xl"
-            data-opening-tagline
-            style={{ opacity: 0, transform: "translateY(10px)" }}
-          >
-            You stopped writing the code. You still have to answer for it.
-          </p>
-          {/* One reel row per sentence, scrolled under a one-line window: the whole
-           *  line moves, so the words never reflow around a changing tail. The rows stay
-           *  `nowrap` at EVERY width — the window is hard-sized to one line (1.35em), so a
-           *  wrapped row is a clipped row. Narrow screens overflow horizontally instead,
-           *  which the full-bleed `w-screen` row absorbs. */}
-          <p
-            className="absolute inset-y-0 left-[calc(50%-50vw)] grid w-screen place-items-center whitespace-nowrap text-lg leading-[1.35] tracking-[-0.015em] text-ink xl:text-2xl"
-            data-review-tagline
-            style={{ opacity: 0, transform: "translateY(10px)" }}
-          >
-            <span
-              className="relative h-[1.35em] w-full overflow-hidden"
-              role="img"
-              aria-label={`Rennet makes code review ${REVIEW_WORDS[0]}`}
-              style={{ opacity: 0, transform: "translateY(8px)" }}
-            >
-              <span
-                className="absolute inset-0 grid"
-                data-sentence-reel
-                style={{
-                  height: `${REVIEW_WORD_REEL.length * 100}%`,
-                  gridTemplateRows: `repeat(${REVIEW_WORD_REEL.length}, minmax(0, 1fr))`,
-                }}
-              >
-                {REVIEW_WORD_REEL.map((word, index) => (
-                  <strong
-                    className="flex w-full items-center justify-center whitespace-nowrap font-semibold"
-                    // biome-ignore lint/suspicious/noArrayIndexKey: row 0 repeats at the end for the seamless wrap, so the word alone is not unique
-                    key={`${word}-${index}`}
-                  >
-                    Rennet makes code review {word}
-                  </strong>
-                ))}
-              </span>
-            </span>
-          </p>
-        </div>
-        <button
-          className="mt-2.5 grid size-[46px] place-items-center rounded-full border border-accent-fill bg-accent-fill text-accent-ink hover:translate-x-0.5 hover:brightness-95 [&_svg]:size-5"
-          data-intro-arrow
-          type="button"
-          onClick={() => setStarted(true)}
-          disabled={started}
-          aria-label="Continue to Rennet"
-          style={{ opacity: 0, transform: "scale(0.86)" }}
-        >
-          <Icon icon={ArrowRight} />
-        </button>
-      </div>
-
-      <div
-        // `invisible` (not an inline visibility) keeps the panel out of the tab order
-        // until the opening ends; the sequence sets `visibility: visible` inline, which
-        // beats the class.
-        className="invisible relative z-[3] mx-auto mt-[clamp(20px,3vh,34px)] w-[min(1160px,92vw)] rounded-window border border-line bg-surface p-[30px]"
-        data-appearance-panel
-        style={{
-          opacity: 0,
-          transform: "translateY(60px) scale(0.98)",
-          filter: "blur(3px)",
-        }}
-      >
+    <section className={CONTENT_STAGE}>
+      <div data-appearance-panel>
         <div className="flex items-center justify-between gap-6 max-md:flex-col max-md:items-stretch">
           <div>
-            <p className={EYEBROW}>Make it yours</p>
             <h2 className="m-0 text-lg font-semibold">Choose your appearance</h2>
           </div>
-          <div
+          <fieldset
             className="grid grid-cols-3 overflow-hidden rounded-control border border-line"
-            role="radiogroup"
             aria-label="Color scheme"
           >
             {(
@@ -983,7 +305,7 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
                 ["dark", "Dark", Moon],
               ] as const
             ).map(([id, label, SchemeIcon]) => (
-              <button
+              <Toggle
                 key={id}
                 type="button"
                 className={cn(
@@ -991,23 +313,25 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
                   settings.scheme === id &&
                     "bg-raised text-ink shadow-[inset_0_-2px_var(--rn-accent-fill)]",
                 )}
+                pressed={settings.scheme === id}
                 onClick={() => void chooseScheme(id)}
               >
                 <Icon icon={SchemeIcon} />
                 {label}
-              </button>
+              </Toggle>
             ))}
-          </div>
+          </fieldset>
         </div>
         <div className="mt-6 mb-7 grid grid-cols-5 gap-[18px] max-md:grid-cols-2 max-md:gap-2.5">
           {THEME_PACKS.map((theme) => (
-            <button
+            <Toggle
               key={theme.id}
               type="button"
               className={cn(
-                "relative rounded-surface border border-transparent p-2 pb-2.5 hover:bg-raised",
+                "relative h-auto min-w-0 flex-col whitespace-normal rounded-surface border border-transparent p-2 pb-2.5 hover:bg-raised",
                 themePack === theme.id && "border-accent-line bg-accent-soft",
               )}
+              pressed={themePack === theme.id}
               onClick={() => void chooseTheme(theme.id)}
             >
               <ThemePreview id={theme.id} />
@@ -1017,7 +341,7 @@ function AppearanceStage({ settings, onContinue }: { settings: SettingsView; onC
                   <Icon icon={Check} />
                 </i>
               ) : null}
-            </button>
+            </Toggle>
           ))}
         </div>
         {appearanceError ? (
@@ -1049,7 +373,7 @@ function StepActions({
   disabled?: boolean;
 }) {
   return (
-    <div className="mt-[30px] flex items-center justify-between border-t border-line pt-[22px]">
+    <div className="welcome-actions mt-[30px] flex items-center justify-between border-t border-line pt-[22px]">
       <Button variant="ghost" onClick={onBack}>
         <Icon icon={ArrowLeft} />
         Back
@@ -1155,14 +479,13 @@ function ToolsStage({
   return (
     <section className={CONTENT_STAGE}>
       <div className="mb-9 max-w-[650px]">
-        <p className={EYEBROW}>This environment</p>
         <h1 className={STAGE_H1}>Your tools, already connected.</h1>
         <p className={STAGE_P}>
           Rennet uses the command-line tools installed here. No new accounts and no duplicate
           credentials.
         </p>
       </div>
-      <div className="grid gap-2.5">
+      <div className="welcome-tools grid gap-2.5">
         <ToolRow
           index={0}
           id="git"
@@ -1316,7 +639,6 @@ function ReviewSetupStage({
   return (
     <section className={CONTENT_STAGE}>
       <div className="mb-9 max-w-[650px]">
-        <p className={EYEBROW}>Review setup</p>
         <h1 className={STAGE_H1}>Choose how Rennet reviews.</h1>
         <p className={STAGE_P}>
           Your Claude Code. Your Codex. Rennet uses the harnesses already installed and signed in
@@ -1324,7 +646,7 @@ function ReviewSetupStage({
         </p>
       </div>
       {ids.length === 0 ? (
-        <div className="grid min-h-[370px] place-items-center content-center rounded-window border border-danger bg-surface p-12 text-center">
+        <div className="welcome-missing-harness grid min-h-[370px] place-items-center content-center rounded-window border border-danger bg-surface p-12 text-center">
           <span className="grid size-[70px] place-items-center rounded-window bg-danger-soft text-danger [&_svg]:size-9">
             <Icon icon={TerminalSquare} />
           </span>
@@ -1353,19 +675,19 @@ function ReviewSetupStage({
         </div>
       ) : (
         <>
-          <div
+          <fieldset
             className="grid grid-cols-2 gap-3.5 max-md:grid-cols-1"
-            role="radiogroup"
             aria-label="Orchestrator harness"
           >
             {available.map((tool) => (
-              <button
+              <Toggle
                 key={tool.id}
                 type="button"
                 className={cn(
-                  "relative grid min-h-[118px] grid-cols-[50px_1fr_auto] items-center gap-3.5 rounded-surface border border-line bg-surface p-5 text-left",
+                  "relative grid h-auto whitespace-normal min-h-[118px] grid-cols-[50px_1fr_auto] items-center gap-3.5 rounded-surface border border-line bg-surface p-5 text-left",
                   orchestrator === tool.id && "border-accent-line bg-accent-soft",
                 )}
+                pressed={orchestrator === tool.id}
                 onClick={() => setOrchestrator(tool.id as AgentToolId)}
               >
                 <span className={TOOL_MARK}>
@@ -1383,10 +705,10 @@ function ReviewSetupStage({
                     <Icon icon={Check} />
                   </i>
                 ) : null}
-              </button>
+              </Toggle>
             ))}
-          </div>
-          <aside className="my-3.5 flex items-center gap-3 border-l-[3px] border-accent-fill bg-surface px-4 py-[13px] [&>svg]:text-accent">
+          </fieldset>
+          <aside className="my-3.5 flex items-center gap-3 rounded-control bg-accent-soft px-4 py-[13px] [&>svg]:text-accent">
             <Icon icon={ShieldCheck} />
             <div className="grid gap-0.5">
               {/* What the choice ACTUALLY does (session-thread-briefing 4.4): it enables the
@@ -1411,6 +733,7 @@ function ReviewSetupStage({
               "grid min-h-[126px] w-full grid-cols-[126px_1fr_auto] items-center gap-5 rounded-surface border border-line bg-surface px-[22px] py-5 text-left max-md:grid-cols-[84px_1fr_auto]",
               dual && "border-accent-line",
             )}
+            aria-pressed={dual}
             onClick={() => setDual((value) => !value)}
           >
             <span className="flex items-center justify-center gap-2.5 [&_svg]:size-[34px]">
@@ -1453,96 +776,51 @@ function ReviewSetupStage({
   );
 }
 
-function ProjectStage({
-  onBack,
-  onAdded,
-  existing,
-}: {
-  onBack(): void;
-  onAdded(project: Project): void;
-  /** A project this client ALREADY has (a replay, not a fresh install). Undefined on the
-   *  zero-project first run, which is the path this step was originally written for. */
-  existing?: Project;
-}) {
+function AccessStage({ onBack, onContinue }: { onBack(): void; onContinue(): void }) {
   const bridge = useBridge();
   const [accessError, setAccessError] = useState<string>();
-  async function openAccess(): Promise<void> {
+  async function openAccess() {
     setAccessError(undefined);
     try {
-      const opened = await bridge.openFullDiskAccessSettings?.();
-      if (!opened) setAccessError("Open System Settings → Privacy & Security → Full Disk Access.");
+      if (!(await bridge.openFullDiskAccessSettings?.())) {
+        setAccessError("Open System Settings → Privacy & Security → Full Disk Access.");
+      }
     } catch (reason) {
       setAccessError(errorText(reason));
     }
   }
   return (
     <section className={CONTENT_STAGE}>
-      <div className="mb-9 max-w-[650px]">
-        <p className={EYEBROW}>First project</p>
-        <h1 className={STAGE_H1}>
-          {existing ? "Pick up where you left off." : "Add the code you’re responsible for."}
-        </h1>
-        <p className={STAGE_P}>
-          {existing
-            ? "Continue with a project you already have, or add another. Rennet scouts a new one’s structure and opens it in New Chat."
-            : "Choose a repository or a workspace. Rennet scouts its structure and opens it in New Chat."}
-        </p>
-      </div>
-      {bridge.platform === "darwin" && bridge.openFullDiskAccessSettings ? (
-        <aside className="mb-[18px] grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-control bg-raised px-4 py-3.5 max-md:grid-cols-[auto_1fr] [&>svg]:text-green">
-          <Icon icon={ShieldCheck} />
-          <div className="grid gap-0.5">
-            <strong>Need access outside the folders you choose?</strong>
-            <span className="text-xs text-ink-faint">
-              Full Disk Access is optional. Rennet only reads projects you add.
-            </span>
-          </div>
-          <Button
-            className="max-md:col-start-2 max-md:justify-self-start"
-            variant="outline"
-            onClick={() => void openAccess()}
-          >
+      <h1 className={STAGE_H1}>
+        {bridge.platform === "darwin"
+          ? "Your code, wherever it lives."
+          : "Bring your code when you’re ready."}
+      </h1>
+      {bridge.platform === "darwin" ? (
+        <>
+          <p className={STAGE_P}>
+            Full Disk Access is optional. Without it, macOS may prevent Rennet from reading projects
+            on external drives, network volumes, or protected folders.
+          </p>
+          <p className="my-5 text-sm text-ink-soft">
+            Enable Rennet in System Settings → Privacy &amp; Security → Full Disk Access. You can do
+            this later.
+          </p>
+          <Button variant="outline" onClick={() => void openAccess()}>
             Grant Full Disk Access <Icon icon={ExternalLink} />
           </Button>
-        </aside>
-      ) : null}
-      {accessError ? (
+        </>
+      ) : (
+        <p className={STAGE_P}>
+          Choose a project when you start a new chat. There’s no need to add one during setup.
+        </p>
+      )}
+      {accessError && (
         <p className={INLINE_ERROR} role="status">
           {accessError}
         </p>
-      ) : null}
-      <div className="rounded-window border border-line bg-surface p-6 [&_[role=dialog]]:shadow-none">
-        <AddProjectFlow onAdded={onAdded} showAddEnvironment={false} embedded />
-      </div>
-      {/* With NO existing project there is no `onContinue`, so no Continue button —
-       *  deliberately, and NOT the bug that review setup had. The shape is identical, which
-       *  is exactly why this note exists: someone will find it, recognise the gate one step
-       *  back, and "fix" it the same way.
-       *
-       *  What made review setup a GATE: it refused the reviewer over a fact about their
-       *  machine they could only change OUTSIDE Rennet — install a harness, sign in with its
-       *  CLI, come back. Nothing on that screen could satisfy it, so an empty machine was
-       *  held at the door forever.
-       *
-       *  What makes this a FORM: it asks the reviewer to do the one thing the step is for,
-       *  and the picker that does it is right here, satisfiable in place, with no harness
-       *  condition of its own (`AddProjectFlow`'s `disabled={!selectedPath || busy}` is just
-       *  an empty form declining to submit nothing). Adding a project is the step.
-       *
-       *  So: if a step withholds progress over something the user cannot resolve on that
-       *  screen, that is a gate and Rule Zero kills it. If it withholds progress until they
-       *  perform the step's own action, that is a form. Do not collapse the two.
-       *
-       *  `existing` is the REPLAY path, and there the same form would be a trap: the wizard's
-       *  only exit ran through `projects.add`, so replaying on a real machine meant adding a
-       *  DUPLICATE row (and re-indexing it) to get back to the shell — with no way out, since
-       *  the replay stamp survives a relaunch. Continuing with a project the client already
-       *  has is the step performed, not skipped. */}
-      <StepActions
-        onBack={onBack}
-        onContinue={existing ? () => onAdded(existing) : undefined}
-        continueLabel={existing ? `Continue with ${existing.name}` : undefined}
-      />
+      )}
+      <StepActions onBack={onBack} onContinue={onContinue} />
     </section>
   );
 }
@@ -1553,18 +831,9 @@ interface ReviewChoice {
   readonly dual: boolean;
 }
 
-function ReadyStage({
-  project,
-  reviewChoice,
-  onBack,
-}: {
-  project: Project;
-  reviewChoice: ReviewChoice;
-  onBack(): void;
-}) {
+function ReadyStage({ reviewChoice, onBack }: { reviewChoice: ReviewChoice; onBack(): void }) {
   const [, navigate] = useLocation();
   const complete = useMutation("settings.completeWelcome", { invalidates: ["settings.get"] });
-  const remember = useMutation("settings.setLastProject", { invalidates: ["settings.get"] });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const orchestratorLabel = reviewChoice.orchestrator
@@ -1581,16 +850,15 @@ function ReadyStage({
     setBusy(true);
     setError(undefined);
     try {
-      await remember.mutate({ source: project.source, projectId: project.id });
       await complete.mutate({});
-      navigate(newChatPath(project.id), { replace: true });
+      navigate(newChatPath(), { replace: true });
     } catch (reason) {
       setError(errorText(reason));
       setBusy(false);
     }
   }
   return (
-    <section className="mx-auto flex min-h-[calc(100dvh-56px)] w-[min(780px,calc(100vw-48px))] flex-col items-center pt-[clamp(70px,10vh,120px)] pb-[120px] text-center">
+    <section className="welcome-panel welcome-ready">
       {/* The ready badge is the MARK alone, and the box hugs it: the tick pins to the
        *  sphere's own corner rather than to the far end of a wordmark-wide strip. The
        *  sphere is decorative, so the assembly carries the accessible name. Resting —
@@ -1601,18 +869,15 @@ function ReadyStage({
           <Icon icon={Check} />
         </i>
       </span>
-      <p className={EYEBROW}>Ready</p>
       <h1 className={STAGE_H1}>Make the next change digestible.</h1>
       <p className={cn(STAGE_P, "max-w-[620px]")}>
-        Rennet is set up for <strong>{project.name}</strong>. Your review starts with the source and
-        keeps every conclusion attached to the code.
+        Your review harness is ready. Choose a project when you start your first chat.
       </p>
       {/* Each row is icon + label + value: the glyph is what makes three cells read as
        *  three different KINDS of fact rather than one undifferentiated strip. */}
-      <div className="my-8 grid w-full grid-cols-3 rounded-surface border border-line bg-surface max-md:grid-cols-1">
+      <div className="my-8 grid w-full grid-cols-2 rounded-surface border border-line bg-surface max-md:grid-cols-1">
         {(
           [
-            [FolderOpen, "Project", project.name],
             [Sparkles, "Orchestrator", orchestratorLabel],
             [Code, "Mode", modeLabel],
           ] as const
@@ -1621,7 +886,7 @@ function ReadyStage({
             key={label}
             className={cn(
               "flex items-center justify-center gap-3 p-[18px]",
-              index < 2 && "border-r border-line max-md:border-r-0 max-md:border-b",
+              index < 1 && "border-r border-line max-md:border-r-0 max-md:border-b",
             )}
           >
             <Icon icon={RowIcon} className="size-[22px] shrink-0 text-accent" />
@@ -1660,31 +925,12 @@ function ReadyStage({
 export function FirstRunWelcome({ settings }: { settings: SettingsView }) {
   const { activeSource } = useConnectionCapabilities();
   const [step, setStep] = useState(0);
-  const [project, setProject] = useState<Project>();
   const [reviewChoice, setReviewChoice] = useState<ReviewChoice>({
     orchestrator: "claude",
     dual: true,
   });
   const harnessQuery = useCommand("harness.hosts", {});
   const forgeQuery = useCommand("forge.hosts", {});
-  const projectsQuery = useCommand("projects.list", {});
-
-  // On a REPLAY the client already has projects, and the wizard's only exit used to run
-  // through `projects.add` — so getting back to the shell meant adding a duplicate row and
-  // paying for a redundant re-index, on a stamp that survives a relaunch. Seeding the
-  // wizard's project with one it already has makes Ready reachable without adding anything.
-  // Preference order matches the shell's own (`NewChatScreen`): the last-used project for
-  // the active source, else the first listed. On a genuine first run the list is empty and
-  // nothing is seeded — the Project step is exactly the form it always was.
-  const listed = projectsQuery.data?.projects;
-  const rememberedId = settings.navigation?.lastProjectBySource?.[activeSource];
-  useEffect(() => {
-    if (!listed?.length) return;
-    setProject(
-      (current) =>
-        current ?? listed.find((candidate) => candidate.id === rememberedId) ?? listed[0],
-    );
-  }, [listed, rememberedId]);
   const refreshHarnesses = useRefreshCommand("harness.hosts");
   const refreshForges = useRefreshCommand("forge.hosts");
   const harnesses =
@@ -1726,34 +972,13 @@ export function FirstRunWelcome({ settings }: { settings: SettingsView }) {
           />
         );
       case 3:
-        return (
-          <ProjectStage
-            existing={project}
-            onBack={() => setStep(2)}
-            onAdded={(added) => {
-              setProject(added);
-              setStep(4);
-            }}
-          />
-        );
+        return <AccessStage onBack={() => setStep(2)} onContinue={() => setStep(4)} />;
       case 4:
-        return project ? (
-          <ReadyStage project={project} reviewChoice={reviewChoice} onBack={() => setStep(3)} />
-        ) : (
-          // No project yet, so Ready has nothing to summarise — fall back to the step that
-          // produces one. `existing` is deliberately omitted: `project` is undefined here.
-          <ProjectStage
-            onBack={() => setStep(2)}
-            onAdded={(added) => {
-              setProject(added);
-              setStep(4);
-            }}
-          />
-        );
+        return <ReadyStage reviewChoice={reviewChoice} onBack={() => setStep(3)} />;
       default:
         return null;
     }
-  }, [forges, harnesses, project, refreshForges, refreshHarnesses, reviewChoice, settings, step]);
+  }, [forges, harnesses, refreshForges, refreshHarnesses, reviewChoice, settings, step]);
 
   return (
     <WelcomeShell step={step} onStep={setStep}>

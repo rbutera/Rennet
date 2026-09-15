@@ -53,7 +53,7 @@ components:
 
 **Creative North Star: "A body of code becomes a constellation"**
 
-This is the visual authority for `apps/marketing` only. The product UI and documentation retain the [root design authority](../../DESIGN.md). Warm charcoal space and amber/copper points surround readable glass panels; the final scene becomes the warm Rennet sphere. Self-hosted Geist carries headings and prose.
+This is the visual authority for `apps/marketing`. The first-run welcome adapts its particle scenes, recorded in [the app-ui design rules](../../packages/app-ui/DESIGN.md#surface-rules-the-first-run-welcome); it does not extend this authority to the rest of the product. The product UI and documentation retain the [root design authority](../../DESIGN.md). Warm charcoal space and amber/copper points surround readable glass panels; the final scene becomes the warm Rennet sphere. Self-hosted Geist carries headings and prose.
 
 The six-scene concept was authored and approved by Rai. It replaces the earlier gold-wave compositions; no new image composition is the implementation authority. The [surface brief](.impeccable/surfaces/apps-marketing-src-pages-index-astro.md) owns the page's sequence and persuasion strategy. Tokens above describe the current stylesheet, not the product app's palette.
 
@@ -85,7 +85,7 @@ The scene uses procedural amber/copper points, additive blending, bloom, and a w
 
 ## Shapes
 
-Large rounded glass panels contain the reading sections. Smaller rounded frames contain captures and illustrative evidence. Icon controls are circular; primary downloads use the control radius. Scene geometry is generated locally in code, with no external point-cloud asset files.
+Large rounded glass panels contain the reading sections. Smaller rounded frames contain captures and illustrative evidence. Icon controls are circular; primary downloads use the control radius. Scene geometry is generated locally in `packages/theme/src/constellation-models.ts`, shared with the first-run welcome, with no external point-cloud asset files. Rendering and interaction remain specific to each surface.
 
 ## Components
 
@@ -100,8 +100,8 @@ Large rounded glass panels contain the reading sections. Smaller rounded frames 
 
 - Keep product claims and fixture captions readable without the animated canvas.
 - Preserve original brand assets and opaque shipped-app captures.
-- Keep constellation materials scoped to marketing.
-- Do not import the glass treatment into the product app.
+- Keep particle scenes scoped to marketing and the welcome flow; the working app shares gradient and glass materials but retains dedicated reading surfaces.
+- The app also uses theme-derived gradients and glass under its root material rules; marketing retains its own palette and reading controls.
 - Do not present illustrative conversation or review counts as measured product results.
 - Write copy from the reviewer's point of view: what they see, ask, and decide. Do not describe Rennet's internals (seats, boards as machinery, repository maps) or defend design choices the reader never raised.
 

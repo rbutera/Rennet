@@ -91,11 +91,10 @@ design-ramp test forbids them in `packages/app-ui` sources. In the entry
 stylesheet [`src/index.css`](src/index.css) it also reads the raw `font-size:`
 and `font:` declarations, checking the shorthand's size operand — which sizes
 type just as surely — against the ramp alongside `font-size:`.
-Its one exemption is decorative micro-type below the 10px floor: the first-run
-welcome's code-rain (`.rn-code-fragment`, 9px) and theme-preview miniature
-(`.rn-theme-preview code`, 8px), both illegible faux-code rendered as texture.
-The test pins those two selectors to those two exact values; nothing else may
-use them.
+Its one exemption is decorative micro-type below the 10px floor: the theme-preview
+miniature (`.rn-theme-preview code`, 8px), faux-code rendered as texture. The test
+pins that selector to its exact value; nothing else may use it. The welcome no
+longer contains the 9px code-rain texture.
 
 ## Motion, and the stylesheet's remaining job
 
@@ -134,6 +133,90 @@ Two rules follow from past drift:
 - **An opt-out is stated per element, not inferred from a tag list.** The macOS drag
   region's `button, a, input, code` opt-out silently failed for any other interactive
   child.
+
+## Shared app material
+
+`src/index.css` owns `--rn-app-backdrop`: accent at 14% and model at 7% form
+soft radial gradients over the selected theme’s canvas. The main layout and
+welcome share it; workspace wrappers are transparent. The expanded sidebar,
+chat dock, non-floating session bar, settings header, and settings navigation
+use `--rn-glass-fill` (76% theme surface) with 18px blur. Non-bare settings
+section bodies, the New Chat branch list, and board sections opt into the same
+fill through `data-material="glass"`, with 18px blur and a thin inset highlight.
+The outlet adds a
+24% surface wash. Dialogs, sheets, popovers, and menus use 88% overlay and 24px
+blur. Reduced transparency makes the shared glass fill and overlays opaque.
+Diff/code colors remain their dedicated reading palette. Particle animation
+remains confined to welcome.
+
+## Surface rules: the first-run welcome
+
+At short desktop heights, preview tiles and spacing contract to fit the default
+1520×1000 preferred and minimum 980×640 window sizes. The initial desktop window
+is capped to the primary display’s usable area. Short desktop layouts compress
+spacing and arrange tools in columns; scrolling remains a fallback for unusually
+small browser viewports or enlarged content.
+
+The welcome backdrop is a native window drag region on every desktop platform.
+Content columns and progress buttons opt out so controls and text remain interactive.
+
+The welcome is a scoped product adaptation of the [marketing constellation
+world](../../apps/marketing/DESIGN.md), scoped to `src/welcome/`. It keeps the
+five working steps: Appearance, Tools, Review setup, Access, and Ready.
+Before Appearance, a full-screen code field surrounds the original headline,
+“You stopped writing the code. You still have to answer for it.”, and a Start
+button. The floating blocks use sampled code glyphs in Rennet colors. Start
+coalesces the points into the sphere and reveals the appearance panel beside it.
+This entry sequence follows the user’s correction; its current rendering is
+not a claim of visual approval.
+
+The Appearance scene carries the H1 “Welcome to your new Review Harness.” with
+“Review Harness.” italic. Beneath it, “Rennet makes <subject> <quality>” cycles
+18 subjects and 12 qualities independently at 3100ms and 4300ms. A stable
+screen-reader sentence replaces the decorative changing words.
+
+One full-screen canvas remains mounted outside all step pages and changes with
+the current step: sphere, spanner, gavel, connected machines, sphere. Both renderers share
+pure geometry from `packages/theme/src/constellation-models.ts`; their layouts,
+rendering, and interactions remain surface-specific. The header keeps the
+32px resting mark and 16px wordmark; Ready keeps its 72px completion mark.
+
+Welcome uses the same `--rn-app-backdrop` as the main app, and its heading,
+header, progress, caption, and fallback text use theme ink tokens. Light mode
+therefore changes the whole reading field, not just the panel. Constellation
+and sphere colors follow the theme’s `--rn-art-top/mid/bottom` gradient while
+retaining their geometry. Theme previews carry paired light/dark swatches,
+including GitHub, matching their displayed mode. On macOS the header reserves
+108px at the left for traffic lights.
+
+Glass combines 78% theme surface, a theme hairline, 18px backdrop blur, and a
+thin inset highlight; there is no broad panel shadow. Tool rows use dividers
+inside this single panel.
+
+Setup panel headings use Geist at `clamp(32px, 3.2vw, 48px)`, 1.07 leading, and
+−0.035em tracking. The main panel has a 24px radius, reduced to 20px on mobile.
+The opening has a larger responsive display heading; the arrival title and
+cycling refrain have their own hierarchy. These are welcome-only adaptations
+of the marketing world, not new
+steps in the desktop type or radius scales.
+
+The desktop layout caps at 1480px, with the scene beside the form and 36px outer
+gutters. At 760px and below it stacks scene before form, uses 16px gutters,
+space above the content for the full-screen geometry, 32px setup headings,
+and two-column appearance previews. Scene captions remain part of the content;
+the canvas does not become a small inline mobile illustration.
+
+Motion is automatic, with no motion buttons. Reduced motion freezes ambient
+motion and word cycling and makes scene changes immediate; a hidden document suspends rendering. Without WebGL, or after
+context loss, static branding replaces the scene while all setup controls
+remain available. Decorative geometry carries no setup status or progress.
+
+Access offers macOS Full Disk Access settings as an optional action. Without it,
+macOS may prevent access to external drives, network volumes, or protected
+folders; this is not a claim that every such location always requires it.
+Continue remains available regardless. Welcome does not select or add projects.
+Ready summarizes the harness choice and mode, completes the welcome, and opens
+the generic New Chat route; the app handles project selection when needed.
 
 ## Surface rules: the board workspace
 
@@ -246,3 +329,20 @@ So a kit utility such as `bg-primary` or `rounded-xl` resolves through the alias
 to the same Rennet token an app-ui composite would name directly; both stay on the
 ramp the design-ramp test enforces. The full colour, semantics, and component
 doctrine is the root [`DESIGN.md`](../../DESIGN.md).
+
+Welcome constellation objects rotate continuously at 0.14 radians per second
+and gently float between step transitions. The opening code drifts without
+turning edge-on. Motion starts automatically; reduced-motion preferences remain
+respected.
+
+Affineur’s Bench retains the authored Rennet gold, orange and red artwork colors
+in both schemes. Other theme packs recolor the logo and constellation from their
+own palette.
+
+Light-mode app materials use a stronger accent-fill/model backdrop and 60%
+surface opacity, with a clear outlet and soft raised edges. This compensates for
+white surfaces washing out the background; welcome retains its own treatment.
+
+Affineur’s Bench blends honey gold and warm orange over its cream/charcoal canvas.
+Its backdrop does not use the cool model-status accent; other packs retain their
+own accent/model pairing.
