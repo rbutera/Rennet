@@ -71,7 +71,7 @@ export type SeatRegister = "waiting" | "working" | "settled" | "absent" | "faile
  * The register a reader must tell apart is carried by the CUT, never by the hue — the
  * hue says which lens this is, so a failed Design lane must not turn red.
  */
-export type SeatCut = "unstarted" | "open" | "clean" | "seamed" | "snapped" | "empty";
+export type SeatCut = "unstarted" | "open" | "clean" | "snapped" | "empty";
 
 /** One voice at a lens: a seat with its own thread and its own live line. A lane that
  *  predates `seats` (or has none yet) speaks with one voice, the lane's own. */
@@ -265,7 +265,7 @@ export function voicesOf(lane: LensLane): readonly SeatVoice[] {
   });
 }
 
-function cutOf(register: SeatRegister, reworked: boolean): SeatCut {
+function cutOf(register: SeatRegister): SeatCut {
   switch (register) {
     case "failed":
       return "snapped";
@@ -278,7 +278,12 @@ function cutOf(register: SeatRegister, reworked: boolean): SeatCut {
     case "none":
       return "unstarted";
     default:
-      return reworked ? "seamed" : "clean";
+      // A settled lane is a solid rule, whether or not it was re-cut this generation. The
+      // seam (two bars for a `reworked` result) is gone: the rail already carries "this lens
+      // moved this round" as the gold delta pip, and it carries "this lens is ready" as the
+      // evidence-green check on the tab. A second shape for the same fact read as damage.
+      // `reworked` survives on the state as the honest signal both of those still read.
+      return "clean";
   }
 }
 
@@ -303,7 +308,7 @@ function fromReadAlone(
     lens,
     label: lane !== undefined && lane.label.length > 0 ? lane.label : LENS_LABEL[lens],
     register,
-    cut: cutOf(register, false),
+    cut: cutOf(register),
     voices: lane === undefined ? voiceFromRead(lens, register) : voicesOf(lane),
     waitingOn: [],
     reworked: false,
@@ -365,7 +370,7 @@ export function lensSeatStates(
         lens,
         label: lane.label.length > 0 ? lane.label : LENS_LABEL[lens],
         register: laneRegister,
-        cut: cutOf(laneRegister, reworked),
+        cut: cutOf(laneRegister),
         voices: voicesOf(lane),
         waitingOn: [],
         reworked,

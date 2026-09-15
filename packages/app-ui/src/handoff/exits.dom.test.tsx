@@ -626,7 +626,7 @@ describe("hand-off exits (C08 cluster 6)", () => {
   it("a PR the daemon REFUSED to compose says why, instead of a lane that silently never becomes one", async () => {
     // Own-branch, nothing left to ask — the lane would BECOME the pull request if compose landed
     // one. It refused, so there is no Open Pull Request button at all; without the reason that is
-    // a dead end the reviewer cannot read (they see "Nothing staged yet." and nothing else).
+    // a dead end the reviewer cannot read (they see "No changes to request." and nothing else).
     const r = mountHandoff(review(), {
       "publish.compose": () => ({
         status: "unavailable",

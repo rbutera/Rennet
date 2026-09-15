@@ -1,5 +1,5 @@
 import { Button, cn } from "@rennet/ui";
-import { ArrowRight, Check, PenLine } from "lucide-react";
+import { ArrowRight, Check, GitPullRequest, PenLine } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useCoachAnchor, useMergedRefs } from "../coach/registry";
 import { Icon } from "../components/icon";
@@ -28,6 +28,14 @@ const COMPACT_BELOW_PX = 864;
 export interface ExitFabProps {
   /** The review's entry mode — drives the target-aware label; retrospective renders nothing. */
   readonly mode: EntryMode;
+  /**
+   * Whether an own-branch review already has an open pull request (its `postTarget`). It splits
+   * the own-branch label: with a PR already open, or with changes staged, the exit is "Continue"
+   * (the round loop, or the staged asks); on a fresh local branch with NO PR and nothing staged
+   * yet, the exit is the draft pull request, so the pill says "Open pull request" rather than
+   * "Continue" — there is nothing to continue until something is staged (I).
+   */
+  readonly hasOpenPr?: boolean;
   readonly reviewing?: boolean;
   readonly ready?: boolean;
   /** Whether the hand-off view is open — the FAB YIELDS (shrink/fade/inert) while it is (R49). */
@@ -99,7 +107,14 @@ function useExitFlight(fabRef: React.RefObject<HTMLButtonElement | null>) {
   }, [inFlight, land, fabRef]);
 }
 
-export function ExitFab({ mode, open, onToggle, reviewing = false, ready = true }: ExitFabProps) {
+export function ExitFab({
+  mode,
+  hasOpenPr = false,
+  open,
+  onToggle,
+  reviewing = false,
+  ready = true,
+}: ExitFabProps) {
   const wasReviewing = useRef(reviewing);
   const [justReady, setJustReady] = useState(false);
   useEffect(() => {
@@ -173,11 +188,17 @@ export function ExitFab({ mode, open, onToggle, reviewing = false, ready = true 
   // from; `justReady` still pops the glyph on that arrival.
   if (reviewing) return null;
 
-  const label = mode === "teammate-pr" ? "Write Review" : "Continue";
-  // The prototype rests on PenLine for every scenario. Writing the review IS the pen,
-  // so teammate-pr takes it. `own-branch` keeps ArrowRight: below the compact width the
-  // glyph is the ONLY signal left, and handing the branch onward is not writing.
-  const glyph = mode === "teammate-pr" ? PenLine : ArrowRight;
+  // A fresh local branch with no PR and nothing staged has nothing to "Continue" — its exit
+  // is the draft pull request, so the pill points there and flips to "Continue" the moment
+  // something is staged (or when it is an already-open PR, whose exit is the round loop). (I)
+  const opensPr = mode === "own-branch" && !hasOpenPr && count === 0;
+  const label =
+    mode === "teammate-pr" ? "Write Review" : opensPr ? "Open pull request" : "Continue";
+  // The prototype rests on PenLine for every scenario. Writing the review IS the pen, so
+  // teammate-pr takes it; the draft-PR exit takes GitPullRequest (below the compact width the
+  // glyph is the ONLY signal left, so it must name the destination). `own-branch` Continue keeps
+  // ArrowRight: handing the branch onward is not writing.
+  const glyph = mode === "teammate-pr" ? PenLine : opensPr ? GitPullRequest : ArrowRight;
   // The accessible name carries the count (R50 second amendment — no inline "· n" in the text).
   const accessibleName = count > 0 ? `${label}, ${count} staged` : label;
 

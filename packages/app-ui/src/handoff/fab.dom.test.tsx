@@ -38,7 +38,8 @@ describe("ExitFab", () => {
     expect(r.container.querySelector("button")).toBeNull();
     expect(r.container.textContent).not.toContain("Reviewing the change");
     r.rerender(<ExitFab mode="own-branch" open={false} onToggle={() => toggled++} />);
-    const ready = r.getByRole("button", { name: "Continue" });
+    // Own branch, no PR, nothing staged yet → the exit is the draft pull request (I).
+    const ready = r.getByRole("button", { name: "Open pull request" });
     // The arrival pops the glyph to a check — the transition still fires off a mount that
     // rendered nothing, because the component stayed mounted with `reviewing` true.
     expect(ready.querySelector("svg")).toBeTruthy();
@@ -145,12 +146,31 @@ describe("ExitFab", () => {
     await waitFor(() => expect(store().signal.inFlight + store().signal.landed).toBeGreaterThan(0));
   });
 
-  it("labels by target — Write Review on a teammate PR, Continue on your own branch", () => {
+  it("labels by target and state — Write Review, Open pull request, or Continue", () => {
+    // Teammate PR: the exit is writing the review.
     const t = mount(<ExitFab mode="teammate-pr" open={false} onToggle={noop} />);
     expect(t.getByRole("button").textContent).toContain("Write Review");
     cleanup();
-    const o = mount(<ExitFab mode="own-branch" open={false} onToggle={noop} />);
-    expect(o.getByRole("button").textContent).toContain("Continue");
+
+    // Own branch, no PR, nothing staged: there is nothing to CONTINUE — the exit is the draft
+    // pull request, so the pill points there, not at a "Continue" that leads to a clean review
+    // and a dead end (I). The glyph agrees: a pull-request mark, not the onward arrow.
+    const fresh = mount(<ExitFab mode="own-branch" open={false} onToggle={noop} />);
+    expect(fresh.getByRole("button").textContent).toContain("Open pull request");
+    cleanup();
+
+    // Own branch, one ask staged: now there IS something to continue with — "Continue".
+    stage("a");
+    const staged = mount(<ExitFab mode="own-branch" open={false} onToggle={noop} />);
+    expect(staged.getByRole("button").textContent).toContain("Continue");
+    expect(staged.getByRole("button").textContent).not.toContain("Open pull request");
+    cleanup();
+    store().reviewActions.resetReview();
+
+    // Own branch with a PR already open (its round loop is the exit): "Continue", even with
+    // nothing staged — there is no draft PR to open, the reviewer keeps working the open one.
+    const open = mount(<ExitFab mode="own-branch" hasOpenPr open={false} onToggle={noop} />);
+    expect(open.getByRole("button").textContent).toContain("Continue");
   });
 
   it("renders no FAB for a retrospective review (no exit, law 10)", () => {

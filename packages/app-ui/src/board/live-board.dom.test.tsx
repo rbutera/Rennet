@@ -227,7 +227,7 @@ describe("the review opens on its boards, with no waiting stage in front of them
     if (!region) throw new Error("the workspace has no board region");
     expect(cancel.contains(region)).toBe(false);
     expect(region.contains(cancel)).toBe(false);
-    // In the EXIT's corner (`right-6 bottom-6`, where `handoff/fab.tsx` puts Continue
+    // In the EXIT's corner (`right-6 bottom-6`, where `handoff/fab.tsx` puts the exit
     // once the boards are ready), not under the titlebar: `top-16 right-6` is where the
     // seat transcript drawer's header puts its Close, and the chip sat on top of it.
     expect(cancel.className).toContain("absolute");
@@ -286,7 +286,7 @@ describe("the review opens on its boards, with no waiting stage in front of them
 });
 
 describe("the corner while the boards are being written", () => {
-  it("offers Cancel where Continue will be, and no Continue at all, until the generation settles", async () => {
+  it("offers Cancel where the exit will be, and no exit at all, until the generation settles", async () => {
     const live = liveBridge({
       preparation: { status: "drafting", reviewId: REVIEW.id, lanes: DRAFTING },
       boards: { sequence: at(FIXTURE_BOARDS.gen1?.sequence) },
@@ -295,11 +295,13 @@ describe("the corner while the boards are being written", () => {
     await waitFor(() => expect(document.querySelector("article[data-lens=sequence]")).toBeTruthy());
 
     // ONE corner, one control. The Cancel chip is here; the exit is not — not disabled,
-    // not labelled "Reviewing the change", simply absent (Rai, 2026-09-12).
+    // not labelled "Reviewing the change", simply absent (Rai, 2026-09-12). This review is
+    // own-branch with no open PR and nothing staged, so once it settles its exit is the
+    // draft pull request, labelled "Open pull request", not "Continue" (I).
     const cancel = document.querySelector('[data-testid="preparation-cancel"]');
     if (!cancel) throw new Error("a drafting generation offers no way to cancel it");
     expect(cancel.className).toContain("bottom-6");
-    expect(document.querySelector('button[aria-label="Continue"]')).toBeNull();
+    expect(document.querySelector('button[aria-label="Open pull request"]')).toBeNull();
     expect(document.body.textContent).not.toContain("Reviewing the change");
 
     // The daemon settles the generation: its row loses `preparation`. The app's own
@@ -307,7 +309,7 @@ describe("the corner while the boards are being written", () => {
     live.setLanes(SETTLED);
     live.setPreparation(undefined);
     await waitFor(
-      () => expect(document.querySelector('button[aria-label="Continue"]')).toBeTruthy(),
+      () => expect(document.querySelector('button[aria-label="Open pull request"]')).toBeTruthy(),
       { timeout: 4_000 },
     );
     // …and the chip has left the corner it was keeping for the exit.
@@ -405,7 +407,7 @@ describe("a drafting board stays readable without explanatory chrome", () => {
       () =>
         expect(provisionalSignals("sequence")).toEqual({
           railIndicator: "settled",
-          railCut: "seamed",
+          railCut: "clean",
           inProgressMark: false,
           stillBeingWritten: false,
           placeholderRow: false,

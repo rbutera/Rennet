@@ -108,7 +108,7 @@ describe("RoundsLanes", () => {
     // click that lies, so it stays disabled BOTH while nothing is staged AND after an ask
     // stages. The app itself always passes one (the live rounds source landed in C9).
     const r = mount(<RoundsLanes review={review} />);
-    expect(r.getByText("Nothing staged yet.")).toBeTruthy();
+    expect(r.getByText("No changes to request.")).toBeTruthy();
     expect(r.getByRole("button", { name: "Dispatch Round" }).hasAttribute("disabled")).toBe(true);
 
     stage("src/a.ts:5", "guard the boundary", "request-change");
@@ -180,7 +180,7 @@ describe("RoundsLanes", () => {
 
   it("stays on Changes with an unripe PR (no asks, not ready)", () => {
     const r = mount(<RoundsLanes review={review} pr={{ ...draftedPr, ready: false }} />);
-    expect(r.getByText("Nothing staged yet.")).toBeTruthy();
+    expect(r.getByText("No changes to request.")).toBeTruthy();
     expect(r.queryByRole("heading", { name: "Harden the retry path" })).toBeNull();
   });
 

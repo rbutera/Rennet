@@ -339,10 +339,13 @@ span's inspectable history.
 ## The Hand off view
 
 Hand off toggles a view over the main surface. The toggle itself is
-target-aware and carries the staged-ask count: on a teammate PR it reads
-**Write Review** (the review concludes, under the reviewer's name); on one's
-own branch or PR it reads **Continue** (the rounds loop keeps going). Its
-lanes depend on the entry mode:
+target-aware and state-aware, and carries the staged-ask count: on a teammate
+PR it reads **Write Review** (the review concludes, under the reviewer's name);
+on one's own branch with a PR already open, or with any ask staged, it reads
+**Continue** (the rounds loop keeps going); on one's own branch with no PR and
+nothing staged there is nothing to continue yet, so it reads **Open pull
+request** and the exit is the draft pull request itself. Its lanes depend on
+the entry mode:
 
 - **Teammate PR** — one lane: *Post review*. Work orders are own-branch only.
 - **Own branch** — one goal with two states, and the page's shape states

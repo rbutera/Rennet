@@ -237,20 +237,25 @@ the failure mode is a surface that quietly lies about it.
 - **Colour is which lens, so state is the cut.** Each tab binds its lens's hue from the
   theme's portable register (`src/board/lens-colour.ts`), so colour answers *which lens*,
   not *how it is doing* — and the registers are told apart by the way the tab's stop is
-  cut instead: a faint rule (unstarted), a dashed rule that breathes (open), a
-  solid rule (clean), a rule split by a gap (seamed), two offset pieces (snapped), a
-  dotted rule (empty). A failed lane snaps in its **own** lens colour; painting it red
-  would say "Flagged". The words beside it are the second statement in every case.
+  cut instead: a faint rule (unstarted), a soft continuous rule at half ink with a bright
+  sheen sweeping its length (open), a solid full-ink rule (clean), two offset pieces
+  (snapped), a dotted rule (empty). A lens re-cut this round takes no shape of its own — it
+  cuts `clean` like any settled lens, and "moved this round" rides the gold delta pip while
+  "ready" rides the evidence-green check on the settled tab. A failed lane snaps in its
+  **own** lens colour; painting it red would say "Flagged". The words beside it are the
+  second statement in every case.
 - **Never an amount.** `LensLane` carries no progress, so nothing here fills, grows or
   completes. Registers differ by pattern and structure; a bar that lengthened would be
   claiming a number the daemon never sent.
-- **Motion only where it carries a fact.** The open stop *breathes* (`animate-lens-breathe`,
-  a calm opacity swell on the sine curve) only while that seat is actually writing — no
-  traveling lamp, no sweep, which read as a generic loader rather than this lens working.
-  It is a pure-motion overlay on the dashed rule and carries `motion-reduce:hidden` rather
-  than `animate-none`, because the dashed rule already says "under way" without it, so with
-  motion off the breath simply removes itself and the static cut still distinguishes the
-  register. The review-activity seat mark breathes on the same curve: a static ring holding
+- **Motion only where it carries a fact.** The open stop carries one *sheen*
+  (`animate-lens-sheen`, a narrow lens-hue gradient with no hard leading edge) sweeping the
+  length of the rule only while that seat is actually writing — the one moving thing on the
+  rail. It rides over a soft continuous half-ink rule (not a dashed one: dashes read as
+  machine telemetry) and carries `motion-reduce:hidden` rather than `animate-none`, because
+  parked mid-travel the band would sit as a bright patch, and the half-ink rule already reads
+  apart from a clean full-ink one without it — so with motion off the sheen simply removes
+  itself and the static cut still distinguishes the register. The review-activity seat mark
+  breathes on the same curve: a static ring holding
   a core dot that swells while a halo (`animate-seat-halo`) warms with it, resting to a
   steady filled dot under reduced motion.
 - **A board is the same view settled or not.** The selected board renders each element as

@@ -31,7 +31,7 @@ import { parseLineAnchor } from "./selectors";
 //     the title as heading, the drafted description (the `## ` + `**bold**` subset through the
 //     same `RichText` pipeline), **Open Pull Request** primary, then a receipt naming the PR
 //     number + link.
-//   • no asks + an unripe PR → "Nothing staged yet."
+//   • no asks + an unripe/absent PR → "No changes to request." (the exit is the FAB's draft PR)
 //
 // Ported from the spike's RoundsLanes, rewritten onto the real `review` slice: the asks are the
 // store's `stagedAsks` (not a god-store), steering is C4's `ProseSelectionLayer` (Drop retires +
@@ -91,8 +91,8 @@ const CHANGE_REQUEST_COPY = {
 export interface RoundsLanesProps {
   readonly review: Review;
   /**
-   * The drafted own-branch PR. Absent or unripe ⇒ the page stays **Changes** / "Nothing staged
-   * yet." (the store-derived draft that becomes the PR body is B11's, gated cluster 8).
+   * The drafted own-branch PR. Absent or unripe ⇒ the page stays **Changes** / "No changes to
+   * request." (the store-derived draft that becomes the PR body is B11's, gated cluster 8).
    */
   readonly pr?: DraftedPr;
   /** Dispatch a work-order round (the C9 run it navigates to is out of scope). Absent ⇒ a no-op. */
@@ -272,7 +272,11 @@ export function RoundsLanes({
             </div>
           </ProseSelectionLayer>
         ) : (
-          <p className="text-sm text-muted-foreground">Nothing staged yet.</p>
+          // A clean own-branch review is not a reviewer who forgot to act: it found nothing to
+          // send back. "Nothing staged yet." read as an instruction they had missed; this states
+          // the fact about the review, and the exit (the draft pull request, composing or open)
+          // lives on the FAB and the destination line below — not in a scolding empty cell. (I)
+          <p className="text-sm text-muted-foreground">No changes to request.</p>
         )}
 
         {gathering && codingAskCount === 0 && (

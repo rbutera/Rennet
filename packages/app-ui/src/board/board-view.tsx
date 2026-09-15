@@ -236,12 +236,6 @@ export function LensBoardView({
   const openSeatTranscript = useRennetStore((s) => s.uiActions.openSeatTranscript);
   const transcriptLens = openTranscript?.lens;
   const transcriptReview = openTranscript?.reviewId;
-  const followed = seat.voices.find((voice) => voice.thread !== undefined);
-  // Depended on by IDENTITY-FREE parts: `voices` is rebuilt on every render, so an effect
-  // keyed on the object would re-run every render for nothing.
-  const followedSeat = followed?.seat;
-  const followedEnvironment = followed?.thread?.environmentId;
-  const followedThread = followed?.thread?.threadId;
   // The effect acts on a CHANGE OF LENS, never on a change of transcript. Opening another
   // lens's transcript from its tab (the popover's "Open transcript") stamps that lens on
   // the drawer before the board has moved; keyed on the mismatch alone, this effect read
@@ -254,29 +248,14 @@ export function LensBoardView({
     previousLens.current = effectiveLens;
     if (previous === effectiveLens) return;
     if (transcriptReview === undefined || transcriptReview !== reviewId) return;
+    // Switching to a DIFFERENT lens with a transcript open lands on that lens's BOARD, not on
+    // its seat's transcript — a reviewer who clicks Sequence asked for the Sequence board, not
+    // for another wall of thread they never opened. The guard above keeps the "open transcript
+    // from a lens's own tab" path intact: that stamps the new lens on the drawer before the
+    // board moves, so `transcriptLens === effectiveLens` here and it returns without closing.
     if (transcriptLens === effectiveLens) return;
-    openSeatTranscript(
-      followedSeat === undefined ||
-        followedEnvironment === undefined ||
-        followedThread === undefined
-        ? null
-        : {
-            reviewId,
-            lens: effectiveLens,
-            seat: followedSeat,
-            thread: { environmentId: followedEnvironment, threadId: followedThread },
-          },
-    );
-  }, [
-    effectiveLens,
-    followedEnvironment,
-    followedSeat,
-    followedThread,
-    openSeatTranscript,
-    reviewId,
-    transcriptLens,
-    transcriptReview,
-  ]);
+    openSeatTranscript(null);
+  }, [effectiveLens, openSeatTranscript, reviewId, transcriptLens, transcriptReview]);
 
   return (
     <main

@@ -112,7 +112,7 @@ describe("the lens register on the rail", () => {
     // The fixture puts one lane in each register, so this is one assertion per state.
     expect(cutOf("design")).toBe("unstarted"); // queued
     expect(cutOf("sequence")).toBe("open"); // running
-    expect(cutOf("decisions")).toBe("seamed"); // done + reworked
+    expect(cutOf("decisions")).toBe("clean"); // done + reworked — a re-cut lens still cuts clean
     expect(cutOf("flagged")).toBe("snapped"); // failed
     expect(cutOf("noise")).toBe("empty"); // absent
     // And they are five DISTINCT cuts, not five names for the same drawing.
@@ -130,7 +130,7 @@ describe("the lens register on the rail", () => {
     expect(broken?.children).toHaveLength(3);
     // The contrast that makes it an assertion about FAILURE and not about markup: a
     // settled lane in the same rail is one undivided rule.
-    expect(stopOf("decisions")?.children).toHaveLength(2); // seamed: two halves, no gap
+    expect(stopOf("decisions")?.children).toHaveLength(0); // clean: one undivided rule, the element itself
     expect(stopOf("design")?.children).toHaveLength(0); // unstarted: the rule itself
     // And the danger register is nowhere on the failed lens's stop: red is Flagged's
     // identity now, so a failure painted in `danger` would say the wrong thing.

@@ -453,6 +453,7 @@ export function ReviewWorkspace({ review }: { review: Review }) {
         }
         reviewing={reviewing}
         mode={mode}
+        hasOpenPr={review.postTarget !== undefined}
         open={view === "handoff"}
         onToggle={toHandoff}
       />
