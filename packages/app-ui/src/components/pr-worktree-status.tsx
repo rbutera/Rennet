@@ -62,7 +62,7 @@ export function PrWorktreeStatus({
         role="note"
         data-testid="pr-worktree-status"
       >
-        <span className="font-semibold uppercase tracking-wide text-2xs">Worktree</span>
+        <span className="font-medium uppercase tracking-wide text-2xs">Worktree</span>
         <span className="font-mono truncate text-ink-soft" title={worktree.path}>
           {worktree.path}
         </span>

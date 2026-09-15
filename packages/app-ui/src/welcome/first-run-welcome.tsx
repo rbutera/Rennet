@@ -350,8 +350,9 @@ function WelcomeShell({
   return (
     <div className="min-h-dvh overflow-hidden bg-canvas text-ink">
       {step > 0 ? (
-        <header className="flex h-[58px] items-center justify-between border-b border-line bg-canvas px-7">
-          {/* The same lockup the sidebar's row carries, at the size a 58px strip holds:
+        <header className="flex h-14 items-center justify-between border-b border-line bg-canvas px-7">
+          {/* The same lockup the sidebar's row carries, at the 56px title-bar height the
+           *  rest of the shell uses (was a one-off 58px):
            *  the LIVE sphere at 32px with the wordmark drawn at HALF its height — 16px,
            *  ~68.6px wide on the authored 480.168:112 window — and the authored gap,
            *  32 × 24/126 ≈ 6.1px, taken as `gap-1.5`. Both halves are decorative and the
@@ -372,7 +373,7 @@ function WelcomeShell({
         key={step}
         className={cn(
           "animate-welcome-step motion-reduce:animate-none",
-          step === 0 ? "min-h-dvh" : "min-h-[calc(100dvh-58px)]",
+          step === 0 ? "min-h-dvh" : "min-h-[calc(100dvh-56px)]",
         )}
       >
         {children}
@@ -1589,7 +1590,7 @@ function ReadyStage({
     }
   }
   return (
-    <section className="mx-auto flex min-h-[calc(100dvh-58px)] w-[min(780px,calc(100vw-48px))] flex-col items-center pt-[clamp(70px,10vh,120px)] pb-[120px] text-center">
+    <section className="mx-auto flex min-h-[calc(100dvh-56px)] w-[min(780px,calc(100vw-48px))] flex-col items-center pt-[clamp(70px,10vh,120px)] pb-[120px] text-center">
       {/* The ready badge is the MARK alone, and the box hugs it: the tick pins to the
        *  sphere's own corner rather than to the far end of a wordmark-wide strip. The
        *  sphere is decorative, so the assembly carries the accessible name. Resting —

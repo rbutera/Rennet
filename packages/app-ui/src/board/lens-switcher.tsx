@@ -110,10 +110,11 @@ function LensStop({ cut, active }: { readonly cut: SeatCut; readonly active: boo
       )}
     >
       {cut === "open" && (
-        // The affineur's lamp, at rail scale. `motion-reduce:hidden`, not `animate-none`:
-        // parked at the left it is a static band that reads as a mark of its own, and the
-        // dashed rule under it already says "under way".
-        <span className="pointer-events-none block h-0.5 w-1/3 rounded-full bg-lens animate-lens-stop-scan motion-reduce:hidden" />
+        // The affineur's attention, at rail scale: a soft lens-hue band that breathes in
+        // place over the dashed rule. `motion-reduce:hidden`, not `animate-none` — parked
+        // at full opacity it would read as a solid ("clean") rule, and the dashed rule
+        // underneath already says "under way".
+        <span className="pointer-events-none absolute inset-0 block rounded-full bg-lens animate-lens-breathe motion-reduce:hidden" />
       )}
     </span>
   );
@@ -247,7 +248,7 @@ export function LensSwitcher({
                 <span
                   data-testid="lens-open-count"
                   aria-hidden="true"
-                  className="-right-2 -top-2 absolute flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 font-semibold text-10 text-destructive-foreground leading-none"
+                  className="-right-2 -top-2 absolute flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 font-semibold text-10 text-destructive-foreground leading-none tabular-nums"
                 >
                   {openCount}
                 </span>

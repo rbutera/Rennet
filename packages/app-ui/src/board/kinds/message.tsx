@@ -62,7 +62,7 @@ export function MessageElement({ element }: { readonly element: ElementOf<"messa
             {quote.quote}
           </blockquote>
         ))}
-      <p className="flex items-center gap-1.5 text-10 text-muted-foreground uppercase tracking-wide">
+      <p className="flex items-center gap-1.5 font-medium text-2xs text-muted-foreground uppercase tracking-wide">
         <span>{ROLE_LABEL[role]}</span>
         {lifecycle && (
           <>

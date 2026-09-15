@@ -71,6 +71,14 @@ where a diff body stops looking like chrome, and 15px is the chat and review
 reading size. They are ramp steps like any other — reach for the nearest one
 rather than an arbitrary size.
 
+Five steps carry a default `--text-*--letter-spacing` token, graded by size the
+way a native stack tracks: `text-display` −0.03em, `text-2xl` −0.018em, `text-xl`
+−0.01em tighten the large end; `text-2xs` +0.01em and `text-10` +0.02em open the
+micro-caps so uppercase does not jam shut. The reading band (13–18px) carries no
+token — Geist reads true there. A call-site `tracking-*` utility overrides the
+token because it is emitted after the size utility, so per-instance intent still
+wins; the tokens live in [`packages/theme/src/theme.css`](../theme/src/theme.css).
+
 ### Prose voice
 
 `font-prose` is the reading voice for chat and review prose. It aliases the sans
@@ -146,17 +154,22 @@ the failure mode is a surface that quietly lies about it.
 - **Colour is which lens, so state is the cut.** Each tab binds its lens's hue from the
   theme's portable register (`src/board/lens-colour.ts`), so colour answers *which lens*,
   not *how it is doing* — and the registers are told apart by the way the tab's stop is
-  cut instead: a faint rule (unstarted), a dashed rule with a travelling lamp (open), a
+  cut instead: a faint rule (unstarted), a dashed rule that breathes (open), a
   solid rule (clean), a rule split by a gap (seamed), two offset pieces (snapped), a
   dotted rule (empty). A failed lane snaps in its **own** lens colour; painting it red
   would say "Flagged". The words beside it are the second statement in every case.
 - **Never an amount.** `LensLane` carries no progress, so nothing here fills, grows or
   completes. Registers differ by pattern and structure; a bar that lengthened would be
   claiming a number the daemon never sent.
-- **Motion only where it carries a fact.** The stop's lamp (`animate-lens-stop-scan`) runs
-  only while that seat is actually writing. It carries `motion-reduce:hidden` rather than
-  `animate-none`, because parked it would read as a mark of its own and the dashed rule
-  already says "under way" without it.
+- **Motion only where it carries a fact.** The open stop *breathes* (`animate-lens-breathe`,
+  a calm opacity swell on the sine curve) only while that seat is actually writing — no
+  traveling lamp, no sweep, which read as a generic loader rather than this lens working.
+  It is a pure-motion overlay on the dashed rule and carries `motion-reduce:hidden` rather
+  than `animate-none`, because the dashed rule already says "under way" without it, so with
+  motion off the breath simply removes itself and the static cut still distinguishes the
+  register. The review-activity seat mark breathes on the same curve: a static ring holding
+  a core dot that swells while a halo (`animate-seat-halo`) warms with it, resting to a
+  steady filled dot under reduced motion.
 - **A board is the same view settled or not.** The selected board renders each element as
   its seat writes it and says it is provisional in three independent ways: the rail entry
   shows the seat working, the board header carries an `in progress` mark and states that

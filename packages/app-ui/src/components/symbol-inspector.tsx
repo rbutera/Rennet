@@ -73,7 +73,7 @@ export interface SymbolInspectorProps {
 // semantic class as the first token (tests select on those) and its role is sans/chrome.
 const SECTION = "symbol-section mt-3";
 const SECTION_HEAD =
-  "symbol-section-head mb-2 text-2xs font-semibold uppercase tracking-wide text-ink-faint";
+  "symbol-section-head mb-2 text-2xs font-medium uppercase tracking-wide text-ink-faint";
 const SECTION_NOTE = "text-2xs text-ink-faint mt-1";
 const SITE_LIST = "list-none m-0 p-0 flex flex-col gap-1.5";
 
@@ -398,7 +398,7 @@ export function SymbolInspector({
       data-pinned={pinned ? "true" : undefined}
     >
       <header className="symbol-inspector-head flex items-baseline gap-2">
-        <span className="symbol-inspector-eyebrow text-2xs font-semibold uppercase tracking-wide text-ink-faint">
+        <span className="symbol-inspector-eyebrow text-2xs font-medium uppercase tracking-wide text-ink-faint">
           {pinned ? "INSPECTOR · PINNED" : "SYMBOL"}
         </span>
         <span className="symbol-inspector-name font-mono text-base text-ink">{name}</span>
