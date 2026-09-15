@@ -96,6 +96,24 @@ describe("resolveBaseRef — the branch-name tiers resolve the primary base", ()
     expect(resolved.baseRefResolution).toBe("explicit-setting");
   });
 
+  it("takes the remote-tracking spelling when local and remote have DIVERGED", async () => {
+    // Each spelling carries a commit the other lacks. Git's own `rev-parse main` answers
+    // the local one; the resolver's rule (fresh-base-patchset D1) is that the remote
+    // wins a divergence, because the remote is what a pull request opens against, and
+    // the map must land where capture lands.
+    const { root, localTip, remoteTip } = staleLocalMain();
+    const divergedLocalTip = commit(root, "local-only.ts", "export const local = 3;\n");
+    expect(git(root, "merge-base", "--is-ancestor", localTip, divergedLocalTip)).toBe("");
+    expect(() => git(root, "merge-base", "--is-ancestor", remoteTip, divergedLocalTip)).toThrow();
+    expect(() => git(root, "merge-base", "--is-ancestor", divergedLocalTip, remoteTip)).toThrow();
+
+    const resolved = await resolveBaseRef(root, { git: execaGit, explicitBaseRef: "main" });
+
+    expect(resolved.baseOid).toBe(remoteTip);
+    expect(resolved.baseRef).toBe("origin/main");
+    expect(resolved.baseRefResolution).toBe("explicit-setting");
+  });
+
   it("takes the same commit from `origin/HEAD` when no caller names the branch", async () => {
     const { root, remoteTip } = staleLocalMain();
     git(root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");

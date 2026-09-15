@@ -164,7 +164,9 @@ export async function resolveBaseRef(
         // `baseRefResolution: "symbolic-head"` — provenance claiming a symbolic head
         // was read when none was. It would also widen the function, resolving where a
         // remoteless clone fails closed today. Existence only: a dangling TARGET still
-        // exits 0 here, which is the fallthrough D1 wants and the resolver handles.
+        // exits 0 here, which is the fallthrough D1 wants and the resolver handles —
+        // so the label means "the tier that consulted `origin/HEAD`", and when the
+        // target dangles the ref it reports came from the `main`/`master` probe.
         const symbolicHead = await tryGit(git, topLevel, [
           "symbolic-ref",
           "--quiet",
