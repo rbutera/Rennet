@@ -1,6 +1,6 @@
 {
   "name": "@rennet/core",
-  "version": "0.16.1",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "sideEffects": false,
