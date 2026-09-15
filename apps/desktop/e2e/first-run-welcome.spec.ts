@@ -67,7 +67,7 @@ test("the first-run welcome is what a first run gets, and completing it is what 
         ["top", "#f2b032"],
         ["mid", "#e8641f"],
         ["bottom", "#d42c3b"],
-      ]) {
+      ] as const) {
         await expect(page.locator("html")).toHaveCSS(`--rn-art-${token}`, color);
       }
     }
