@@ -135,9 +135,9 @@ export const GitHubIcon = ({ className, ...rest }: SVGProps<SVGSVGElement>) => (
  */
 // App themes recolor the authored sphere; standalone artwork keeps its original palette.
 /* eslint-disable rennet/no-hardcoded-hex -- brand artwork, deliberately scheme-invariant */
-const SPHERE_TOP = "var(--rn-art-top, #f3b437)";
-const SPHERE_MID = "var(--rn-art-mid, #e8641f)";
-const SPHERE_BOTTOM = "var(--rn-art-bottom, #d42c3b)";
+const SPHERE_TOP = "var(--app-art-top, #f3b437)";
+const SPHERE_MID = "var(--app-art-mid, #e8641f)";
+const SPHERE_BOTTOM = "var(--app-art-bottom, #d42c3b)";
 const SPHERE_HIGHLIGHT = "#fff3d6";
 const SPHERE_SHADE = "#7a1020";
 /* eslint-enable rennet/no-hardcoded-hex */

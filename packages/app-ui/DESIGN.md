@@ -136,11 +136,11 @@ Two rules follow from past drift:
 
 ## Shared app material
 
-`src/index.css` owns `--rn-app-backdrop`: accent at 14% and model at 7% form
+`src/index.css` owns `--app-backdrop`: accent at 14% and model at 7% form
 soft radial gradients over the selected theme’s canvas. The main layout and
 welcome share it; workspace wrappers are transparent. The expanded sidebar,
 chat dock, non-floating session bar, settings header, and settings navigation
-use `--rn-glass-fill` (76% theme surface) with 18px blur. Non-bare settings
+use `--app-glass-fill` (76% theme surface) with 18px blur. Non-bare settings
 section bodies, the New Chat branch list, and board sections opt into the same
 fill through `data-material="glass"`, with 18px blur and a thin inset highlight.
 The outlet adds a
@@ -181,10 +181,10 @@ pure geometry from `packages/theme/src/constellation-models.ts`; their layouts,
 rendering, and interactions remain surface-specific. The header keeps the
 32px resting mark and 16px wordmark; Ready keeps its 72px completion mark.
 
-Welcome uses the same `--rn-app-backdrop` as the main app, and its heading,
+Welcome uses the same `--app-backdrop` as the main app, and its heading,
 header, progress, caption, and fallback text use theme ink tokens. Light mode
 therefore changes the whole reading field, not just the panel. Constellation
-and sphere colors follow the theme’s `--rn-art-top/mid/bottom` gradient while
+and sphere colors follow the theme’s `--app-art-top/mid/bottom` gradient while
 retaining their geometry. Theme previews carry paired light/dark swatches,
 including GitHub, matching their displayed mode. On macOS the header reserves
 108px at the left for traffic lights.

@@ -114,7 +114,7 @@ does not add decorative particles to review workspaces.
 Light and dark schemes are complete designs. Use `data-scheme="light|dark"` in Rennet applications and `data-theme="light|dark"` in Starlight. Follow the operating-system preference until the user stores an override.
 
 The app’s live and static color marks preserve their sphere geometry while
-using `--rn-art-top`, `--rn-art-mid`, and `--rn-art-bottom`. The default theme
+using `--app-art-top`, `--app-art-mid`, and `--app-art-bottom`. The default theme
 maps these to accent fill, warning, and danger; named themes use accent fill,
 model, and syntax-keyword colors. Standalone assets retain their original color
 fallbacks. Monochrome marks remain single-ink artwork.

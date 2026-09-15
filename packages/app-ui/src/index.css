@@ -462,8 +462,8 @@
 }
 
 :root {
-  --rn-backdrop-secondary: #e8641f;
-  --rn-app-backdrop:
+  --app-backdrop-secondary: #e8641f;
+  --app-backdrop:
     radial-gradient(
       ellipse at 12% 38%,
       color-mix(in srgb, var(--rn-accent) 14%, transparent),
@@ -471,27 +471,27 @@
     ),
     radial-gradient(
       ellipse at 88% 90%,
-      color-mix(in srgb, var(--rn-backdrop-secondary) 7%, transparent),
+      color-mix(in srgb, var(--app-backdrop-secondary) 7%, transparent),
       transparent 55%
     ),
     var(--rn-canvas);
-  --rn-glass-fill: color-mix(in srgb, var(--rn-surface) 76%, transparent);
-  --rn-glass-line: color-mix(in srgb, var(--rn-ink) 12%, transparent);
-  --rn-art-top: #f2b032;
-  --rn-art-mid: #e8641f;
-  --rn-art-bottom: #d42c3b;
+  --app-glass-fill: color-mix(in srgb, var(--rn-surface) 76%, transparent);
+  --app-glass-line: color-mix(in srgb, var(--rn-ink) 12%, transparent);
+  --app-art-top: #f2b032;
+  --app-art-mid: #e8641f;
+  --app-art-bottom: #d42c3b;
 }
 :root[data-rn-theme] {
-  --rn-backdrop-secondary: var(--rn-model);
-  --rn-art-top: var(--rn-accent-fill);
-  --rn-art-mid: var(--rn-model);
-  --rn-art-bottom: var(--rn-syn-kw);
+  --app-backdrop-secondary: var(--rn-model);
+  --app-art-top: var(--rn-accent-fill);
+  --app-art-mid: var(--rn-model);
+  --app-art-bottom: var(--rn-syn-kw);
 }
 .rennet-layout {
-  background: var(--rn-app-backdrop);
+  background: var(--app-backdrop);
 }
 :root[data-scheme="light"] .rennet-layout {
-  --rn-app-backdrop:
+  --app-backdrop:
     radial-gradient(
       ellipse at 12% 38%,
       color-mix(in srgb, var(--rn-accent-fill) 28%, transparent),
@@ -499,11 +499,11 @@
     ),
     radial-gradient(
       ellipse at 88% 90%,
-      color-mix(in srgb, var(--rn-backdrop-secondary) 16%, transparent),
+      color-mix(in srgb, var(--app-backdrop-secondary) 16%, transparent),
       transparent 65%
     ),
     var(--rn-canvas);
-  --rn-glass-fill: color-mix(in srgb, var(--rn-surface) 60%, transparent);
+  --app-glass-fill: color-mix(in srgb, var(--rn-surface) 60%, transparent);
 }
 .rennet-layout .rennet-workspace,
 .rennet-layout [data-screen="new-chat"],
@@ -516,8 +516,8 @@
 [data-slot="session-top-bar"][data-floating="false"],
 [data-screen="settings"] > header,
 [data-screen="settings"] nav[aria-label="Settings pages"] {
-  background: var(--rn-glass-fill);
-  border-color: var(--rn-glass-line);
+  background: var(--app-glass-fill);
+  border-color: var(--app-glass-line);
   backdrop-filter: blur(18px) saturate(1.1);
 }
 .rennet-outlet {
@@ -530,7 +530,7 @@
 [data-slot="context-menu-content"],
 [data-slot="select-content"] {
   background: color-mix(in srgb, var(--rn-overlay) 88%, transparent);
-  border-color: var(--rn-glass-line);
+  border-color: var(--app-glass-line);
   backdrop-filter: blur(24px) saturate(1.15);
   box-shadow:
     0 16px 48px rgb(0 0 0 / 0.16),
@@ -539,12 +539,12 @@
 [data-slot="t3-native-chat"],
 [data-slot="t3-thread-view"] {
   --background: transparent;
-  --app-chrome-background: var(--rn-glass-fill);
-  --chat-composer-glass-surface: var(--rn-glass-fill);
+  --app-chrome-background: var(--app-glass-fill);
+  --chat-composer-glass-surface: var(--app-glass-fill);
 }
 @media (prefers-reduced-transparency: reduce) {
   :root {
-    --rn-glass-fill: var(--rn-surface);
+    --app-glass-fill: var(--rn-surface);
   }
   [data-slot="dialog-content"],
   [data-slot="sheet-content"],
@@ -558,8 +558,8 @@
 }
 
 [data-material="glass"] {
-  background: var(--rn-glass-fill);
-  border-color: var(--rn-glass-line);
+  background: var(--app-glass-fill);
+  border-color: var(--app-glass-line);
   backdrop-filter: blur(18px);
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--rn-ink) 5%, transparent);
 }
@@ -574,6 +574,6 @@
 }
 @media (prefers-reduced-transparency: reduce) {
   :root[data-scheme="light"] .rennet-layout {
-    --rn-glass-fill: var(--rn-surface);
+    --app-glass-fill: var(--rn-surface);
   }
 }

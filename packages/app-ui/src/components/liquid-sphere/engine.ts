@@ -146,9 +146,9 @@ function buildSphereEngine(
 
   function syncPalette() {
     const css = getComputedStyle(document.documentElement);
-    uniforms.uBottom.value.set(css.getPropertyValue("--rn-art-bottom").trim() || LOOK.bottom);
-    uniforms.uMid.value.set(css.getPropertyValue("--rn-art-mid").trim() || LOOK.mid);
-    uniforms.uTop.value.set(css.getPropertyValue("--rn-art-top").trim() || LOOK.top);
+    uniforms.uBottom.value.set(css.getPropertyValue("--app-art-bottom").trim() || LOOK.bottom);
+    uniforms.uMid.value.set(css.getPropertyValue("--app-art-mid").trim() || LOOK.mid);
+    uniforms.uTop.value.set(css.getPropertyValue("--app-art-top").trim() || LOOK.top);
   }
   syncPalette();
   const paletteObserver = new MutationObserver(syncPalette);

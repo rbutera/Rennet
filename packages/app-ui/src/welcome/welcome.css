@@ -4,7 +4,7 @@
   height: 100dvh;
   overflow-y: auto;
   overflow-x: hidden;
-  background: var(--rn-app-backdrop);
+  background: var(--app-backdrop);
   color: var(--rn-ink);
   -webkit-app-region: drag;
 }

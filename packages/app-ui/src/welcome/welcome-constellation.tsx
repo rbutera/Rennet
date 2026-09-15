@@ -191,9 +191,9 @@ export function WelcomeConstellation({
     }
     function syncPalette() {
       const css = getComputedStyle(document.documentElement);
-      uniforms.bottom.value.set(css.getPropertyValue("--rn-art-bottom").trim());
-      uniforms.mid.value.set(css.getPropertyValue("--rn-art-mid").trim());
-      uniforms.top.value.set(css.getPropertyValue("--rn-art-top").trim());
+      uniforms.bottom.value.set(css.getPropertyValue("--app-art-bottom").trim());
+      uniforms.mid.value.set(css.getPropertyValue("--app-art-mid").trim());
+      uniforms.top.value.set(css.getPropertyValue("--app-art-top").trim());
       const light = document.documentElement.dataset.scheme === "light";
       material.blending = light ? NormalBlending : AdditiveBlending;
       material.needsUpdate = true;
