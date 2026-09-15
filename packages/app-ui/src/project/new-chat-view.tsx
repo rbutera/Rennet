@@ -36,7 +36,7 @@ import {
   withFacet,
   withScope,
 } from "./new-chat-table";
-import { buildSmartRows, type SmartFilter, smartListCounts } from "./smart-list";
+import { buildSmartRows, defaultRowOrder, type SmartFilter, smartListCounts } from "./smart-list";
 
 const FILTERS: readonly { readonly filter: SmartFilter; readonly label: string }[] = [
   { filter: "all", label: "All changes" },
@@ -119,6 +119,10 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
     return buildSmartRows(visibleDetail);
   }, [detail, showMerged]);
   const unclaimed = useMemo(() => hideClaimedRows(rows, claimed), [claimed, rows]);
+  // The list opens with no column actively sorted (DEFAULT_SORTING is []), so the rows
+  // reach the table in this composite order — needs-you, then yours, then recency — and
+  // stay in it until a column header is clicked (D4).
+  const ordered = useMemo(() => defaultRowOrder(unclaimed), [unclaimed]);
   const counts = useMemo(() => smartListCounts(unclaimed), [unclaimed]);
   // The facets offer what the rows actually hold, counted before any filter applies, so
   // a reviewer can see what else is there from inside a narrowed list.
@@ -130,7 +134,7 @@ export function NewChatView({ projectId }: { readonly projectId: string }) {
   const repoOptions = useMemo(() => facetOptions(unclaimed, repoOf), [unclaimed]);
 
   const table = useChangeTable({
-    rows: unclaimed,
+    rows: ordered,
     sorting,
     onSortingChange: setSorting,
     columnFilters,

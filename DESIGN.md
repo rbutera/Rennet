@@ -43,9 +43,27 @@ typography:
     fontFamily: "Geist Variable, system-ui, sans-serif"
     fontSize: "14px"
     fontWeight: 600
+  scale:
+    badge: "10px"
+    micro: "11px"
+    meta: "12px"
+    dense-body: "12.5px"
+    dense: "13px"
+    chrome: "14px"
+    prose: "15px"
+    reading: "16px"
+    body: "18px"
+    section: "20px"
+    title: "24px"
 rounded:
+  micro: "4px"
+  chip: "6px"
+  icon: "8px"
   control: "10px"
   surface: "12px"
+  window: "16px"
+  pill: "999px"
+  circle: "50%"
 spacing:
   control-x: "24px"
   section-min: "88px"

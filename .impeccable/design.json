@@ -1,26 +1,72 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-08-13T12:00:00.000Z",
+  "generatedAt": "2026-09-15T00:00:00.000Z",
   "title": "Design System: Rennet",
   "extensions": {
     "colorMeta": {
-      "light-canvas": { "role": "neutral", "displayName": "Light Canvas", "canonical": "#f4f2ed", "tonalRamp": ["#111419", "#59616b", "#d7d4cd", "#f4f2ed", "#fcfbf8"] },
-      "dark-canvas": { "role": "neutral", "displayName": "Dark Canvas", "canonical": "#0e1116", "tonalRamp": ["#0e1116", "#15191f", "#2d333b", "#a8b0ba", "#f1f0eb"] },
-      "blue-light": { "role": "primary", "displayName": "Review Blue", "canonical": "#396f96", "tonalRamp": ["#172b38", "#284e68", "#396f96", "#8bbddd", "#e7f1f7"] },
-      "amber-light": { "role": "secondary", "displayName": "Decision Amber", "canonical": "#a86125", "tonalRamp": ["#321b0b", "#704018", "#a86125", "#dda664", "#faebda"] },
-      "green-light": { "role": "secondary", "displayName": "Evidence Green", "canonical": "#41745b", "tonalRamp": ["#162a21", "#315943", "#41745b", "#88bc9b", "#e6f1ea"] }
+      "light-canvas": {
+        "role": "neutral",
+        "displayName": "Light Canvas",
+        "canonical": "#f4f2ed",
+        "tonalRamp": ["#111419", "#59616b", "#d7d4cd", "#f4f2ed", "#fcfbf8"]
+      },
+      "dark-canvas": {
+        "role": "neutral",
+        "displayName": "Dark Canvas",
+        "canonical": "#0e1116",
+        "tonalRamp": ["#0e1116", "#15191f", "#2d333b", "#a8b0ba", "#f1f0eb"]
+      },
+      "blue-light": {
+        "role": "primary",
+        "displayName": "Review Blue",
+        "canonical": "#396f96",
+        "tonalRamp": ["#172b38", "#284e68", "#396f96", "#8bbddd", "#e7f1f7"]
+      },
+      "amber-light": {
+        "role": "secondary",
+        "displayName": "Decision Amber",
+        "canonical": "#a86125",
+        "tonalRamp": ["#321b0b", "#704018", "#a86125", "#dda664", "#faebda"]
+      },
+      "green-light": {
+        "role": "secondary",
+        "displayName": "Evidence Green",
+        "canonical": "#41745b",
+        "tonalRamp": ["#162a21", "#315943", "#41745b", "#88bc9b", "#e6f1ea"]
+      }
     },
     "typographyMeta": {
-      "display": { "displayName": "Neo-grotesk Display", "purpose": "Hero and major section theses." },
-      "body": { "displayName": "Calm Reading Face", "purpose": "Explanations, product truth, and controls." },
-      "label": { "displayName": "Interface Label", "purpose": "Navigation, stages, and compact evidence." }
+      "display": {
+        "displayName": "Neo-grotesk Display",
+        "purpose": "Hero and major section theses."
+      },
+      "body": {
+        "displayName": "Calm Reading Face",
+        "purpose": "Explanations, product truth, and controls."
+      },
+      "label": {
+        "displayName": "Interface Label",
+        "purpose": "Navigation, stages, and compact evidence."
+      }
     },
     "shadows": [
-      { "name": "ambient-review", "value": "0 26px 64px -34px rgb(25 30 35 / 32%)", "purpose": "Separate review papers and product frames from the page." },
-      { "name": "control-lift", "value": "0 12px 28px -18px rgb(15 19 23 / 80%)", "purpose": "Give the primary action restrained physical confidence." }
+      {
+        "name": "ambient-review",
+        "value": "0 26px 64px -34px rgb(25 30 35 / 32%)",
+        "purpose": "Separate review papers and product frames from the page."
+      },
+      {
+        "name": "control-lift",
+        "value": "0 12px 28px -18px rgb(15 19 23 / 80%)",
+        "purpose": "Give the primary action restrained physical confidence."
+      }
     ],
     "motion": [
-      { "name": "resolve", "value": "520ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Resolve dense material into readable structure without bounce." }
+      {
+        "name": "resolve",
+        "value": "520ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Resolve dense material into readable structure without bounce."
+      }
     ],
     "breakpoints": [
       { "name": "wide", "value": "1180px" },
@@ -28,8 +74,8 @@
       { "name": "mobile", "value": "560px" }
     ],
     "desktopScale": {
-      "purpose": "The dense desktop product scale for packages/ui. Enforced by the design detector via packages/ui/DESIGN.md, which sits inside the package because the detector stops walking up at the package boundary. Recorded here so the root machine artifact stays consistent with the documented ramp.",
-      "typeRampPx": [10, 11, 12, 13, 14, 16, 19, 22],
+      "purpose": "The dense desktop product scale. Documented in the root DESIGN.md prose ramp and mirrored into its frontmatter typography.scale, which the design hook reads; also encoded in packages/app-ui/DESIGN.md for the per-package CLI ramp test. Recorded here so the root machine artifact stays consistent with the documented ramp.",
+      "typeRampPx": [10, 11, 12, 12.5, 13, 14, 15, 16, 18, 20, 24],
       "displayClamp": "clamp(34px, 5vw, 56px)",
       "radiusScalePx": [4, 6, 8, 12, 16],
       "radiusGeometryExemptions": { "pill": "999px", "circle": "50%" }
@@ -77,13 +123,41 @@
   "narrative": {
     "northStar": "The Breaking Edge",
     "overview": "Rennet is an editorial system for a serious developer tool. Dense technical material becomes fewer evidence-bearing objects without hiding the code underneath. The brand mark remains identity; provenance, continuity, and information density explain decomposition.",
-    "keyCharacteristics": ["Flat editorial fields and quiet reading surfaces.", "Dense information resolves into a deliberate reading order.", "Functional color names review meaning rather than decorating the page.", "Light and dark are complete authored compositions.", "Marketing and desktop share roles without becoming identical skins."],
-    "rules": [
-      { "name": "The Sparse Color Rule", "body": "Monochrome carries the identity; color appears only for review state, provenance, or structure.", "section": "colors" },
-      { "name": "The Identity Is Not Layout Rule", "body": "Never force the logo into a mask, connector, crop, or decomposition effect.", "section": "shapes" },
-      { "name": "The Flat-By-Default Rule", "body": "A surface earns elevation by behaving like a separate review object.", "section": "elevation" }
+    "keyCharacteristics": [
+      "Flat editorial fields and quiet reading surfaces.",
+      "Dense information resolves into a deliberate reading order.",
+      "Functional color names review meaning rather than decorating the page.",
+      "Light and dark are complete authored compositions.",
+      "Marketing and desktop share roles without becoming identical skins."
     ],
-    "dos": ["Do preserve the complete narrative and review sequence at every breakpoint.", "Do show real product evidence or label illustrative material.", "Do use committed black and white brand exports.", "Do keep code visible while changing its reading order."],
-    "donts": ["Don't use the standalone mark as a decomposition device.", "Don't turn the page into an equal-card feature grid.", "Don't use gradients, glass, neon, or monospace as generic developer-tool identity.", "Don't average independent model reviews into a synthetic consensus."]
+    "rules": [
+      {
+        "name": "The Sparse Color Rule",
+        "body": "Monochrome carries the identity; color appears only for review state, provenance, or structure.",
+        "section": "colors"
+      },
+      {
+        "name": "The Identity Is Not Layout Rule",
+        "body": "Never force the logo into a mask, connector, crop, or decomposition effect.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Flat-By-Default Rule",
+        "body": "A surface earns elevation by behaving like a separate review object.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do preserve the complete narrative and review sequence at every breakpoint.",
+      "Do show real product evidence or label illustrative material.",
+      "Do use committed black and white brand exports.",
+      "Do keep code visible while changing its reading order."
+    ],
+    "donts": [
+      "Don't use the standalone mark as a decomposition device.",
+      "Don't turn the page into an equal-card feature grid.",
+      "Don't use gradients, glass, neon, or monospace as generic developer-tool identity.",
+      "Don't average independent model reviews into a synthetic consensus."
+    ]
   }
 }
