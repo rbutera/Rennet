@@ -834,6 +834,7 @@
 }
 
 .chat-markdown a:not(.chat-markdown-file-link):hover,
+/* impeccable-disable-next-line codex-grid-background -- dotted link underline, not a grid field */
 .chat-markdown a:not(.chat-markdown-file-link):focus-visible {
   background-image: radial-gradient(circle, currentcolor 0.75px, transparent 1px);
   background-position: left bottom;
