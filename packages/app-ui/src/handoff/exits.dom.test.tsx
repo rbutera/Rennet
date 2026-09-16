@@ -777,4 +777,67 @@ describe("hand-off exits (C08 cluster 6)", () => {
     expect(await r.findByText("Merge request opened · !42")).toBeTruthy();
     expect(r.getByText("gitlab.com/acme/widget/-/merge_requests/42")).toBeTruthy();
   });
+
+  const readyPr: PrCompose = {
+    status: "pr",
+    submission: {
+      title: "Harden the retry path",
+      body: "## Summary\n\nGuards the boundary.",
+      base: "main",
+      head: "feat/x",
+      draft: true,
+    },
+    payload: PAYLOAD,
+    destination: "github:acme/orbital · feat/x → main",
+    title: "Harden the retry path",
+    compositionId: "comp-pr-1",
+  };
+
+  it("shows a Preparing state while the own-branch PR composes, then becomes the page", async () => {
+    // The bug this closes: the PR body is drafted live, so between the click and a ready PR there
+    // is a real window with no `pr` and no refusal. The lane used to fall to "No changes to
+    // request." for that whole window. It must instead say the pull request is being prepared.
+    // Driven over the REAL hook — an in-flight compose (a pending promise) is the actual data-flow
+    // that reddens this, not a `generating` prop set by hand.
+    let resolve!: (out: PrCompose) => void;
+    const composing = new Promise<PrCompose>((settle) => {
+      resolve = settle;
+    });
+    const r = mountHandoff(review(), { "publish.compose": () => composing });
+
+    expect(await r.findByRole("heading", { name: "Preparing the pull request" })).toBeTruthy();
+    expect(r.queryByText("No changes to request.")).toBeNull();
+
+    // The body drafts and compose lands a ready PR — the page becomes the pull request.
+    resolve(readyPr);
+    expect(await r.findByRole("heading", { name: "Harden the retry path" })).toBeTruthy();
+    expect(r.queryByRole("heading", { name: "Preparing the pull request" })).toBeNull();
+  });
+
+  it("shows the daemon's retryable reason during a re-poll, never a skeleton over it", async () => {
+    // The boundary that keeps the freshness contract honest. Preparing is ONLY the pending
+    // body-draft window (the test above). When the daemon answers `unavailable{retryable:true}` it
+    // carries a REASON ("the review boards are still drafting") and the client re-polls; that
+    // specific message must SHOW — the generic skeleton must never swallow a reason the daemon took
+    // the trouble to state. The re-poll then reaches the ready PR, so the reason is not a dead end.
+    let attempts = 0;
+    const r = mountHandoff(review(), {
+      "publish.compose": () => {
+        attempts += 1;
+        return attempts === 1
+          ? {
+              status: "unavailable",
+              reason: "The review boards are still drafting.",
+              retryable: true,
+            }
+          : readyPr;
+      },
+    });
+
+    expect(await r.findByText("The review boards are still drafting.")).toBeTruthy();
+    expect(
+      await r.findByRole("heading", { name: "Harden the retry path" }, { timeout: 2_000 }),
+    ).toBeTruthy();
+    expect(attempts).toBe(2);
+  });
 });

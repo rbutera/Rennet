@@ -235,7 +235,7 @@ function hostOS(source: string, isLocal: boolean, platform: string | undefined):
 function daemonInfo(status: DaemonHostStatus | undefined): DaemonInfo {
   // The wire shape is a union on `reachable`, so each branch can only read the fields that
   // branch actually carries — an unreachable host has no `version` to accidentally show.
-  if (!status || !status.reachable) {
+  if (!status?.reachable) {
     return {
       reachable: false,
       ...(status?.lastSeenVersion ? { lastSeenVersion: status.lastSeenVersion } : {}),
