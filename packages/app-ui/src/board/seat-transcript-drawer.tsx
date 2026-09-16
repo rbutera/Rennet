@@ -78,7 +78,7 @@ export function SeatTranscriptDrawer({ reviewId }: { readonly reviewId: string }
         // treatment, which is the case that matters.
         //
         // D14 says "below the shell's `MIN_SURFACE_WIDTH`", and that is NOT what ships:
-        // that constant is 400px of viewport and this is 54rem of container, which is the
+        // that constant is 520px of viewport and this is 54rem of container, which is the
         // measure that actually decides whether two columns fit here. Written down rather
         // than quietly diverged from. The two numbers live in the class because Tailwind
         // reads source text — a width built from an exported constant generates no CSS,
