@@ -47,8 +47,10 @@ function review(over: Partial<Review> = {}): Review {
 
 // The hand-off path wires the live `publish.*` exits (C08 cluster 6), so the route now needs a
 // bridge. These mount tests exercise the surface shape, not the egress — a bare MemoryBridge (no
-// publish handlers) is enough: the own-branch PR compose read simply rejects and the page stays
-// on its Changes / "No changes to request." state, which is exactly what these assert.
+// publish handlers) is enough. The own-branch PR compose fires on mount, so the lane first shows
+// its "Preparing the pull request" state while the read is in flight; with no handler the read
+// rejects and the lane settles on its Changes / "No changes to request." state. The assertions
+// below therefore `findByText` (await the settle) rather than reading it synchronously.
 function mountWorkspace(path: string, r: Review = review()) {
   const history = memoryHistory(path);
   return mount(
@@ -61,10 +63,11 @@ function mountWorkspace(path: string, r: Review = review()) {
 }
 
 describe("ReviewWorkspace ?view=handoff mount (C08 task 5.2)", () => {
-  it("renders the own-branch rounds surface at ?view=handoff", () => {
-    const { getByText } = mountWorkspace("/s/x?view=handoff");
-    // Own branch, nothing staged → the rounds lanes' honest empty state.
-    expect(getByText("No changes to request.")).toBeTruthy();
+  it("renders the own-branch rounds surface at ?view=handoff", async () => {
+    const { findByText } = mountWorkspace("/s/x?view=handoff");
+    // Own branch, nothing staged. The compose fires on mount (briefly "Preparing"), rejects with
+    // no handler, and the lane settles on the rounds lanes' honest empty state.
+    expect(await findByText("No changes to request.")).toBeTruthy();
   });
 
   it("renders the teammate-PR Post Review lane at ?view=handoff", () => {
@@ -81,8 +84,10 @@ describe("ReviewWorkspace ?view=handoff mount (C08 task 5.2)", () => {
     const board = () => document.querySelector('[data-kind="lens-board-view"]');
     expect(board()).not.toBeNull();
     await r.user.click(r.getByRole("button", { name: /Open pull request/ }));
-    // The hand-off is now open — the board is gone, the rounds surface is shown.
-    expect(r.getByText("No changes to request.")).toBeTruthy();
+    // The hand-off is now open — the board is gone, the rounds surface is shown. The compose
+    // fires on mount (briefly "Preparing"), rejects with no handler, and settles on the empty
+    // state, so we await it.
+    expect(await r.findByText("No changes to request.")).toBeTruthy();
     expect(board()).toBeNull();
   });
 

@@ -184,6 +184,38 @@ describe("RoundsLanes", () => {
     expect(r.queryByRole("heading", { name: "Harden the retry path" })).toBeNull();
   });
 
+  it("shows a Preparing state with a skeleton body while the PR composes (not the empty fallback)", () => {
+    // The bug this closes: while the body is drafted live there is no `pr` and no refusal, so the
+    // page fell to "No changes to request." for the whole window. `generating` states what is
+    // happening instead. Positive control is the rerender below that the SAME mount without
+    // `generating` DOES render the fallback — so this test can actually fail.
+    const r = mount(<RoundsLanes review={review} generating />);
+    expect(r.getByRole("heading", { name: "Preparing the pull request" })).toBeTruthy();
+    expect(r.getByRole("status").textContent).toContain("Drafting the description");
+    expect(r.queryByText("No changes to request.")).toBeNull();
+    expect(r.queryByRole("heading", { name: "Changes" })).toBeNull();
+    // The skeleton body is present (animate-pulse is the Skeleton primitive's tell).
+    expect(r.container.querySelectorAll(".animate-pulse").length).toBeGreaterThan(0);
+
+    // Positive control: drop `generating` and the same empty state falls to the fallback.
+    r.rerender(<RoundsLanes review={review} />);
+    expect(r.getByText("No changes to request.")).toBeTruthy();
+    expect(r.queryByRole("heading", { name: "Preparing the pull request" })).toBeNull();
+  });
+
+  it("a ready PR wins over generating (the composed page, never the skeleton)", () => {
+    const r = mount(<RoundsLanes review={review} pr={draftedPr} generating />);
+    expect(r.getByRole("heading", { name: "Harden the retry path" })).toBeTruthy();
+    expect(r.queryByRole("heading", { name: "Preparing the pull request" })).toBeNull();
+  });
+
+  it("staged asks win over generating (Changes, never the skeleton)", () => {
+    stage("src/a.ts:5", "guard the boundary", "request-change");
+    const r = mount(<RoundsLanes review={review} generating />);
+    expect(r.getByRole("heading", { name: "Changes" })).toBeTruthy();
+    expect(r.queryByRole("heading", { name: "Preparing the pull request" })).toBeNull();
+  });
+
   it("the Open-PR CTA is disabled with no egress, and posts a receipt with one", async () => {
     const receipt: PrReceipt = { number: 438, url: "https://github.com/rbutera/rennet/pull/438" };
     const r = mount(<RoundsLanes review={review} pr={draftedPr} />);

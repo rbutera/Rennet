@@ -589,6 +589,7 @@ function HandoffMount({
       reviewDraft={exits.reviewDraft}
       onSetVerdict={exits.onSetVerdict}
       pr={exits.pr}
+      generating={exits.generating}
       onDispatch={onDispatch}
       dispatchState={dispatchState}
       onOpenPr={exits.onOpenPr}

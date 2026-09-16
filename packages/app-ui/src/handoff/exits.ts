@@ -64,6 +64,16 @@ export interface HandoffExits {
   /** The composed own-branch PR the rounds lane renders. Absent ⇒ the page stays Changes. */
   readonly pr?: DraftedPr;
   /**
+   * The own-branch PR body is being drafted right now — the first compose still in flight. The
+   * daemon awaits the review-opener turn inside `publish.compose`, so for the whole draft there is
+   * no ready `pr` yet and no reason to state; without this the lane fell through to the "Changes /
+   * No changes to request." fallback for that window and read as an empty page. `true` tells the
+   * rounds lane to show that the pull request is being prepared instead. This is the `pending`
+   * window ONLY: a retryable `unavailable` carries a reason, and the fallback states that reason
+   * rather than a generic skeleton.
+   */
+  readonly generating?: boolean;
+  /**
    * Selection-steer Revise, bound to B11's `review.reviseSpan` (cluster 8). Always present here —
    * the command is registered and host-bound for every mode; a lane mounted WITHOUT it (unit
    * mounts) says so rather than pretending.
@@ -204,6 +214,27 @@ export function useHandoffExits(review: Review, recapture?: () => Promise<void>)
     compose.error !== undefined ||
     (compose.data?.status === "unavailable" && compose.data.retryable === true);
 
+  // The own-branch PR body is drafted live INSIDE the compose command: the daemon awaits the
+  // review-opener turn before it answers (server `publish.compose`, own-branch path), so for the
+  // whole draft the command is simply in flight and there is no `pr` yet. That is the window the
+  // user hit — the lane fell to "No changes to request." while the body was being written. So when
+  // the first own-branch compose is `pending` (in flight, no data, no error), the lane says the
+  // pull request is being prepared instead.
+  //
+  // This is deliberately `pending` ONLY, not any retryable state. When the daemon answers
+  // `unavailable{retryable:true}` it carries a REASON ("the review boards are still drafting", "the
+  // review changed while composing"), and that honest, specific message must show — the fallback
+  // renders it. A generic skeleton over a reason-bearing answer would hide what the daemon said. A
+  // hard compose error (`pending` is false there) likewise falls through to its reason. So this
+  // lights up for the live body-draft window and stays dark whenever there is something truer to
+  // show.
+  const generatingPr =
+    mode === "own-branch" &&
+    noAsks &&
+    target === undefined &&
+    prComposed === undefined &&
+    prCompose.pending;
+
   useEffect(() => {
     if (!retryable || compose.fetching) return;
     const timer = globalThis.setTimeout(refreshCompose, 750);
@@ -287,6 +318,7 @@ export function useHandoffExits(review: Review, recapture?: () => Promise<void>)
             prComposed.target?.repo.forge === "gitlab" ? "merge-request" : "pull-request",
         }
       : undefined,
+    generating: generatingPr,
     onRevise,
     ...(unavailable === undefined ? {} : { unavailable }),
   };

@@ -25,6 +25,8 @@ export interface HandoffViewProps {
   readonly onSetVerdict?: PostReviewLaneProps["onSetVerdict"];
   /** The own-branch PR draft, threaded to the rounds lanes (B11 draft; cluster 8/6 wire it). */
   readonly pr?: RoundsLanesProps["pr"];
+  /** The own-branch PR is composing right now — the rounds lane shows a prepare state, not the fallback. */
+  readonly generating?: RoundsLanesProps["generating"];
   /** Dispatch a work-order round from the rounds lanes (the C9 run is out of scope). */
   readonly onDispatch?: RoundsLanesProps["onDispatch"];
   /** The accepted/refused state of the current dispatch request. */
@@ -45,6 +47,7 @@ export function HandoffView({
   reviewDraft,
   onSetVerdict,
   pr,
+  generating,
   onDispatch,
   dispatchState,
   onOpenPr,
@@ -70,6 +73,7 @@ export function HandoffView({
     <RoundsLanes
       review={review}
       pr={pr}
+      generating={generating}
       onDispatch={onDispatch}
       dispatchState={dispatchState}
       onOpenPr={onOpenPr}

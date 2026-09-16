@@ -1,4 +1,5 @@
 import { isCodingRoundDisposition, type Review } from "@rennet/protocol";
+import { Skeleton } from "@rennet/ui";
 import { Check, GitBranch, GitPullRequest, Pencil } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useCoachAnchor } from "../coach/registry";
@@ -95,6 +96,13 @@ export interface RoundsLanesProps {
    * request." (the store-derived draft that becomes the PR body is B11's, gated cluster 8).
    */
   readonly pr?: DraftedPr;
+  /**
+   * The own-branch PR is being composed right now (the body is drafted live). Absent/false ⇒ no
+   * change. When `true` with no ready `pr`, the page shows a **Preparing the pull request** state
+   * with a skeleton body instead of falling to the "No changes to request." fallback for the whole
+   * draft window — the empty-page bug this state exists to close.
+   */
+  readonly generating?: boolean;
   /** Dispatch a work-order round (the C9 run it navigates to is out of scope). Absent ⇒ a no-op. */
   readonly onDispatch?: () => void;
   /** The current dispatch request, kept separate from the daemon-owned round state. */
@@ -124,6 +132,7 @@ const IDLE_DISPATCH_STATE: RoundDispatchViewState = { status: "idle" };
 export function RoundsLanes({
   review,
   pr,
+  generating = false,
   onDispatch,
   dispatchState = IDLE_DISPATCH_STATE,
   onOpenPr,
@@ -238,6 +247,35 @@ export function RoundsLanes({
               }
             />
           )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── State: the pull request is being composed ────────────────────────────────
+  // The body is drafted live, so between the click and a ready PR there is a real window with no
+  // `pr` and no terminal refusal. Without this the page fell to "No changes to request." for that
+  // whole window and read as empty. This says what is actually happening — a statement, not a gate.
+  if (!gathering && generating) {
+    return (
+      <div className="chrome-scroll-clearance min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex w-full max-w-[760px] flex-col gap-4 px-8 py-8">
+          <div className="flex items-center gap-2.5">
+            <Icon icon={GitPullRequest} className="size-4 text-muted-foreground" />
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">
+              Preparing the pull request
+            </h1>
+          </div>
+          <p role="status" className="text-xs text-muted-foreground">
+            Drafting the description from your changes…
+          </p>
+          <div className="flex flex-col gap-2.5 pt-1" aria-hidden="true">
+            <Skeleton className="h-4 w-2/3" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-11/12" />
+            <Skeleton className="h-4 w-4/5" />
+            <Skeleton className="mt-2 h-4 w-1/2" />
+          </div>
         </div>
       </div>
     );
