@@ -287,11 +287,14 @@ export function TopBar() {
       className={cn(
         // THREE COLUMNS, the middle sized to the rail and the sides sharing what is left,
         // so the rail sits on the bar's centre line whenever both sides fit (a side that
-        // needs more takes it, and the rail shifts only then). Below 640px the rail drops
-        // to a second row across both columns. Vertical padding is 4px: the solid bar
-        // is exactly the dock header's 56px (`chat/chat-header.tsx`, `h-14`), so the two
-        // title bars meet at one rule across the window.
-        "grid grid-cols-[1fr_auto_1fr] items-center gap-x-2 gap-y-0 px-3 py-1 @container @max-[640px]:grid-cols-[1fr_auto]",
+        // needs more takes it, and the rail shifts only then). ONE row always: the surface
+        // never shrinks below MIN_SURFACE_WIDTH (`constants.ts`), which is the width of this
+        // bar with every label folded, so the three columns always fit and the old
+        // `@max-[640px]` drop to a second row — which split the bar in two and read as broken
+        // — is gone. A pane narrower than the rail still scrolls it (`overflow-x-auto` on the
+        // centre slot). Vertical padding is 4px: the solid bar is exactly the dock header's
+        // 56px (`chat/chat-header.tsx`, `h-14`), so the two title bars meet at one rule.
+        "grid grid-cols-[1fr_auto_1fr] items-center gap-x-2 gap-y-0 px-3 py-1 @container",
         floating
           ? "pointer-events-none absolute inset-x-0 top-0 z-30 min-h-11"
           : "min-h-14 shrink-0 border-b border-line",
@@ -356,10 +359,7 @@ export function TopBar() {
           is the widest grip the bar has. Only the rail itself opts out (`mx-auto`, not
           `justify-center`, so an overflowing rail scrolls from its left edge instead of
           clipping it). */}
-      <div
-        data-slot="lens-switcher"
-        className="flex min-w-0 items-center overflow-x-auto @max-[640px]:col-span-2 @max-[640px]:row-start-2"
-      >
+      <div data-slot="lens-switcher" className="flex min-w-0 items-center overflow-x-auto">
         <LensSwitcher
           key={`${review?.id ?? slug}:${selectedGeneration}`}
           lenses={lenses}
@@ -368,6 +368,7 @@ export function TopBar() {
           selected={query.view === "board" ? effectiveLens : null}
           onSelect={onLens}
           flaggedOpenCount={flaggedOpenCount}
+          chatOpen={chatOpen}
           className={cn(
             "app-region-no-drag mx-auto shrink-0",
             floating && cn("pointer-events-auto", chip),

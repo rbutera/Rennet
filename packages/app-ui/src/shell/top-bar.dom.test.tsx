@@ -130,12 +130,17 @@ describe("session top-bar (C03 §4)", () => {
       );
       expect(visibleLabel?.textContent).toBe(label);
       expect(tab?.querySelector("svg")).toBeTruthy();
-      // The label collapses to the icon only under a narrow pane (a `@max-[Npx]:hidden`
+      // The label collapses to the icon only under a narrow pane (a `@max-[Nrem]:hidden`
       // container-query variant), never unconditionally — a bare `hidden` would drop the
-      // word at every width and leave five wordless icons on a wide window.
+      // word at every width and leave five wordless icons on a wide window. This mount is
+      // chat-SHUT (the store's default), so the fold is the wider chat-shut threshold; the
+      // "folds earlier with the dock open" test below drives the chat-aware pair.
       const labelClasses = visibleLabel?.className.split(/\s+/) ?? [];
       expect(labelClasses).not.toContain("hidden");
-      expect(labelClasses.some((c) => /^@max-\[\d+px\]:hidden$/.test(c))).toBe(true);
+      // A CHAT-AWARE container-query fold (the exact open/shut rem pair is pinned in "folds
+      // the lens labels chat-aware too" below, which controls `chatOpen`; this first test
+      // predates the afterEach reset so it must not assume either state).
+      expect(labelClasses.some((c) => /^@max-\[\d+rem\]:hidden$/.test(c))).toBe(true);
     }
     expect(flagged.getAttribute("aria-selected")).toBe("true");
 
@@ -479,5 +484,41 @@ describe("the bar's geometry", () => {
     const open = mountTopBar("/s/s2", fixtureCompletedRoundsSource);
     expect(open.getByText("Diff").className).toBe("hidden @[44rem]:inline");
     expect(open.getByText("History").className).toBe("hidden @[48rem]:inline");
+  });
+
+  it("folds the lens labels chat-aware too — earlier with the dock open, later with it shut", () => {
+    // The rail carries the SAME chat-awareness as the pills (`lens-switcher.tsx`): with the
+    // dock open it has ~12rem more room, so it keeps its labels down to a narrower pane. The
+    // old fixed `@max-[1080px]` ignored the dock and hid the words on any pane it left — the
+    // bug this asserts against. Positive control: swap either class back to `@max-[1080px]`
+    // (chat-unaware) or a bare `hidden` and this reddens.
+    const shut = mountTopBar("/s/s2", undefined, lensHandlers);
+    const shutLabel = [...shut.container.querySelectorAll('[data-lens="design"] span')].find(
+      (span) => span.textContent === "Design",
+    );
+    expect(shutLabel?.className).toBe("@max-[55rem]:hidden");
+    shut.unmount();
+
+    act(() => {
+      useRennetStore.setState((s) => ({ ui: { ...s.ui, chatOpen: true } }));
+    });
+    const open = mountTopBar("/s/s2", undefined, lensHandlers);
+    const openLabel = [...open.container.querySelectorAll('[data-lens="design"] span')].find(
+      (span) => span.textContent === "Design",
+    );
+    expect(openLabel?.className).toBe("@max-[42rem]:hidden");
+  });
+
+  it("keeps the bar on one row — no chat-unaware or second-row wrap on the header grid", () => {
+    // MIN_SURFACE_WIDTH is the folded bar's width, so the three columns always fit and the
+    // old `@max-[640px]` drop to a second row (which split the bar and read as broken) is
+    // gone. Positive control: re-add `@max-[640px]:grid-cols-[1fr_auto]` and this reddens.
+    const { container } = mountTopBar("/s/s2", undefined, lensHandlers);
+    const bar = container.querySelector('[data-slot="session-top-bar"]');
+    expect(bar?.className).toContain("grid-cols-[1fr_auto_1fr]");
+    expect(bar?.className).not.toMatch(/@max-\[\d+px\]:grid-cols/);
+    const slot = container.querySelector('[data-slot="lens-switcher"]');
+    expect(slot?.className).not.toMatch(/@max-\[\d+px\]:(col-span|row-start)/);
+    expect(slot?.className).toContain("overflow-x-auto");
   });
 });

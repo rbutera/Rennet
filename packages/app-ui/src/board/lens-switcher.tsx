@@ -144,6 +144,7 @@ export function LensSwitcher({
   className,
   reviewId = "",
   generation = "",
+  chatOpen = false,
 }: {
   readonly lenses: readonly LensBoardEntry[];
   readonly selected: LensKind | null;
@@ -153,6 +154,9 @@ export function LensSwitcher({
   readonly className?: string;
   readonly reviewId?: string;
   readonly generation?: string;
+  /** The chat dock's state, so the label fold matches the space the dock leaves — the
+   *  same chat-awareness the top bar's pills carry (`top-bar.tsx` PILL.foldBelow). */
+  readonly chatOpen?: boolean;
 }) {
   const [inspected, setInspected] = useState<LensKind | null>(null);
   const selectedTab = useRef<HTMLButtonElement>(null);
@@ -254,11 +258,18 @@ export function LensSwitcher({
                 />
               ) : null}
             </span>
-            {/* The label drops out once the rail's own pane (the top-bar `@container`) is too
-                narrow to hold five of them — at Rennet's default size with the chat dock open
-                it clips, so below ~1080px of pane the tabs go icon-only. The `aria-label`
-                above still carries the full name, so nothing is lost to a screen reader. */}
-            <span className="@max-[1080px]:hidden">{LENS_LABEL[lens]}</span>
+            {/* The label folds to icon-only once the rail's own pane (the top-bar `@container`)
+                is too narrow to hold the five labelled tabs beside the folded pills — CHAT-AWARE,
+                exactly as the pills fold (`top-bar.tsx` PILL.foldBelow): the dock open leaves the
+                rail ~12rem more room than shut, so it can keep its labels at a narrower pane. The
+                thresholds are the width where the labelled rail (~33rem) plus the folded-glyph
+                pills and the left slot fit — ~42rem open, ~55rem shut — well under the default
+                pane, so labels show at normal sizes. The old fixed 1080px hid them on any pane
+                the dock left, which is the bug this replaces. The `aria-label` above still
+                carries the full name, so nothing is lost to a screen reader. */}
+            <span className={chatOpen ? "@max-[42rem]:hidden" : "@max-[55rem]:hidden"}>
+              {LENS_LABEL[lens]}
+            </span>
             {lens === "noise" && seat.waitingOn.length > 0 ? (
               <ReviewActivity label="Waiting for other lenses" className="size-3 text-lens" />
             ) : seat.register === "settled" ? (

@@ -6,7 +6,15 @@
 // (INVENTORY §1: 420 — reconciliation 8 corrects C01's 360 to match).
 
 export const MIN_CHAT_WIDTH = 320;
-export const MIN_SURFACE_WIDTH = 400;
+// The surface never shrinks below the top bar it must hold. This is the width of the
+// COLLAPSED (icon-only) bar — the five-lens rail with labels folded, the two pills folded
+// to glyphs, the left slot and the paddings — so the bar always renders on ONE row and its
+// controls are never clipped. Below this the chat-drag maximum clamps (layout.tsx), keeping
+// the divider from squeezing the board under the bar. It is NOT a labelled-bar floor: labels
+// come back progressively above it (the lens rail's chat-aware fold, `lens-switcher.tsx`;
+// the pills' fold, `top-bar.tsx`). Measured from those elements' own widths; tune against
+// the running app if a control clips at the floor.
+export const MIN_SURFACE_WIDTH = 520;
 export const DEFAULT_CHAT_WIDTH = 420;
 
 /** The bare canvas between the chat's right hairline and the main surface — the dock's
