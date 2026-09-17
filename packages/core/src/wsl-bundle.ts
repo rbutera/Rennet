@@ -92,6 +92,7 @@ function requiredWslBundleFiles(targetDir: string, entry: string): RequiredWslBu
       path: `${targetDir}/native/linux-x64/rennet-exclusive-move`,
       testFlag: "-x",
     },
+    { path: `${targetDir}/vendor/t3code/apps/server/dist/bin.mjs`, testFlag: "-f" },
   ];
 }
 
@@ -154,7 +155,7 @@ async function publishCompletionMarker(
 /**
  * Ensure the versioned bundle exists in the distro's native fs, returning its
  * absolute distro-native path. Copy-once-per-complete-version (design.md Decision 1):
- * probe the entry, Linux x64 rooted addon, executable move helper, and a marker
+ * probe the entry, Linux x64 rooted addon, executable move helper, chat entry, and a marker
  * created only after their post-copy checks — complete means no-op. Any missing
  * member removes the marker before `mkdir -p`, path translation, and the whole-dir
  * copy, so an interrupted overlay retries on the next call. Only copies into native

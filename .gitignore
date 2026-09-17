@@ -8,6 +8,7 @@ Thumbs.db
 
 # Dependencies
 node_modules/
+apps/desktop/wsl-chat/
 .pnpm-store/
 
 # Build and package outputs

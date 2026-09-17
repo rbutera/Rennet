@@ -103,6 +103,21 @@ async function verifyPackagedNativePayload(_forgeConfig, packageResult) {
     if (!fs.existsSync(sidecarBin)) {
       throw new Error(`packaged app is missing the T3 Code sidecar bundle: ${sidecarBin}`);
     }
+    if (platform === "win32") {
+      const wslChat = path.join(
+        resourcesRoot,
+        "app.asar.unpacked",
+        "dist",
+        "server",
+        "vendor",
+        "t3code",
+        "apps",
+        "server",
+        "dist",
+        "bin.mjs",
+      );
+      if (!fs.existsSync(wslChat)) throw new Error(`packaged app is missing WSL chat: ${wslChat}`);
+    }
   }
 
   const checkerPath = path.join(__dirname, "../../scripts/check-native-artifact-layout.mjs");
@@ -161,6 +176,7 @@ module.exports = {
     ignore: [
       /^\/node_modules/,
       /^\/dist\/t3code/,
+      /^\/wsl-chat/,
       /^\/src/,
       /^\/e2e/,
       /^\/test-results/,

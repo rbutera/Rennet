@@ -8,6 +8,8 @@
 // mirroring the vendored layout so `readUpstreamCommit`'s relative walk still lands.
 // Forge ships that directory as an extra resource; the main process points the daemon at
 // `<resourcesPath>/t3code/apps/server/dist/bin.mjs` through RENNET_T3_BUNDLE.
+// Windows also stages the Linux job's runtime under dist/server/vendor/t3code so
+// the existing whole-directory WSL delivery includes chat and its Linux externals.
 //
 // Only the running platform's prebuilds are kept for packages that carry several
 // (node-pty ships 58 MB of prebuilds for four platforms; one is 15 MB).
@@ -102,6 +104,16 @@ export function stageT3Sidecar(input) {
   return { bundlePath: join(destDist, "bin.mjs"), externals };
 }
 
+/** @param {{ source: string; serverDir: string }} input */
+export function stageWslSidecar({ source, serverDir }) {
+  if (!existsSync(join(source, "apps/server/dist/bin.mjs"))) {
+    throw new Error(`Linux chat runtime is missing: ${source}`);
+  }
+  const destination = join(serverDir, "vendor/t3code");
+  mkdirSync(dirname(destination), { recursive: true });
+  cpSync(source, destination, { recursive: true });
+}
+
 const invokedDirectly =
   process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
@@ -109,8 +121,14 @@ if (invokedDirectly) {
   const result = stageT3Sidecar({
     vendorRoot: join(workspaceRoot, "vendor/t3code"),
     nodeModules: join(workspaceRoot, "node_modules"),
-    destination: join(workspaceRoot, "apps/desktop/dist/t3code"),
+    destination: process.argv[2] ?? join(workspaceRoot, "apps/desktop/dist/t3code"),
   });
+  if (process.platform === "win32") {
+    stageWslSidecar({
+      source: join(workspaceRoot, "apps/desktop/wsl-chat"),
+      serverDir: join(workspaceRoot, "apps/desktop/dist/server"),
+    });
+  }
   console.log(
     `staged T3 sidecar bundle at ${result.bundlePath} with ${result.externals.length} external packages`,
   );

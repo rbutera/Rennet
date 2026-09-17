@@ -1,5 +1,6 @@
 import { cn, Skeleton } from "@rennet/ui";
 import { Suspense } from "react";
+import { ChatUnavailable } from "../chat/chat-unavailable";
 import { useT3ChatSlot } from "../chat/t3-chat-slot";
 import { useCommand } from "../data/query";
 import { useOpenCapturedPath } from "../review/code-destination";
@@ -101,11 +102,9 @@ export function SeatTranscriptDrawer({ reviewId }: { readonly reviewId: string }
         </button>
       </header>
       {error ? (
-        <p data-slot="seat-transcript-error" className="p-3 text-ink-soft text-xs">
-          Chat sidecar unavailable: {error instanceof Error ? error.message : String(error)}
-        </p>
+        <ChatUnavailable slot="seat-transcript-error" />
       ) : pending || !data ? (
-        <TranscriptSkeleton label="Starting the chat sidecar" />
+        <TranscriptSkeleton label="Starting chat" />
       ) : slot ? (
         <Suspense fallback={<TranscriptSkeleton label="Loading the thread view" />}>
           <slot.thread session={data} thread={open.thread} readOnly onOpenFile={openFileInDiff} />
