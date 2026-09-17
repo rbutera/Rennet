@@ -56,6 +56,8 @@ export const themes = {
       synFn: "#6b4b9e",
       synProp: "#6e5a2f",
       synVar: "#8a5a1e",
+      brandStart: "#f2b032",
+      brandEnd: "#d42c3b",
       markInk: "#0b0d10",
       scrim: "#0a0a0a",
     },
@@ -110,12 +112,16 @@ export const themes = {
       synFn: "#c8b6e8",
       synProp: "#cbb98f",
       synVar: "#d9a77a",
+      brandStart: "#f2b032",
+      brandEnd: "#d42c3b",
       markInk: "#f7f4ee",
       scrim: "#0a0a0a",
     },
   },
   "catppuccin-mocha": {
     light: {
+      brandStart: "#fe640b",
+      brandEnd: "#d20f39",
       canvas: "#e6e9ef",
       surface: "#eff1f5",
       raised: "#ffffff",
@@ -170,6 +176,8 @@ export const themes = {
       scrim: "#4c4f69",
     },
     dark: {
+      brandStart: "#fab387",
+      brandEnd: "#f38ba8",
       canvas: "#181825",
       surface: "#1e1e2e",
       raised: "#313244",
@@ -226,6 +234,8 @@ export const themes = {
   },
   dracula: {
     light: {
+      brandStart: "#a34d0c",
+      brandEnd: "#b52678",
       canvas: "#fffbeb",
       surface: "#ffffff",
       raised: "#f4efd9",
@@ -280,6 +290,8 @@ export const themes = {
       scrim: "#1f1f1f",
     },
     dark: {
+      brandStart: "#ffb86c",
+      brandEnd: "#ff79c6",
       canvas: "#282a36",
       surface: "#313342",
       raised: "#3b3d4d",
@@ -336,6 +348,8 @@ export const themes = {
   },
   github: {
     light: {
+      brandStart: "#bc4c00",
+      brandEnd: "#cf222e",
       canvas: "#f6f8fa",
       surface: "#ffffff",
       raised: "#eaeef2",
@@ -390,6 +404,8 @@ export const themes = {
       scrim: "#1f2328",
     },
     dark: {
+      brandStart: "#ffa657",
+      brandEnd: "#ff7b72",
       canvas: "#0d1117",
       surface: "#161b22",
       raised: "#21262d",
@@ -446,6 +462,8 @@ export const themes = {
   },
   "one-dark-pro": {
     light: {
+      brandStart: "#986801",
+      brandEnd: "#c18401",
       canvas: "#fafafa",
       surface: "#ffffff",
       raised: "#eaeaeb",
@@ -500,6 +518,8 @@ export const themes = {
       scrim: "#383a42",
     },
     dark: {
+      brandStart: "#d19a66",
+      brandEnd: "#e06c75",
       canvas: "#21252b",
       surface: "#282c34",
       raised: "#2f333d",

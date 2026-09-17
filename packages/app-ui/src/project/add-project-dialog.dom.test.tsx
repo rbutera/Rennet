@@ -11,11 +11,12 @@ import { Router } from "wouter";
 import { BridgeProvider } from "../data";
 import { memoryHistory } from "../routes/history";
 import { projectIndexingPath } from "../routes/url";
+import { ConnectionCapabilitiesProvider } from "../shell/connection-capabilities";
 import { useRennetStore } from "../store";
 import { act, cleanup, mount, screen, waitFor } from "../test/dom";
 import { MemoryBridge, type MemoryBridgeHandlers } from "../test/memory-bridge";
 import { mountApp } from "../test/mount-app";
-import { AddProjectDialog } from "./add-project-dialog";
+import { AddProjectDialog, AddProjectFlow } from "./add-project-dialog";
 
 afterEach(() => {
   cleanup();
@@ -101,6 +102,45 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
 }
 
 describe("AddProjectDialog", () => {
+  it("replaces stale folders immediately while connecting and offers retry after failure", async () => {
+    const connection = deferred<{ switched: boolean; error?: string }>();
+    let calls = 0;
+    const bridge = new MemoryBridge({ "fs.listDir": () => ({ result: HOME }) });
+    const history = memoryHistory("/new-chat");
+    const { user } = mount(
+      <BridgeProvider bridge={bridge}>
+        <ConnectionCapabilitiesProvider
+          value={{
+            sources: [
+              { id: "local", label: "This machine" },
+              { id: "wsl:Ubuntu", label: "Ubuntu" },
+            ],
+            activeSource: "local",
+            connectSource: () => {
+              calls++;
+              return connection.promise;
+            },
+            pairAtAddress: async () => ({ deviceId: "unused", name: "unused" }),
+          }}
+        >
+          <Router hook={history.hook} searchHook={history.searchHook}>
+            <AddProjectFlow embedded />
+          </Router>
+        </ConnectionCapabilitiesProvider>
+      </BridgeProvider>,
+    );
+    await screen.findByText("dev");
+    await user.click(screen.getByRole("button", { name: /^Source:/ }));
+    await user.click(await screen.findByText("Ubuntu"));
+    expect(screen.getByRole("status").textContent).toContain("Connecting to Ubuntu");
+    expect(screen.queryByText("dev")).toBeNull();
+    expect(screen.getByRole("button", { name: "Add" }).hasAttribute("disabled")).toBe(true);
+    await act(async () => connection.resolve({ switched: false, error: "Ubuntu is unavailable" }));
+    await screen.findByText("Ubuntu is unavailable");
+    expect(screen.queryByText("dev")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(calls).toBe(2);
+  });
   it("Add is inert until a directory loads, then enabled once one is selected", async () => {
     open();
     const first = deferred<{ result: FsListDirResult }>();

@@ -11,6 +11,8 @@
  */
 
 [data-rn-theme="dracula"] {
+  --rn-brand-start: #a34d0c;
+  --rn-brand-end: #b52678;
   /* ground — Alucard (Dracula light) */
   --rn-canvas: #fffbeb;
   --rn-surface: #ffffff;
@@ -79,6 +81,8 @@
 }
 
 [data-rn-theme="dracula"][data-scheme="dark"] {
+  --rn-brand-start: #ffb86c;
+  --rn-brand-end: #ff79c6;
   /* ground — Dracula */
   --rn-canvas: #282a36;
   --rn-surface: #313342;

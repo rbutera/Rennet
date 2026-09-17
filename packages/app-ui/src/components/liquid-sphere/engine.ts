@@ -149,6 +149,12 @@ function buildSphereEngine(
     uniforms.uBottom.value.set(css.getPropertyValue("--app-art-bottom").trim() || LOOK.bottom);
     uniforms.uMid.value.set(css.getPropertyValue("--app-art-mid").trim() || LOOK.mid);
     uniforms.uTop.value.set(css.getPropertyValue("--app-art-top").trim() || LOOK.top);
+    // The studio lights otherwise bleach pastel theme pigments nearly white.
+    if (document.documentElement.dataset.rnTheme) {
+      uniforms.uBottom.value.multiplyScalar(0.5);
+      uniforms.uMid.value.multiplyScalar(0.5);
+      uniforms.uTop.value.multiplyScalar(0.5);
+    }
   }
   syncPalette();
   const paletteObserver = new MutationObserver(syncPalette);

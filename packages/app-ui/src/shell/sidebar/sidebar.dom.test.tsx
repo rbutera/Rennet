@@ -724,8 +724,7 @@ describe("the sidebar lockup row", () => {
     const row = lockupRow(container);
     // ONE role=img called "Rennet" over two decorative halves — the accessible name is
     // unchanged by the move, which is the part a geometry assertion cannot see.
-    expect(row.getAttribute("role")).toBe("img");
-    expect(row.getAttribute("aria-label")).toBe("Rennet");
+    expect(row.querySelector('[role="img"]')?.getAttribute("aria-label")).toBe("Rennet");
     expect(container.querySelectorAll('[aria-label="Rennet"]').length).toBe(1);
     expect(slotSphere(row).getAttribute("aria-label")).toBeNull();
     expect(slotWordmark(row).getAttribute("aria-hidden")).toBe("true");
@@ -735,6 +734,17 @@ describe("the sidebar lockup row", () => {
     expect(row.className).not.toContain("app-region-drag");
     expect(row.className).not.toContain("app-region-no-drag");
   });
+  it.each(["win32", "linux"])(
+    "puts the logo and accessible collapse control on the top row on %s",
+    (platform) => {
+      const { container, getByRole } = mountSidebar({ platform });
+      const row = lockupRow(container);
+      const toggle = getByRole("button", { name: "Collapse sidebar" });
+      expect(row.contains(toggle)).toBe(true);
+      expect(toggle.closest('[role="img"]')).toBeNull();
+      expect(row.previousElementSibling).toBeNull();
+    },
+  );
 });
 
 it("exposes running activity when the existing session row receives keyboard focus", async () => {

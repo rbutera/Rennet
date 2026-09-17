@@ -13,6 +13,8 @@
  */
 
 [data-rn-theme="github"] {
+  --rn-brand-start: #bc4c00;
+  --rn-brand-end: #cf222e;
   /* ground — Light Default */
   --rn-canvas: #f6f8fa;
   --rn-surface: #ffffff;
@@ -81,6 +83,8 @@
 }
 
 [data-rn-theme="github"][data-scheme="dark"] {
+  --rn-brand-start: #ffa657;
+  --rn-brand-end: #ff7b72;
   /* ground — Dark Default */
   --rn-canvas: #0d1117;
   --rn-surface: #161b22;
