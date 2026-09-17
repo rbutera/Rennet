@@ -4,6 +4,7 @@ import { useCommand } from "../data/query";
 import { useOpenCapturedPath } from "../review/code-destination";
 import { useChatTrail, useRouteChatTarget } from "./chat-data";
 import { ChatHeader } from "./chat-header";
+import { ChatUnavailable } from "./chat-unavailable";
 import { useT3ChatSlot } from "./t3-chat-slot";
 
 /**
@@ -76,11 +77,9 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
           No review is attached to this session, so there is no thread to open.
         </p>
       ) : error ? (
-        <p data-slot="t3-chat-error" className="p-3 text-xs text-ink-soft">
-          Chat sidecar unavailable: {error instanceof Error ? error.message : String(error)}
-        </p>
+        <ChatUnavailable slot="t3-chat-error" />
       ) : pending || !data ? (
-        <ChatPaneSkeleton label="Starting the chat sidecar" />
+        <ChatPaneSkeleton label="Starting chat" />
       ) : slot ? (
         <Suspense fallback={<ChatPaneSkeleton label="Loading the thread view" />}>
           <slot.session session={data} onOpenFile={openFileInDiff} />

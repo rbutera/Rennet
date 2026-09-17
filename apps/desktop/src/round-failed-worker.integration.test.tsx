@@ -247,7 +247,9 @@ describe.skipIf(process.platform === "win32")("a failed production round worker"
     expect(view.container.querySelector('[data-row="gate"]')).toBeNull();
     const workerRow = view.container.querySelector('[data-row="worker"]');
     expect(workerRow?.textContent).toContain(WORKER_FAILURE);
-    expect(view.getByRole("alert").textContent).toContain(WORKER_FAILURE);
+    expect(
+      view.getAllByRole("alert").some((alert) => alert.textContent?.includes(WORKER_FAILURE)),
+    ).toBe(true);
     expect(view.container.querySelector('[data-row="commit"]')).toBeNull();
     expect(view.container.querySelector('[data-row="report"]')).toBeNull();
     expect(history.history).toEqual([route]);

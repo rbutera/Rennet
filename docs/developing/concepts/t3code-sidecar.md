@@ -28,8 +28,9 @@ or spawns one. Quitting the daemon stops it.
 `start()` is synchronous and returns nothing. The bring-up runs detached, so the daemon
 finishes composing, binds its listener and serves clients while the sidecar is still
 coming up — and a sidecar that cannot start never fails the daemon. The supervisor is left
-`degraded` with the reason (`daemon.status` carries it to the connection bar, and the chat
-dock renders it), and the next `chat.t3Session` retries from scratch. A build with no
+`degraded` with the reason available in diagnostics. Chat and transcript views show a
+Rennet message and a **Try again** action; they never render raw engine exceptions or
+internal bundle paths. The next `chat.t3Session` retries from scratch. A build with no
 vendored bundle starts nothing at all and stays `off` until something asks, which is when
 `ensure()` names the missing bundle.
 

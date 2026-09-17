@@ -224,6 +224,22 @@ jobs:
       - name: Verify Linux native payload
         run: node scripts/check-native-artifact-layout.mjs linux-x64
 
+      - name: Build Linux chat runtime for WSL
+        run: |
+          pnpm nx run t3code-server:build
+          node scripts/stage-t3-sidecar.mjs apps/desktop/wsl-chat
+          node apps/desktop/wsl-chat/apps/server/dist/bin.mjs --help
+        env:
+          NX_DAEMON: "false"
+
+      - name: Upload Linux chat runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: rennet-release-chat-linux-x64
+          path: apps/desktop/wsl-chat/
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload Linux native payload
         uses: actions/upload-artifact@v4
         with:
@@ -383,6 +399,12 @@ jobs:
 
       - name: Verify downloaded WSL native payload
         run: node scripts/check-native-artifact-layout.mjs linux-x64
+
+      - name: Download WSL chat runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: rennet-release-chat-linux-x64
+          path: apps/desktop/wsl-chat
 
       - name: Make installers (squirrel + zip)
         run: pnpm nx run rennet-desktop:make

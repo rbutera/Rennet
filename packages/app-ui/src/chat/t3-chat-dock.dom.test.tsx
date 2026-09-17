@@ -68,10 +68,13 @@ function projectRow(): SettingsProject {
   };
 }
 
-function mountDock(slot?: {
-  readonly session: ComponentType<T3NativeChatProps>;
-  readonly thread: ComponentType<T3ThreadViewProps>;
-}) {
+function mountDock(
+  slot?: {
+    readonly session: ComponentType<T3NativeChatProps>;
+    readonly thread: ComponentType<T3ThreadViewProps>;
+  },
+  sessionError?: Error,
+) {
   const asks: unknown[] = [];
   const bridge = new MemoryBridge({
     ...frontDoorHandlers(),
@@ -98,6 +101,7 @@ function mountDock(slot?: {
     }),
     "chat.t3Session": (input) => {
       asks.push(input);
+      if (sessionError) throw sessionError;
       const reviewId = (input as { reviewId?: string }).reviewId ?? "review-1";
       return {
         origin: "http://127.0.0.1:43117",
@@ -205,6 +209,40 @@ function mountWithSlot() {
 }
 
 describe("the chat slot is always the T3 thread", () => {
+  it("keeps engine names and internal paths out of chat and transcript failures", async () => {
+    const failure = new Error(
+      "T3 Code sidecar unavailable: vendor/t3code/apps/server/dist/bin.mjs",
+    );
+    const { container, asks } = mountDock(undefined, failure);
+    await waitFor(() =>
+      expect(container.querySelector('[data-slot="t3-chat-error"]')?.textContent).toContain(
+        "Rennet couldn't start chat.",
+      ),
+    );
+    act(() =>
+      useRennetStore.getState().uiActions.openSeatTranscript({
+        reviewId: "review-1",
+        lens: "sequence",
+        seat: "sequence",
+        thread: { threadId: "seat-thread", environmentId: "env-1" },
+      }),
+    );
+    await waitFor(() =>
+      expect(container.querySelector('[data-slot="seat-transcript-error"]')?.textContent).toContain(
+        "Rennet couldn't start chat.",
+      ),
+    );
+    for (const selector of ['[data-slot="t3-chat-error"]', '[data-slot="seat-transcript-error"]']) {
+      expect(container.querySelector(selector)?.textContent).not.toMatch(
+        /T3|sidecar|vendor|bin\.mjs/i,
+      );
+    }
+    const before = asks.length;
+    act(() =>
+      container.querySelector<HTMLButtonElement>('[data-slot="t3-chat-error"] button')?.click(),
+    );
+    await waitFor(() => expect(asks.length).toBeGreaterThan(before));
+  });
   // The rung-one <webview> is deleted (t3-lens-threads 4.4). This is the case that used to
   // render it: the daemon answers, no host provides the native components, and the slot has
   // to show SOMETHING. LOAD-BEARING on the guest never returning — restoring the <webview>

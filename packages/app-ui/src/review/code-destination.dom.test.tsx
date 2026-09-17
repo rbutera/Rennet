@@ -233,7 +233,7 @@ describe("symbol inspection through the live layout", () => {
       .fn()
       .mockRejectedValueOnce(new Error("index offline"))
       .mockResolvedValue(inspection);
-    const { findByRole, getByRole, user } = mountEvidence(
+    const { findByRole, findByText, getByRole, user } = mountEvidence(
       IMPLEMENTATION,
       {},
       {
@@ -241,7 +241,7 @@ describe("symbol inspection through the live layout", () => {
       },
     );
     await user.click(await findByRole("button", { name: "Inspect parser" }));
-    expect((await findByRole("alert")).textContent).toContain("index offline");
+    expect((await findByText(/index offline/)).closest('[role="alert"]')).not.toBeNull();
     await user.click(getByRole("button", { name: "Close symbol inspector" }));
     await user.click(getByRole("button", { name: "Inspect parser" }));
     await findByRole("button", { name: "parser.ts:4" });

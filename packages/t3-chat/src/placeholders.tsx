@@ -25,7 +25,9 @@ export function ThreadUnavailableNotice({ reason }: { readonly reason?: string }
   return (
     <p data-slot="t3-native-home" className="p-3 text-xs text-muted-foreground">
       This review has no thread, and none is being opened.
-      {reason === undefined ? "" : ` Rennet could not open one: ${reason}`}
+      {reason === undefined
+        ? ""
+        : " Rennet could not open chat. Try closing and opening this review again."}
     </p>
   );
 }
@@ -34,8 +36,28 @@ export function ThreadUnavailableNotice({ reason }: { readonly reason?: string }
 export function ConnectionsNotice() {
   return (
     <p data-slot="t3-native-settings" className="p-3 text-xs text-muted-foreground">
-      Connections are managed by the Rennet daemon; there is nothing to configure here.
+      Connections are managed in Rennet Settings.
     </p>
+  );
+}
+
+export function ChatFailureNotice({
+  reset,
+}: {
+  readonly error: unknown;
+  readonly reset: () => void;
+}) {
+  return (
+    <div role="alert" className="p-3 text-xs text-muted-foreground">
+      <p>Rennet couldn't display chat. Try again, or reopen this review.</p>
+      <button
+        type="button"
+        onClick={reset}
+        className="mt-2 rounded-md border border-border px-3 py-1.5 text-foreground hover:bg-accent"
+      >
+        Try again
+      </button>
+    </div>
   );
 }
 
@@ -52,7 +74,7 @@ export function ThreadSyncingNotice() {
     <div
       data-slot="t3-native-syncing"
       role="status"
-      aria-label="Connecting to the chat sidecar"
+      aria-label="Connecting to chat"
       className="flex flex-col gap-2.5 p-3"
     >
       <div className="h-3 w-2/3 animate-pulse rounded-md bg-line" />
@@ -70,7 +92,7 @@ export function ThreadSyncingNotice() {
 export function ThreadGoneNotice() {
   return (
     <p data-slot="t3-native-gone" className="p-3 text-xs text-muted-foreground">
-      This review's thread is no longer in the chat sidecar. Nothing is being written to it.
+      This review's chat is no longer available. Nothing is being written to it.
     </p>
   );
 }

@@ -51,6 +51,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "~/threadRoutes";
 import { resolveThreadSyncPhase } from "~/threadSync";
 import {
+  ChatFailureNotice,
   ConnectionsNotice,
   ThreadGoneNotice,
   ThreadSyncingNotice,
@@ -93,6 +94,7 @@ export interface T3ThreadViewProps {
 // Every one of those exists here, so no vendored navigate() can throw.
 
 const rootRoute = createRootRoute({
+  errorComponent: ChatFailureNotice,
   component: () => (
     <ToastProvider position="bottom-right">
       <ConfirmDialogHost />
