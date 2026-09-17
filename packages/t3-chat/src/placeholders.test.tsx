@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
+  ChatFailureNotice,
   ConnectionsNotice,
   ThreadGoneNotice,
   ThreadSyncingNotice,
@@ -18,8 +19,7 @@ import {
 //
 // So the rule these assertions hold is no longer "always phrase it as a wait". #849's rule
 // produced #872's bug. The rule is that a reviewer can tell WHICH state they are in, and
-// that a settled absence is allowed to say so — with the daemon's reason attached, which is
-// the part a reworded sentence could never have supplied.
+// that a settled absence is allowed to say so without exposing internal diagnostics.
 //
 // WHAT THIS CANNOT CATCH: nothing here stops someone writing a new sentence in the wrong
 // register, and nothing here proves which route renders which component — that mapping is
@@ -28,6 +28,16 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("chat placeholders: each one says which state it is, and does not overclaim", () => {
+  it("does not render a route failure's engine name, path or stack", () => {
+    const html = renderToStaticMarkup(
+      <ChatFailureNotice
+        error={new Error("T3 Code: vendor/t3code/bin.mjs")}
+        reset={() => undefined}
+      />,
+    );
+    expect(html).toContain("Try again");
+    expect(html).not.toMatch(/T3 Code|vendor\/t3code|bin\.mjs/);
+  });
   it("states the absence flatly, and promises nothing, when no thread is coming", () => {
     const html = renderToStaticMarkup(<ThreadUnavailableNotice />);
     expect(html).toContain("This review has no thread, and none is being opened.");
@@ -38,16 +48,17 @@ describe("chat placeholders: each one says which state it is, and does not overc
     expect(html).toContain('data-slot="t3-native-home"');
   });
 
-  it("carries the daemon's own reason when it has one, and no dangling clause when it does not", () => {
+  it("keeps raw engine failures out of the rendered notice", () => {
     const withReason = renderToStaticMarkup(
-      <ThreadUnavailableNotice reason="The workspace this session is bound to no longer exists: /gone" />,
+      <ThreadUnavailableNotice reason="T3 Code failed at vendor/t3code/apps/server/dist/bin.mjs" />,
     );
     expect(withReason).toContain(
-      "Rennet could not open one: The workspace this session is bound to no longer exists: /gone",
+      "Rennet could not open chat. Try closing and opening this review again.",
     );
     expect(renderToStaticMarkup(<ThreadUnavailableNotice />)).not.toContain(
-      "Rennet could not open one",
+      "Rennet could not open chat",
     );
+    expect(withReason).not.toMatch(/T3 Code|vendor\/t3code|bin\.mjs/);
   });
 
   it("keeps a settled absence and a live wait as different states", () => {
@@ -59,14 +70,14 @@ describe("chat placeholders: each one says which state it is, and does not overc
     expect(new Set([unavailable, gone, syncing, connections]).size).toBe(4);
     // The settled ones name an ending in words; the live wait is a skeleton, and carries its
     // wait in an sr-only label rather than a sentence the reviewer has to parse.
-    expect(gone).toContain("no longer in the chat sidecar");
+    expect(gone).toContain("no longer available");
     expect(gone).toContain("Nothing is being written to it");
     expect(syncing).toContain('data-slot="t3-native-syncing"');
     expect(syncing).toContain("animate-pulse");
-    expect(syncing).toContain('aria-label="Connecting to the chat sidecar"');
+    expect(syncing).toContain('aria-label="Connecting to chat"');
     // A wait is not a settled sentence: the skeleton must not read as one.
     expect(syncing).not.toContain("no longer");
-    expect(connections).toContain("managed by the Rennet daemon");
+    expect(connections).toContain("managed in Rennet Settings");
   });
 
   it("never tells a reviewer something is on its way in a state where nothing is", () => {
@@ -74,7 +85,7 @@ describe("chat placeholders: each one says which state it is, and does not overc
       renderToStaticMarkup(<ThreadUnavailableNotice reason="boom" />),
       renderToStaticMarkup(<ThreadGoneNotice />),
     ]) {
-      expect(html).not.toMatch(/appears here|on its way|opening|shortly|as soon as/i);
+      expect(html).not.toMatch(/appears here|on its way|shortly|as soon as/i);
     }
   });
 });
