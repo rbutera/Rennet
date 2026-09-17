@@ -100,6 +100,11 @@ change archives.
 2. **Bundle delivery** into the distro's native filesystem, copied once per
    version (`~/.rennet/server/<version>/`), never run back over 9P
    (`ensureWslBundleDelivered` in `packages/core/src/wsl-bundle.ts`).
+   The Windows package includes the Linux chat runtime under the server directory's
+   `vendor/t3code/`, so the same delivery copies it into WSL. The release's Linux job
+   builds that runtime with Linux native dependencies; the Windows job downloads it
+   into `apps/desktop/wsl-chat/` before packaging. Delivery checks the chat entry along
+   with the daemon and native helpers before marking a version complete.
 3. **Lifecycle** over `wsl.exe` (`packages/server/src/wsl-daemon.ts`): detached
    spawn, health polled on the port (not the claim file over 9P), version-skew
    restart (stop the old daemon by pid, wait for it to exit, respawn, and confirm

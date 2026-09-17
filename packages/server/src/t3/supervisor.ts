@@ -199,7 +199,9 @@ export function createT3SidecarSupervisor(
         const detail = error instanceof Error ? error.message : String(error);
         status = { state: "degraded", detail, upstreamCommit, telemetry: "off" };
         warn(`rennet: chat sidecar unavailable: ${detail}`);
-        throw error;
+        throw new Error(
+          "Rennet couldn't start chat. Try again, or restart Rennet if it keeps happening.",
+        );
       })
       .finally(() => {
         inFlight = null;

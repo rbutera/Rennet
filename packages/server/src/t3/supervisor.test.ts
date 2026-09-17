@@ -112,7 +112,7 @@ describe("t3 supervisor: eager start (#849)", () => {
     expect(readSidecarClaim(f.dataDir)).toBeNull();
   }, 60_000);
 
-  it("starts nothing when there is no bundle, and still names the missing bundle on demand", async () => {
+  it("keeps missing-bundle details in diagnostics and returns a Rennet error to callers", async () => {
     const f = fixture();
     const s = supervisor(f, { bundlePath: undefined });
 
@@ -121,8 +121,10 @@ describe("t3 supervisor: eager start (#849)", () => {
     // to have a sidecar, so launch stays silent about it.
     expect(s.status().state).toBe("off");
 
-    // The honest answer is still there for whoever asks — the existing shape #849 keeps.
-    await expect(s.ensure()).rejects.toThrow(/chat sidecar server bundle is not built/);
-    expect(s.status().state).toBe("degraded");
+    await expect(s.ensure()).rejects.toThrow("Rennet couldn't start chat.");
+    expect(s.status()).toMatchObject({
+      state: "degraded",
+      detail: expect.stringContaining("vendor/t3code/apps/server/dist/bin.mjs"),
+    });
   }, 20_000);
 });

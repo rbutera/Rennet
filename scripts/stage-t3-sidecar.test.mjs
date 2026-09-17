@@ -3,7 +3,44 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { stageT3Sidecar } from "./stage-t3-sidecar.mjs";
+import { stageT3Sidecar, stageWslSidecar } from "./stage-t3-sidecar.mjs";
+
+test("Windows delivers the Linux chat runtime inside the WSL server directory", () => {
+  const f = fixture();
+  try {
+    const linux = join(f.root, "linux-chat");
+    const nativeDir = join(f.modules, "node-pty/build/Release");
+    mkdirSync(nativeDir, { recursive: true });
+    writeFileSync(join(nativeDir, "pty.node"), "linux-native-addon");
+    stageT3Sidecar({
+      vendorRoot: f.vendor,
+      nodeModules: f.modules,
+      destination: linux,
+      platform: "linux",
+      arch: "x64",
+    });
+    const serverDir = join(f.root, "server");
+    stageWslSidecar({ source: linux, serverDir });
+    const delivered = join(serverDir, "vendor/t3code");
+    assert.ok(existsSync(join(delivered, "apps/server/dist/bin.mjs")));
+    assert.ok(existsSync(join(delivered, "UPSTREAM.json")));
+    assert.ok(existsSync(join(delivered, "apps/server/node_modules/node-pty/lib/index.js")));
+    assert.equal(
+      readFileSync(
+        join(delivered, "apps/server/node_modules/node-pty/build/Release/pty.node"),
+        "utf8",
+      ),
+      "linux-native-addon",
+    );
+    assert.ok(
+      !existsSync(join(delivered, "apps/server/node_modules/node-pty/prebuilds/win32-x64")),
+    );
+    rmSync(join(linux, "apps/server/dist/bin.mjs"));
+    assert.throws(() => stageWslSidecar({ source: linux, serverDir }), /Linux chat runtime/);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "rennet-stage-t3-"));

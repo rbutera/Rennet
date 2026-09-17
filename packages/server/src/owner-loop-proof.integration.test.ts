@@ -965,7 +965,7 @@ describe("#685 owner loop through a real server", () => {
   // "this caller composed no sidecar seam" — true of the composition, useless to whoever
   // has to fix it. `create-server.ts` wires the seat runtime unconditionally now, so the
   // supervisor's own answer is what the reader gets.
-  it("names the unbuilt sidecar bundle on every lane when no bundle path resolved", async () => {
+  it("reports unavailable chat without exposing the engine path when no bundle resolved", async () => {
     const root = mkdtempSync(join(tmpdir(), "rennet-no-bundle-"));
     const home = join(root, "home");
     const dataDir = join(root, "data");
@@ -1024,8 +1024,9 @@ describe("#685 owner loop through a real server", () => {
     );
     for (const lens of LENS_KINDS) expect(reason, lens).toContain(`${lens}:`);
     expect(reason).toContain("chat sidecar unavailable");
-    // The CAUSE, not the composition: the path the reader has to build.
-    expect(reason).toContain("vendor/t3code/apps/server/dist/bin.mjs");
+    expect(reason).toContain("Rennet couldn't start chat. Try again");
+    expect(reason).not.toContain("vendor/t3code");
+    expect(reason).not.toContain("bin.mjs");
     expect(reason).not.toContain("composed no sidecar seam");
   }, 60_000);
 });

@@ -70,6 +70,20 @@ describe("ensureWslBundleDelivered", () => {
   const rootedAddon = `${targetDir}/native/linux-x64/rennet-rooted-landing.node`;
   const exclusiveMove = `${targetDir}/native/linux-x64/rennet-exclusive-move`;
   const completionMarker = `${targetDir}/.rennet-bundle-complete`;
+  const chatBundle = `${targetDir}/vendor/t3code/apps/server/dist/bin.mjs`;
+
+  it("repairs a marked-complete daemon payload that is missing chat", async () => {
+    let copied = false;
+    const run = async (command: LocusCommand): Promise<WslRunResult> => {
+      const [, , , program, ...args] = command.args;
+      if (program === "test" && args[1] === chatBundle) return { stdout: "", code: copied ? 0 : 1 };
+      if (program === "wslpath") return { stdout: "/mnt/c/Rennet/server/index.cjs", code: 0 };
+      if (program === "cp") copied = true;
+      return { stdout: "", code: 0 };
+    };
+    await ensureWslBundleDelivered(delivery, run);
+    expect(copied).toBe(true);
+  });
 
   /** A fake runner: scripted results by index; THROWS on any unscripted call (mutation-sensitive). */
   function recorder(results: WslRunResult[]) {
@@ -92,6 +106,7 @@ describe("ensureWslBundleDelivered", () => {
       { stdout: "", code: 0 }, // entry present
       { stdout: "", code: 0 }, // rooted addon present
       { stdout: "", code: 0 }, // exclusive move helper present
+      { stdout: "", code: 0 }, // chat bundle present
       { stdout: "", code: 0 }, // completion marker present
     ]);
     const result = await ensureWslBundleDelivered(delivery, run);
@@ -101,6 +116,7 @@ describe("ensureWslBundleDelivered", () => {
       ["-d", "Ubuntu", "-e", "test", "-f", entry],
       ["-d", "Ubuntu", "-e", "test", "-f", rootedAddon],
       ["-d", "Ubuntu", "-e", "test", "-x", exclusiveMove],
+      ["-d", "Ubuntu", "-e", "test", "-f", chatBundle],
       ["-d", "Ubuntu", "-e", "test", "-f", completionMarker],
     ]);
   });
@@ -116,6 +132,7 @@ describe("ensureWslBundleDelivered", () => {
       { stdout: "", code: 0 }, // verify test -f entry
       { stdout: "", code: 0 }, // verify rooted addon
       { stdout: "", code: 0 }, // verify executable exclusive move helper
+      { stdout: "", code: 0 }, // chat bundle present
       { stdout: "", code: 0 }, // touch completion marker
       { stdout: "", code: 0 }, // verify completion marker
     ]);
@@ -132,6 +149,7 @@ describe("ensureWslBundleDelivered", () => {
       ["-d", "Ubuntu", "-e", "test", "-f", entry],
       ["-d", "Ubuntu", "-e", "test", "-f", rootedAddon],
       ["-d", "Ubuntu", "-e", "test", "-x", exclusiveMove],
+      ["-d", "Ubuntu", "-e", "test", "-f", chatBundle],
       ["-d", "Ubuntu", "-e", "touch", completionMarker],
       ["-d", "Ubuntu", "-e", "test", "-f", completionMarker],
     ]);
@@ -150,6 +168,7 @@ describe("ensureWslBundleDelivered", () => {
       { stdout: "", code: 0 }, // entry verified
       { stdout: "", code: 0 }, // rooted addon verified
       { stdout: "", code: 0 }, // executable exclusive move helper verified
+      { stdout: "", code: 0 }, // chat bundle present
       { stdout: "", code: 0 }, // completion marker created
       { stdout: "", code: 0 }, // completion marker verified
     ]);
@@ -166,6 +185,7 @@ describe("ensureWslBundleDelivered", () => {
       ["test", "-f", entry],
       ["test", "-f", rootedAddon],
       ["test", "-x", exclusiveMove],
+      ["test", "-f", chatBundle],
       ["touch", completionMarker],
       ["test", "-f", completionMarker],
     ]);
@@ -184,6 +204,7 @@ describe("ensureWslBundleDelivered", () => {
       { stdout: "", code: 0 }, // entry verified
       { stdout: "", code: 0 }, // rooted addon verified
       { stdout: "", code: 0 }, // executable exclusive move helper verified
+      { stdout: "", code: 0 }, // chat bundle present
       { stdout: "", code: 0 }, // completion marker created
       { stdout: "", code: 0 }, // completion marker verified
     ]);
@@ -197,6 +218,7 @@ describe("ensureWslBundleDelivered", () => {
       { stdout: "", code: 0 }, // entry present
       { stdout: "", code: 0 }, // rooted addon present
       { stdout: "", code: 0 }, // executable helper present
+      { stdout: "", code: 0 }, // chat bundle present
       { stdout: "", code: 1 }, // completion marker absent
       { stdout: "", code: 0 }, // remove stale marker path
       { stdout: "", code: 0 }, // mkdir
@@ -206,6 +228,7 @@ describe("ensureWslBundleDelivered", () => {
       { stdout: "", code: 0 }, // entry verified
       { stdout: "", code: 0 }, // rooted addon verified
       { stdout: "", code: 0 }, // executable helper verified
+      { stdout: "", code: 0 }, // chat bundle present
       { stdout: "", code: 0 }, // completion marker created
       { stdout: "", code: 0 }, // completion marker verified
     ]);
@@ -215,6 +238,7 @@ describe("ensureWslBundleDelivered", () => {
       ["test", "-f", entry],
       ["test", "-f", rootedAddon],
       ["test", "-x", exclusiveMove],
+      ["test", "-f", chatBundle],
       ["test", "-f", completionMarker],
       ["rm", "-f", completionMarker],
       ["mkdir", "-p", targetDir],
@@ -224,6 +248,7 @@ describe("ensureWslBundleDelivered", () => {
       ["test", "-f", entry],
       ["test", "-f", rootedAddon],
       ["test", "-x", exclusiveMove],
+      ["test", "-f", chatBundle],
       ["touch", completionMarker],
       ["test", "-f", completionMarker],
     ]);
@@ -373,6 +398,7 @@ describe("ensureWslBundleDelivered", () => {
       { stdout: "", code: 0 }, // entry verified
       { stdout: "", code: 0 }, // rooted addon verified
       { stdout: "", code: 0 }, // executable helper verified
+      { stdout: "", code: 0 }, // chat bundle present
       { stdout: "", code: 0 }, // completion marker created
       { stdout: "", code: 1 }, // marker verification fails
       { stdout: "", code: 0 }, // failed marker removed
