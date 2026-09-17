@@ -122,6 +122,16 @@
  * `.bg-accent` rule reads var(--accent) in this build, so the re-binding is scoped. */
 [data-slot="t3-native-chat"],
 [data-slot="t3-thread-view"] {
+  --background: transparent;
+  --app-chrome-background: var(--app-glass-fill, var(--rn-surface));
+  --card: var(--app-glass-fill, var(--rn-surface));
+  --surface-raised: var(--app-glass-fill, var(--rn-surface));
+  --toolbar-background: var(--app-glass-fill, var(--rn-surface));
+  --message-surface: var(--app-glass-fill, var(--rn-surface));
+  --glass-opacity: 100%;
+  --glass-blur: 24px;
+  --glass-saturation: 1.35;
+  --chat-composer-glass-surface: var(--app-glass-fill, var(--rn-surface));
   --accent: var(--rn-raised);
   --accent-foreground: var(--rn-ink);
   --contrast-accent-foreground: var(--rn-ink);
@@ -996,4 +1006,15 @@
 .chat-markdown .chat-markdown-table-container[data-expanded="true"] td {
   max-width: 24rem;
   overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  [data-slot="t3-native-chat"],
+  [data-slot="t3-thread-view"] {
+    --glass-blur: 0px;
+    --surface-raised: var(--rn-surface);
+    --card: var(--rn-surface);
+    --message-surface: var(--rn-surface);
+    --toolbar-background: var(--rn-surface);
+  }
 }

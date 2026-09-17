@@ -104,6 +104,8 @@
   --rn-syn-prop: #6e5a2f;
   --rn-syn-var: #8a5a1e;
   /* the brand mark's single ink (paper on dark, ink on light) */
+  --rn-brand-start: #f2b032;
+  --rn-brand-end: #d42c3b;
   --rn-mark-ink: #0b0d10;
   /* type — ONE interface voice plus code (root DESIGN.md §Typography).
    *
@@ -184,6 +186,8 @@
   --rn-syn-fn: #c8b6e8;
   --rn-syn-prop: #cbb98f;
   --rn-syn-var: #d9a77a;
+  --rn-brand-start: #f2b032;
+  --rn-brand-end: #d42c3b;
   --rn-mark-ink: #f7f4ee;
   --rn-shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.35);
   --rn-scrim: #0a0a0a;
@@ -243,6 +247,8 @@
     --rn-syn-fn: #c8b6e8;
     --rn-syn-prop: #cbb98f;
     --rn-syn-var: #d9a77a;
+    --rn-brand-start: #f2b032;
+    --rn-brand-end: #d42c3b;
     --rn-mark-ink: #f7f4ee;
     --rn-shadow-overlay: 0 12px 40px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.35);
     --rn-scrim: #0a0a0a;

@@ -10,6 +10,8 @@
  */
 
 [data-rn-theme="one-dark-pro"] {
+  --rn-brand-start: #986801;
+  --rn-brand-end: #c18401;
   /* ground — One Light */
   --rn-canvas: #fafafa;
   --rn-surface: #ffffff;
@@ -79,6 +81,8 @@
 }
 
 [data-rn-theme="one-dark-pro"][data-scheme="dark"] {
+  --rn-brand-start: #d19a66;
+  --rn-brand-end: #e06c75;
   /* ground — One Dark Pro (canvas = sidebar, surface = editor bg, so the ramp
      stays dark enough for the greys to clear AA) */
   --rn-canvas: #21252b;

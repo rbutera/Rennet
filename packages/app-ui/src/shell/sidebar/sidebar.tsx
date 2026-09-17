@@ -72,6 +72,11 @@ import { ProjectMark } from "../../settings/assets/project-mark";
 import { projectMarkFor, useSettingsProjection } from "../../settings/data/projections";
 import { useRennetStore } from "../../store";
 import { CornerSlot, useMacTrafficLights } from "../corner-slot";
+import {
+  HistoryConnection,
+  useHistoryConnections,
+  useHistoryIsActive,
+} from "../history-connections";
 import { useReviewActivityState } from "../review-activity-state";
 import {
   type SidebarProject,
@@ -308,7 +313,10 @@ function SessionRow({
 }) {
   const activityDescriptionId = useId();
   const [activityOpen, setActivityOpen] = useState(false);
-  const activity = useReviewActivityState((state) => state.bySession[session.id]);
+  const activeHost = useHistoryIsActive();
+  const activity = useReviewActivityState((state) =>
+    activeHost ? state.bySession[session.id] : undefined,
+  );
   const activityLabel =
     activity?.kind === "running"
       ? "Reviewing the change"
@@ -399,7 +407,7 @@ function SessionRow({
               >
                 {session.title}
               </span>
-              <SidebarReviewActivity sessionId={session.id} active={active} />
+              {activeHost ? <SidebarReviewActivity sessionId={session.id} active={active} /> : null}
               {session.targetState === "reviewed" ? (
                 <Icon
                   icon={Check}
@@ -513,16 +521,45 @@ function SidebarActions() {
 
 /** The tree — Pinned (only when non-empty), then host groups with their projects and
  *  sessions. Self-wiring: tree, folds, projection mutations, active-route highlight. */
-function SidebarTree() {
+function SidebarTree({
+  targetId,
+  targetLabel,
+  active = true,
+  activate,
+}: {
+  readonly targetId?: string;
+  readonly targetLabel?: string;
+  readonly active?: boolean;
+  readonly activate?: () => void;
+}) {
   const folds = useRennetStore((s) => s.ui.sidebarFolds);
   const setFolded = useRennetStore((s) => s.uiActions.setFolded);
   const setChatOpen = useRennetStore((s) => s.uiActions.setChatOpen);
-  const [, navigate] = useLocation();
-  const { hosts } = useSidebarTree();
+  const [, setLocation] = useLocation();
+  function navigate(path: string) {
+    activate?.();
+    setLocation(path);
+  }
+  const { hosts, cached } = useSidebarTree(targetId);
+  const refreshSessions = useRefreshCommand("session.list");
+  const refreshProjects = useRefreshCommand("projects.list");
+  useEffect(() => {
+    if (active) return;
+    const timer = setInterval(() => {
+      if (document.hidden) return;
+      refreshSessions();
+      refreshProjects();
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [active, refreshSessions, refreshProjects]);
   const projection = useSidebarSessionProjection();
   const settings = useSettingsProjection();
   const removeProject = useRemoveProject();
-  const { activeSlug, activeProjectId, standingIn } = useActiveRoute();
+  const route = useActiveRoute();
+  const activeSlug = active ? route.activeSlug : null;
+  const activeProjectId = active ? route.activeProjectId : null;
+  const standingIn = (id: string) => active && route.standingIn(id);
+  const foldKey = (id: string) => (targetId ? `${targetId}:${id}` : id);
   const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
   const [projectNameDraft, setProjectNameDraft] = useState("");
   const [projectRenamePending, setProjectRenamePending] = useState(false);
@@ -542,8 +579,9 @@ function SidebarTree() {
   // the active project CHANGING, so this fires on arrival and never again — folding
   // the project you are already in stays folded, because the effect does not re-run.
   useEffect(() => {
-    if (activeProjectId) setFolded(activeProjectId, false);
-  }, [activeProjectId, setFolded]);
+    if (activeProjectId)
+      setFolded(targetId ? `${targetId}:${activeProjectId}` : activeProjectId, false);
+  }, [activeProjectId, targetId, setFolded]);
 
   const projects = hosts.flatMap((host) => host.projects);
   const pinned = projects.flatMap((project) =>
@@ -611,7 +649,10 @@ function SidebarTree() {
   }
 
   return (
-    <div className="mt-5 flex min-h-0 flex-1 flex-col overflow-y-auto px-2">
+    <div className="flex shrink-0 flex-col px-2">
+      {cached ? (
+        <p className="px-2 pb-1 text-2xs text-ink-faint">Saved history · reconnecting</p>
+      ) : null}
       <div className="flex flex-col gap-0.5 pb-2">
         {pinned.length > 0 ? (
           <div className="flex flex-col">
@@ -638,11 +679,13 @@ function SidebarTree() {
           <div key={host.id} className="flex flex-col pt-5 first:pt-0">
             <div className="flex h-6 items-center gap-1.5 px-2">
               <Icon
-                icon={host.kind === "local" ? Monitor : Server}
+                icon={
+                  host.kind === "local" && (!targetId || targetId === "local") ? Monitor : Server
+                }
                 className="size-3 shrink-0 text-muted-foreground/60"
               />
               <span className="truncate text-2xs font-medium uppercase tracking-wide text-muted-foreground/70">
-                {host.label}
+                {host.id === "local" && targetId && targetId !== "local" ? targetLabel : host.label}
               </span>
             </div>
 
@@ -654,7 +697,7 @@ function SidebarTree() {
               // ABSENT fold entry is now "untouched", and the default answers it; once
               // the reviewer has toggled a project, their answer wins in both directions
               // — including keeping the active project's own list shut.
-              const folded = folds[project.id];
+              const folded = folds[foldKey(project.id)];
               const expanded = folded === undefined ? project.id === activeProjectId : !folded;
               const activeCount = project.sessions.filter((s) => !s.archived).length;
               const renaming = renamingProjectId === project.id;
@@ -712,7 +755,7 @@ function SidebarTree() {
                     ) : (
                       <button
                         type="button"
-                        onClick={() => setFolded(project.id, expanded)}
+                        onClick={() => setFolded(foldKey(project.id), expanded)}
                         aria-expanded={expanded}
                         className="flex h-7 w-full items-center gap-1.5 rounded-chip px-2 text-left text-13 text-foreground/90 transition-colors hover:bg-raised"
                       >
@@ -861,7 +904,43 @@ function SidebarFooter() {
   );
 }
 
+function SidebarHistory() {
+  const connections = useHistoryConnections();
+  return (
+    <div className="mt-5 flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto">
+      {connections ? (
+        connections.targets.map((target) => {
+          const active = target.id === connections.activeId;
+          const tree = (
+            <SidebarTree
+              key={target.id}
+              targetId={target.id}
+              targetLabel={target.label}
+              active={active}
+              activate={() => connections.activate(target.id)}
+            />
+          );
+          return active ? (
+            <div key={target.id}>{tree}</div>
+          ) : (
+            <HistoryConnection
+              key={target.id}
+              target={target}
+              createConnection={connections.createConnection}
+            >
+              {tree}
+            </HistoryConnection>
+          );
+        })
+      ) : (
+        <SidebarTree />
+      )}
+    </div>
+  );
+}
+
 export function Sidebar() {
+  const mac = useMacTrafficLights();
   const { activeSlug } = useActiveRoute();
   const activeActivity = useReviewActivityState((s) =>
     activeSlug ? s.bySession[activeSlug] : undefined,
@@ -932,41 +1011,27 @@ export function Sidebar() {
     >
       {open ? (
         <div className="flex h-full min-h-0 w-64 flex-col">
-          {/* Header — state 1's corner slot: lights → toggle (C20). The 81px light
-              reserve, the `app-region-drag` utility and the collapse toggle all live
-              in `CornerSlot`; the identity does NOT, any more. A 40px strip that also
-              carries the traffic-light reserve leaves the mark nowhere to grow, so the
-              lockup moved to its own row below and this strip is the titlebar alone.
-              The budget it has to clear is now only its own: 81 + 12 + 24 = 117 ≤ 256. */}
-          <CornerSlot owner="sidebar" />
-          {/* The lockup row — the placement Rai chose from
-              `spikes/sidebar-lockup-prototypes` ("Own row", with the stacked header's
-              proportions). 56px tall, its left edge on the 16px content padding the
-              actions' icon column sits on, BELOW the drag strip, so it is not titlebar
-              and does not drag the window.
-
-              The mark is the live sphere at 44px and the wordmark is drawn at HALF that
-              height — 22px, ~94px wide on the authored 480.168:112 window. The 2:1 is
-              the STACKED HEADER prototype's proportion (52 over 26.12), which is what
-              Rai picked; it is not the artwork's 126:112, which at a 44px mark would
-              give a 39px wordmark ~168px wide and would also fit (248 of 256) — the
-              choice is the proportion, not the fit. The gap IS authored:
-              44 × 24/126 ≈ 8.4px, taken as `gap-2`.
-
-              Both halves are decorative and the name rides the wrapper, so the assembly
-              reads as one image called "Rennet" however the halves are drawn. Row
-              occupies 16 + 44 + 8 + 94.3 + 12 = 174.3 of 256. */}
+          {mac ? <CornerSlot owner="sidebar" /> : null}
           <div
             data-slot="sidebar-lockup"
-            role="img"
-            aria-label="Rennet"
             className="flex h-14 shrink-0 items-center gap-2 pr-3 pl-4"
           >
-            <LiquidSphere size={44} state={working ? "working" : "resting"} className="shrink-0" />
-            <RennetLockup part="wordmark" size={22} className="w-auto" />
+            <span role="img" aria-label="Rennet" className="flex items-center gap-2">
+              <LiquidSphere
+                size={44}
+                state={working ? "working" : "resting"}
+                className="shrink-0"
+              />
+              <RennetLockup part="wordmark" size={22} className="w-auto" />
+            </span>
+            {!mac ? (
+              <div className="ml-auto">
+                <CornerSlot owner="sidebar" />
+              </div>
+            ) : null}
           </div>
           <SidebarActions />
-          <SidebarTree />
+          <SidebarHistory />
           <SidebarFooter />
         </div>
       ) : null}

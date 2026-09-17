@@ -7,6 +7,10 @@ Rennet runs on the machine that holds the repositories. A paired phone, laptop,
 or browser can connect to that daemon over a private network. Rennet does not
 operate a hosted relay or backend for these connections.
 
+The sidebar keeps history from this machine and every saved remote together.
+Opening a session connects to its owning machine. While a remote reconnects, its
+last saved history stays visible with a reconnecting label.
+
 ## Connection classes
 
 The daemon classifies a connection during its initial hello:

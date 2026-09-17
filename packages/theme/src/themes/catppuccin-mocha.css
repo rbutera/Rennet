@@ -10,6 +10,8 @@
  */
 
 [data-rn-theme="catppuccin-mocha"] {
+  --rn-brand-start: #fe640b;
+  --rn-brand-end: #d20f39;
   /* ground — Latte */
   --rn-canvas: #e6e9ef;
   --rn-surface: #eff1f5;
@@ -79,6 +81,8 @@
 }
 
 [data-rn-theme="catppuccin-mocha"][data-scheme="dark"] {
+  --rn-brand-start: #fab387;
+  --rn-brand-end: #f38ba8;
   /* ground — Mocha (mantle < base < surface0 so faint greys clear AA) */
   --rn-canvas: #181825;
   --rn-surface: #1e1e2e;

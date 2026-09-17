@@ -1,5 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
-import { resolveDaemonTarget, toDistroPath, type WslConnectDeps, wslDistroOf } from "./wsl-connect";
+import {
+  resolveDaemonTarget,
+  toDistroPath,
+  type WslConnectDeps,
+  wslConnectionUrl,
+  wslDistroOf,
+} from "./wsl-connect";
+
+it("resolves a fresh WSL port on each connection instead of reusing the saved port", async () => {
+  const resolve = vi.fn().mockResolvedValueOnce(51234).mockResolvedValueOnce(51235);
+  const { deps: d } = deps(resolve);
+  const target = { id: "wsl:Ubuntu", label: "Ubuntu", host: "127.0.0.1", port: 12345 };
+  expect(await wslConnectionUrl(target, d)).toBe("ws://127.0.0.1:51234");
+  expect(await wslConnectionUrl(target, d)).toBe("ws://127.0.0.1:51235");
+  expect(resolve).toHaveBeenCalledWith("\\\\wsl.localhost\\Ubuntu");
+});
 
 /** A deps double: a resolver spy + a captured log, so each test asserts the decision AND its trace. */
 function deps(resolve: WslConnectDeps["resolveDaemonForPath"]): {

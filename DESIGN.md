@@ -92,22 +92,16 @@ This file governs the product UI and documentation. The marketing site has a sep
 
 ## Material
 
-The app backdrop combines soft accent and model-color radial gradients over
-`--rn-canvas`. It follows the selected theme and light/dark mode. Transparent
-workspace wrappers let this common backdrop continue behind the working panes.
+The app backdrop blends the theme accent and a warm brand color in OKLab over
+`--rn-canvas`, with a subtle static dithering texture to break up display banding.
+The gradient continues behind the sidebar, chat, and workspace in both schemes.
 
-The expanded sidebar, chat dock, non-floating session bar, and settings header
-and navigation use 76% theme surface with an 18px blur and a faint ink hairline.
-Non-bare settings sections, the New Chat branch list, and board sections share
-that fill through `data-material="glass"`, with 18px blur and a thin inset highlight.
-Dialogs, sheets, popovers, and menus use 88% overlay with 24px blur and a soft
-shadow. Welcome panels use their own 78% surface treatment. These are CSS glass
-surfaces, not operating-system vibrancy. Diff and code retain dedicated reading
-palettes rather than inheriting the decorative backdrop.
-
-Reduced-transparency preference makes the shared navigation fill and overlay
-fills opaque. The particle backdrop belongs to welcome only; extending glass
-does not add decorative particles to review workspaces.
+Navigation, panels, and cards use 42% theme surface (38% in light mode), 24px
+backdrop blur, saturation, and a directional highlight. Dialogs and menus use
+72% overlay with 28px blur for reading contrast. These are CSS glass surfaces,
+not operating-system vibrancy. Code and diffs retain dedicated reading palettes.
+Reduced transparency restores opaque surfaces and removes backdrop filtering.
+Particles remain confined to welcome.
 
 ## Color
 

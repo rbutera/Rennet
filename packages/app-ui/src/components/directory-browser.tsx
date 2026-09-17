@@ -1,6 +1,6 @@
 import type { FsEntry, RennetBridge } from "@rennet/protocol";
 import { Button, cn, Input } from "@rennet/ui";
-import { ArrowUp, Eye, EyeOff, Folder, FolderOpen, GitBranch } from "lucide-react";
+import { ArrowUp, Eye, EyeOff, Folder, FolderOpen, GitBranch, LoaderCircle } from "lucide-react";
 import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { messageFrom } from "../lib/message-from";
 import { Icon } from "./icon";
@@ -266,10 +266,22 @@ export function DirectoryBrowser({
         </p>
       ) : null}
 
+      {!loaded && !error ? (
+        <div
+          role="status"
+          className="flex min-h-32 items-center justify-center gap-2 rounded-md border border-border text-sm text-ink-soft"
+        >
+          <Icon icon={LoaderCircle} className="size-4 motion-safe:animate-spin" />
+          Loading folders…
+        </div>
+      ) : null}
       <div
         role="listbox"
         aria-label="Directories"
-        className="directory-browser-list flex flex-col max-h-[min(45dvh,24rem)] min-h-32 overflow-y-auto rounded-md border border-border p-1"
+        className={cn(
+          "directory-browser-list flex flex-col max-h-[min(45dvh,24rem)] min-h-32 overflow-y-auto rounded-md border border-border p-1",
+          !loaded && !error && "hidden",
+        )}
       >
         {showEmpty ? (
           <div className="directory-browser-empty px-3 py-6 text-center text-sm text-ink-faint">

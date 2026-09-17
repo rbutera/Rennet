@@ -7,6 +7,7 @@ import {
   type ConnectionCapabilities,
   ConnectionCapabilitiesProvider,
 } from "../shell/connection-capabilities";
+import { HistoryConnectionsProvider } from "../shell/history-connections";
 import type { SourceOption } from "./source-switcher";
 
 // The connections surface (issue #381, design D3). ONE component both shells mount —
@@ -219,7 +220,7 @@ function endpointKey(target: Pick<ConnectionTarget, "host" | "port">): string | 
   }
 }
 
-/** A saved daemon must carry a token — an untokened remote is useless (it could only pair). */
+/** WSL runs locally without a pairing token; network remotes retain their paired identity. */
 function isStoredTarget(value: unknown): value is ConnectionTarget {
   if (!value || typeof value !== "object") return false;
   const t = value as Record<string, unknown>;
@@ -227,7 +228,7 @@ function isStoredTarget(value: unknown): value is ConnectionTarget {
     typeof t.id === "string" &&
     typeof t.label === "string" &&
     typeof t.host === "string" &&
-    typeof t.deviceToken === "string" &&
+    (typeof t.deviceToken === "string" || (t.id.startsWith("wsl:") && t.host === "127.0.0.1")) &&
     (t.port === undefined || typeof t.port === "number") &&
     endpointKey(t as Pick<ConnectionTarget, "host" | "port">) !== null
   );
@@ -407,7 +408,20 @@ export function ConnectionHost({
       ? { ...defaultTarget, deviceToken: matchingSaved.deviceToken }
       : defaultTarget;
   }, [defaultTarget, saved]);
-  const allTargets = useMemo(() => [hydratedDefault, ...saved], [hydratedDefault, saved]);
+  const allTargets = useMemo(
+    () => [
+      hydratedDefault,
+      ...saved,
+      ...wslDistros
+        .filter((distro) => !saved.some((target) => target.id === `wsl:${distro}`))
+        .map((distro) => ({
+          id: `wsl:${distro}`,
+          label: distro,
+          host: "127.0.0.1",
+        })),
+    ],
+    [hydratedDefault, saved, wslDistros],
+  );
   const activeTarget = allTargets.find((target) => target.id === activeId) ?? hydratedDefault;
   // The `ProjectSource` of the daemon currently attached — threaded to the front door so a
   // FRESH add defaults its source (and the SourceSwitcher's selection) to it, not "local".
@@ -415,6 +429,7 @@ export function ConnectionHost({
     if (activeId === defaultTarget.id) return "local";
     const mapped = sourceByTargetId.current.get(activeId);
     if (mapped) return mapped;
+    if (activeId.startsWith("wsl:")) return `wsl:${activeId.slice("wsl:".length)}`;
     if (activeId.startsWith("daemon:")) return `remote:${activeId.slice("daemon:".length)}`;
     return "local";
   }, [activeId, defaultTarget.id]);
@@ -480,10 +495,16 @@ export function ConnectionHost({
 
   const switchTo = useCallback(
     (id: string) => {
+      const target = allTargets.find((candidate) => candidate.id === id);
+      const next =
+        target && id !== defaultTarget.id && !saved.some((candidate) => candidate.id === id)
+          ? [...saved, target]
+          : saved;
+      if (next !== saved) setSaved(next);
       setActiveId(id);
-      persistDaemons(key, saved, id);
+      persistDaemons(key, next, id);
     },
-    [key, saved],
+    [key, saved, allTargets, defaultTarget.id],
   );
 
   // Dial a TEMPORARY tokenless bridge at (host, port), exchange the one-time code ON it (the
@@ -597,14 +618,19 @@ export function ConnectionHost({
   // `remote:<deviceId>`, which `connectSource` maps back to the saved target.
   const sources = useMemo<SourceOption[]>(() => {
     const list: SourceOption[] = [{ id: "local", label: "Local" }];
-    for (const distro of wslDistros) list.push({ id: `wsl:${distro}`, label: `WSL: ${distro}` });
-    for (const target of saved) {
+    for (const target of allTargets) {
+      if (target.id.startsWith("wsl:")) {
+        list.push({
+          id: `wsl:${target.id.slice("wsl:".length)}`,
+          label: `WSL: ${target.id.slice("wsl:".length)}`,
+        });
+      }
       if (target.id.startsWith("daemon:")) {
         list.push({ id: `remote:${target.id.slice("daemon:".length)}`, label: target.label });
       }
     }
     return list;
-  }, [wslDistros, saved]);
+  }, [allTargets]);
 
   // Attach the daemon a chosen source lives on (source-aware project selection). Non-local sources
   // remount the app onto that daemon and stash a pending source-browse so the fresh mount restores
@@ -707,7 +733,16 @@ export function ConnectionHost({
 
   return bridge ? (
     <ConnectionCapabilitiesProvider value={capabilities}>
-      <RennetRouterApp key={activeId} bridge={bridge} history={history} />
+      <HistoryConnectionsProvider
+        value={{
+          targets: allTargets,
+          activeId,
+          createConnection: makeConnection,
+          activate: switchTo,
+        }}
+      >
+        <RennetRouterApp key={activeId} bridge={bridge} history={history} />
+      </HistoryConnectionsProvider>
       {daemonBanner}
       {/* One app-root toast channel (issue: transient feedback). The manager is a
           module singleton, so any `toast(...)` in the tree routes here; mounted

@@ -12,6 +12,16 @@ import type { WslConnectLogEntry } from "../preload/index";
 
 const WSL_UNC_RE = /^\\\\wsl(?:\.localhost|\$)\\([^\\]+)(?:\\(.*))?$/i;
 
+export async function wslConnectionUrl(
+  target: ConnectionTarget,
+  deps: WslConnectDeps,
+): Promise<string> {
+  const distro = target.id.slice("wsl:".length);
+  const port = await deps.resolveDaemonForPath(`\\\\wsl.localhost\\${distro}`);
+  if (port == null) throw new Error(`Could not connect to ${target.label}. Try again.`);
+  return `ws://127.0.0.1:${port}`;
+}
+
 /** The distro a `\\wsl.localhost\<distro>\…` / `\\wsl$\…` path names, or null for a host path. */
 export function wslDistroOf(path: string): string | null {
   return WSL_UNC_RE.exec(path)?.[1] ?? null;

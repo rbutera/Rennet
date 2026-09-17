@@ -12,7 +12,7 @@ import {
   PopoverTrigger,
   Separator,
 } from "@rennet/ui";
-import { Check, ChevronDown, Monitor, Plus, Server } from "lucide-react";
+import { Check, ChevronDown, LoaderCircle, Monitor, Plus, Server } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DirectoryBrowser } from "../components/directory-browser";
@@ -106,6 +106,9 @@ export function AddProjectFlow({
   const [sourceOpen, setSourceOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [connectionState, setConnectionState] = useState<"ready" | "connecting" | "failed">(
+    "ready",
+  );
 
   const choose = useMutation("repository.choose");
   const discover = useMutation("project.discover");
@@ -132,27 +135,38 @@ export function AddProjectFlow({
 
   async function selectSource(next: ProjectSource): Promise<void> {
     setSourceOpen(false);
-    if (next === source) return;
+    if (connectionState === "connecting" || (next === source && connectionState === "ready"))
+      return;
+    setSource(next);
+    setSelectedPath(null);
+    setError(undefined);
     // The daemon for this source is already attached (Local, or the current one): browse it
     // inline — the DirectoryBrowser's `reloadKey` is the source, so it remounts its listing.
     if (next === activeSource) {
       setSource(next);
       setSelectedPath(null);
       setError(undefined);
+      setConnectionState("ready");
       return;
     }
     // A different daemon: attach it. `connectSource` REMOUNTS the whole app onto that daemon;
     // reopen Add Project preselected to `next` (through the store, which survives the remount)
     // so the freshly-mounted browser lists ITS filesystem — the same hop Browse Its Projects uses.
-    const result = await connectSource(next, "repo");
-    if (result.switched) {
-      openAddProjectForSource(next);
-      return; // this mount is tearing down
+    setConnectionState("connecting");
+    try {
+      const result = await connectSource(next, "repo");
+      if (result.switched) {
+        openAddProjectForSource(next);
+        return;
+      }
+      if (!alive.current) return;
+      setError(result.error);
+      setConnectionState(result.error ? "failed" : "ready");
+    } catch (reason) {
+      if (!alive.current) return;
+      setError(messageFrom(reason));
+      setConnectionState("failed");
     }
-    // No switch (already attached under another id, or an attach error): browse inline.
-    setSource(next);
-    setSelectedPath(null);
-    setError(result.error);
   }
 
   async function add(): Promise<void> {
@@ -219,7 +233,13 @@ export function AddProjectFlow({
       <Popover open={sourceOpen} onOpenChange={setSourceOpen}>
         <PopoverTrigger
           aria-label={`Source: ${current?.label ?? "none"}`}
-          render={<Button variant="outline" className="w-full justify-between" />}
+          render={
+            <Button
+              variant="outline"
+              className="w-full justify-between"
+              disabled={connectionState === "connecting"}
+            />
+          }
         >
           <span className="flex min-w-0 items-center gap-2">
             <Icon
@@ -267,17 +287,48 @@ export function AddProjectFlow({
         </PopoverContent>
       </Popover>
 
-      <DirectoryBrowser
-        bridge={bridge}
-        reloadKey={source}
-        onPathChange={setSelectedPath}
-        onPathInvalid={() => setSelectedPath(null)}
-        // The host's native dialog picks HOST paths, so it is only a valid shortcut while the
-        // browser lists this machine; a WSL distro or a paired remote keeps the in-app browser
-        // alone. The desktop merges the preload's picker onto every target's bridge, which is
-        // why the gate is the source, not the bridge.
-        pickDirectory={sourceIsLocal(source) ? bridge.pickDirectory : undefined}
-      />
+      {connectionState === "connecting" ? (
+        <div
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+          className="min-h-64 rounded-control border border-line p-4"
+        >
+          <div className="flex items-center gap-2 text-sm text-ink-soft">
+            <Icon icon={LoaderCircle} className="size-4 motion-safe:animate-spin" />
+            Connecting to {current?.label}…
+          </div>
+          <p className="mt-2 text-xs text-ink-faint">
+            Starting the connection and loading folders.
+          </p>
+          <div aria-hidden="true" className="mt-6 grid gap-4 motion-safe:animate-pulse">
+            {["w-3/5", "w-4/5", "w-2/5", "w-1/2"].map((width) => (
+              <div key={width} className="flex items-center gap-3">
+                <div className="size-4 rounded bg-raised" />
+                <div className={`h-3 rounded bg-raised ${width}`} />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : connectionState === "failed" ? (
+        <div className="flex min-h-64 items-center justify-center rounded-control border border-line">
+          <Button variant="outline" onClick={() => void selectSource(source)}>
+            Try again
+          </Button>
+        </div>
+      ) : (
+        <DirectoryBrowser
+          bridge={bridge}
+          reloadKey={source}
+          onPathChange={setSelectedPath}
+          onPathInvalid={() => setSelectedPath(null)}
+          // The host's native dialog picks HOST paths, so it is only a valid shortcut while the
+          // browser lists this machine; a WSL distro or a paired remote keeps the in-app browser
+          // alone. The desktop merges the preload's picker onto every target's bridge, which is
+          // why the gate is the source, not the bridge.
+          pickDirectory={sourceIsLocal(source) ? bridge.pickDirectory : undefined}
+        />
+      )}
 
       {error ? (
         <p

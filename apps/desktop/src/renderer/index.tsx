@@ -11,7 +11,7 @@ import type { RennetBridge } from "@rennet/protocol";
 import { T3NativeChat, T3ThreadView } from "@rennet/t3-chat";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { resolveDaemonTarget as resolveWslDaemonTarget } from "./wsl-connect";
+import { resolveDaemonTarget as resolveWslDaemonTarget, wslConnectionUrl } from "./wsl-connect";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Renderer root is missing");
@@ -104,7 +104,9 @@ function createConnection(target: ConnectionTarget): Connection {
   const isLocal = target.id === DEFAULT_TARGET.id;
   const url = isLocal
     ? localWsUrl
-    : `ws://${target.port ? `${target.host}:${target.port}` : target.host}`;
+    : target.id.startsWith("wsl:")
+      ? () => wslConnectionUrl(target, preload)
+      : `ws://${target.port ? `${target.host}:${target.port}` : target.host}`;
   const supervisor = new ConnectionSupervisor({
     daemonId: target.id,
     tokenStore: targetTokenStore(target),

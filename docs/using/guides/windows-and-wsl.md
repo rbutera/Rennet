@@ -13,6 +13,17 @@ Public signed Windows installers and auto-update are tracked in
 
 ## Choose where commands run
 
+The sidebar loads history from this machine, installed WSL distros, and saved
+remote connections together. Opening a session attaches to the machine that
+owns it. WSL connections survive reload and resolve their current port again
+when reconnecting.
+While a connection is unavailable, previously loaded sessions remain visible as
+**Saved history · reconnecting** and refresh when that machine answers.
+
+In **Add Project**, selecting another source immediately shows its name and a
+loading state while Rennet connects and lists folders. If connecting fails,
+**Try again** retries that source; folders from the previous machine are hidden.
+
 A project uses either the Windows host or a named WSL distro.
 
 - A path such as `C:\dev\repo` selects the host.

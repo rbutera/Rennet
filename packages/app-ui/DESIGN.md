@@ -136,18 +136,17 @@ Two rules follow from past drift:
 
 ## Shared app material
 
-`src/index.css` owns `--app-backdrop`: accent at 14% and model at 7% form
-soft radial gradients over the selected theme’s canvas. The main layout and
-welcome share it; workspace wrappers are transparent. The expanded sidebar,
-chat dock, non-floating session bar, settings header, and settings navigation
-use `--app-glass-fill` (76% theme surface) with 18px blur. Non-bare settings
-section bodies, the New Chat branch list, and board sections opt into the same
-fill through `data-material="glass"`, with 18px blur and a thin inset highlight.
-The outlet adds a
-24% surface wash. Dialogs, sheets, popovers, and menus use 88% overlay and 24px
-blur. Reduced transparency makes the shared glass fill and overlays opaque.
-Diff/code colors remain their dedicated reading palette. Particle animation
-remains confined to welcome.
+`src/index.css` owns the shared OKLab gradient and static dithering texture.
+The backdrop stays continuous through sidebar, chat, and workspace in both schemes.
+`--app-glass-fill` is 42% theme surface, or 38% in light mode. Navigation and
+`data-material="glass"` panels use it with 24px blur, saturation, and directional
+highlights. Overlays use 72% theme overlay with 28px blur. Reduced transparency
+restores opaque fills and removes blur. Code and diffs retain their reading palette.
+
+Theme packs declare `--rn-brand-start` and `--rn-brand-end` as two warm colors for
+the sphere. Catppuccin Mocha uses peach and red; the default theme retains its
+authored amber, orange, and red. The sidebar lockup shares the top row with the
+collapse control on Windows and Linux; macOS retains its traffic-light row above.
 
 ## Surface rules: the first-run welcome
 

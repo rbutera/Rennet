@@ -94,10 +94,10 @@ describe("theme packs are complete re-bindings", () => {
     ]);
   });
 
-  // The set is real (52 semantic roles), so the equality checks below cannot pass
+  // The set is real (54 semantic roles), so the equality checks below cannot pass
   // vacuously, and the roles the design contract names all survive the mapping.
   it("the reference token set carries every semantic role", () => {
-    expect(referenceTokens.length).toBe(52);
+    expect(referenceTokens.length).toBe(54);
     for (const role of [
       "accent",
       "green",
@@ -110,6 +110,8 @@ describe("theme packs are complete re-bindings", () => {
       "canvas",
       "surface",
       "raised",
+      "brandStart",
+      "brandEnd",
       // The lens register: five portable identity slots. Named here so a pack that
       // drops one is caught by role, not only by the arithmetic above.
       "lensRed",
@@ -120,6 +122,11 @@ describe("theme packs are complete re-bindings", () => {
     ]) {
       expect(referenceTokens, `role ${role} present`).toContain(role);
     }
+  });
+
+  it("keeps Mocha's mark in its peach and red palette", () => {
+    expect(themes["catppuccin-mocha"].dark.brandStart).toBe("#fab387");
+    expect(themes["catppuccin-mocha"].dark.brandEnd).toBe("#f38ba8");
   });
 
   for (const id of ["catppuccin-mocha", "dracula", "github", "one-dark-pro", "rennet"]) {

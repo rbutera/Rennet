@@ -2,8 +2,10 @@ import type { Project, SidebarSession as WireSidebarSession } from "@rennet/prot
 import { useEffect, useMemo } from "react";
 import { useRoute } from "wouter";
 import { useCommand, useMutation } from "../data";
+import { useSidebarHistory } from "../data/sidebar-history";
 import { ROUTES } from "../routes/url";
 import { selectProcessingProjectIds, useRennetStore } from "../store";
+import { useHistoryIsActive } from "./history-connections";
 import { useReviewActivityState } from "./review-activity-state";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -125,9 +127,10 @@ function toSidebarSession(row: WireSidebarSession): SidebarSession {
 export function useSidebarSessionProjection(): SidebarSessionProjection {
   const { data } = useCommand("session.list", {});
   const reconcile = useReviewActivityState((s) => s.reconcile);
+  const active = useHistoryIsActive();
   useEffect(() => {
-    if (data) reconcile(data.sessions);
-  }, [data, reconcile]);
+    if (data && active) reconcile(data.sessions);
+  }, [data, active, reconcile]);
   const { mutate: rename } = useMutation("session.rename", { invalidates: ["session.list"] });
   const { mutate: setPinned } = useMutation("session.setPinned", {
     invalidates: ["session.list"],
@@ -221,19 +224,32 @@ function buildHosts(
 export interface SidebarTree {
   readonly hosts: readonly SidebarHost[];
   readonly loading: boolean;
+  readonly cached: boolean;
 }
 
 /** The whole sidebar tree: real projects grouped by host, sessions from the
  *  projection (served off `session.list` in the live client). */
-export function useSidebarTree(): SidebarTree {
+export function useSidebarTree(targetId?: string): SidebarTree {
   const { data, pending } = useCommand("projects.list", {});
+  const { data: sessionData } = useCommand("session.list", {});
+  const history = useSidebarHistory(targetId, data, sessionData);
   const projection = useSidebarSessionProjection();
   const processing = useRennetStore(selectProcessingProjectIds);
-  const hosts = useMemo(
-    () => buildHosts(data?.projects ?? [], projection, processing),
-    [data, projection, processing],
-  );
-  return { hosts, loading: pending };
+  const active = useHistoryIsActive();
+  const hosts = useMemo(() => {
+    const sessionsByProject: Record<string, SidebarSession[]> = {};
+    for (const row of history.sessions?.sessions ?? []) {
+      const rows = sessionsByProject[row.projectId] ?? [];
+      rows.push(toSidebarSession(row));
+      sessionsByProject[row.projectId] = rows;
+    }
+    return buildHosts(
+      history.projects?.projects ?? [],
+      { ...projection, sessionsByProject },
+      active ? processing : [],
+    );
+  }, [history.projects, history.sessions, projection, processing, active]);
+  return { hosts, loading: pending, cached: history.cached };
 }
 
 // ── Active-route resolution (shared) ──────────────────────────────────────────
