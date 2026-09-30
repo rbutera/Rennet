@@ -32,6 +32,25 @@ shows the connected account but no Rennet **Disconnect** button, because Rennet
 has no credential to delete. Run `gh auth logout` in the project environment when
 you want to sign that CLI out.
 
+## SSO organizations that restrict the GitHub CLI
+
+`gh auth login` signs you in through the GitHub CLI's OAuth app. Many enterprise
+organizations restrict OAuth apps, and until an organization owner approves the
+GitHub CLI, its token cannot see that organization's repositories. A member
+cannot approve it themselves. Fine-grained tokens are often restricted in the
+same way.
+
+A classic personal access token works without an owner's approval:
+
+1. On GitHub, open **Settings → Developer settings → Personal access tokens →
+   Tokens (classic)** and generate a token with the `repo` and `workflow` scopes.
+2. In the token list, choose **Configure SSO** next to the token and authorize
+   the organization.
+3. Run `gh auth login --with-token` and paste the token. This stores it as the
+   GitHub CLI's own credential, so Rennet uses it even when it is launched from
+   the Dock or Start menu and cannot see your shell's `GITHUB_TOKEN`.
+4. Check with `gh repo view <owner>/<name>`, then refresh New Chat.
+
 ## Device sign-in, the fallback
 
 When Rennet cannot resolve a `gh` binary in the environment, it offers its own
@@ -135,11 +154,10 @@ Rennet separates the failure states so you know what to fix:
   `gh auth refresh -s repo,workflow`; for the fallback, reconnect and approve.
 - Repository not visible: the token works, but GitHub will not show it this
   repository. That usually means the organization enforces SAML SSO and the
-  token has not been authorized for it, which is common when `GITHUB_TOKEN` holds
-  a personal access token. New Chat shows a note on that repository instead of an
-  empty pull request list. Check `gh repo view <owner>/<name>` in a terminal.
-  Then authorize the token for the organization, using the link in the note when
-  GitHub sends one, or under **GitHub CLI** in github.com/settings/applications.
+  token has not been authorized for it. New Chat shows a note on that repository
+  instead of an empty pull request list. Check `gh repo view <owner>/<name>` in a
+  terminal, then follow the link in the note when GitHub sends one, or
+  [use a classic token for an SSO organization](#sso-organizations-that-restrict-the-github-cli).
   Local branches keep listing while this is unresolved.
 - Network: Rennet could not reach `github.com`. This is never reported as a bad
   token, because an unreachable GitHub says nothing about the token. Check your
