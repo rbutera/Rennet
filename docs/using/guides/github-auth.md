@@ -133,6 +133,14 @@ Rennet separates the failure states so you know what to fix:
   credential was revoked. Follow the source-specific repair shown in the app.
 - Insufficient scope: the token lacks a permission the request needs. For `gh`,
   `gh auth refresh -s repo,workflow`; for the fallback, reconnect and approve.
+- Repository not visible: the token works, but GitHub will not show it this
+  repository. That usually means the organization enforces SAML SSO and the
+  token has not been authorized for it, which is common when `GITHUB_TOKEN` holds
+  a personal access token. New Chat shows a note on that repository instead of an
+  empty pull request list. Check `gh repo view <owner>/<name>` in a terminal.
+  Then authorize the token for the organization, using the link in the note when
+  GitHub sends one, or under **GitHub CLI** in github.com/settings/applications.
+  Local branches keep listing while this is unresolved.
 - Network: Rennet could not reach `github.com`. This is never reported as a bad
   token, because an unreachable GitHub says nothing about the token. Check your
   connection and retry.

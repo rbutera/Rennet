@@ -651,6 +651,61 @@ describe("loadProjectDetail — live remote PRs (B2)", () => {
     expect(() => projectDetailSchema.parse(detail)).not.toThrow();
   });
 
+  it("surfaces an SSO-hidden GitHub repo's repair and keeps its sibling's rows", async () => {
+    // Two GitHub repos sharing a branch name: one the token can see, one GitHub hides.
+    const git = makeGit({
+      "/visible": {
+        remoteUrl: "git@github.com:acme/widget.git",
+        userName: "rai",
+        branches: { main: 1, "feat/shared": 2 },
+        aheadBehind: { "feat/shared": { ahead: 1, behind: 0 } },
+      },
+      "/hidden": {
+        remoteUrl: "git@github.com:corp/checklists.git",
+        userName: "rai",
+        branches: { main: 1, "feat/shared": 3 },
+        aheadBehind: { "feat/shared": { ahead: 1, behind: 0 } },
+      },
+    });
+    const repair = "authorise the GitHub CLI token for corp's SSO";
+    const githubSource: ProjectPrSource = {
+      resolveViewer: async () => ({ login: "github-rai" }),
+      listPullRequests: async (forgeRepository) => {
+        if (forgeRepository.owner === "corp") {
+          throw new ProjectPrSourceUnavailable("github", "authentication", repair);
+        }
+        return {
+          prs: [pr({ repository: forgeRepositorySlug(forgeRepository), forgeRepository })],
+          truncated: false,
+        };
+      },
+    };
+
+    const detail = await loadProjectDetail(
+      {
+        git,
+        forgeRegistry: { sourceFor: () => githubSource },
+        resolveRepoRoots: async () => ["/visible", "/hidden"],
+      },
+      { ...repoProject("/workspace"), kind: "workspace" },
+    );
+
+    expect(detail.prs.map((pullRequest) => pullRequest.repository)).toEqual(["acme/widget"]);
+    expect(detail.locals.map((local) => local.repository).sort()).toEqual([
+      "acme/widget",
+      "corp/checklists",
+    ]);
+    expect(detail.forgeUnavailable).toEqual([
+      {
+        repository: { forge: "github", owner: "corp", name: "checklists" },
+        reason: "authentication",
+        repair,
+      },
+    ]);
+    expect(detail.authUnavailable).toBeUndefined();
+    expect(() => projectDetailSchema.parse(detail)).not.toThrow();
+  });
+
   it("streams prs-start then one repo-prs per forge repo as PRs land", async () => {
     const git = makeGit({
       "/repo": {

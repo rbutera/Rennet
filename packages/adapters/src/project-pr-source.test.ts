@@ -1,7 +1,11 @@
 import { pullRequestSchema } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createGitHubOctokit } from "./github-octokit";
-import { createGitHubProjectPrSource, parseForgeRepository } from "./project-pr-source";
+import {
+  createGitHubProjectPrSource,
+  ProjectPrSourceUnavailable,
+  parseForgeRepository,
+} from "./project-pr-source";
 
 const GITHUB_REPOSITORY = { forge: "github", owner: "acme", name: "widget" } as const;
 
@@ -46,6 +50,8 @@ function makeFetch(config: {
     totalCount?: number;
   }[];
   repositoryNull?: boolean;
+  /** The `X-GitHub-SSO` header sent alongside a null repository. */
+  repositoryNullSso?: string;
   status?: number;
   errors?: unknown;
 }): { fetch: typeof globalThis.fetch; calls: () => number } {
@@ -71,7 +77,23 @@ function makeFetch(config: {
         },
       });
     }
-    if (config.repositoryNull) return response({ data: { repository: null } });
+    // GitHub's real shape for a repo the token cannot see (missing, or hidden by SAML SSO):
+    // a 200 carrying BOTH `data.repository: null` and an errors array.
+    if (config.repositoryNull) {
+      return response(
+        {
+          data: { repository: null },
+          errors: [
+            {
+              type: "NOT_FOUND",
+              path: ["repository"],
+              message: "Could not resolve to a Repository with the name 'acme/widget'.",
+            },
+          ],
+        },
+        config.repositoryNullSso === undefined ? undefined : { sso: config.repositoryNullSso },
+      );
+    }
     const page = config.pages?.[pageIndex] ?? { nodes: [], hasNextPage: false, endCursor: null };
     pageIndex += 1;
     return response({
@@ -311,11 +333,30 @@ describe("createGitHubProjectPrSource — listPullRequests", () => {
     expect(prs[0]?.state).toBe("merged");
   });
 
-  it("returns empty (not a false-complete crash) when the repo is not found / no access", async () => {
+  it("refuses to read a null repository (missing or SSO-hidden) as zero PRs", async () => {
     const { fetch } = makeFetch({ viewer: "octocat", repositoryNull: true });
-    const { prs, truncated } = await sourceFor(fetch).listPullRequests(GITHUB_REPOSITORY);
-    expect(prs).toEqual([]);
-    expect(truncated).toBe(false);
+    const error = await sourceFor(fetch)
+      .listPullRequests(GITHUB_REPOSITORY)
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ProjectPrSourceUnavailable);
+    expect(error).toMatchObject({ forge: "github", reason: "authentication" });
+    expect((error as ProjectPrSourceUnavailable).repair).toContain("gh repo view acme/widget");
+    expect((error as ProjectPrSourceUnavailable).repair).toContain("SAML SSO");
+  });
+
+  it("names GitHub's SSO authorisation URL when the null repository carries one", async () => {
+    const { fetch } = makeFetch({
+      viewer: "octocat",
+      repositoryNull: true,
+      repositoryNullSso: "required; url=https://github.com/orgs/acme/sso?authorization_request=abc",
+    });
+    const error = await sourceFor(fetch)
+      .listPullRequests(GITHUB_REPOSITORY)
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ProjectPrSourceUnavailable);
+    expect((error as ProjectPrSourceUnavailable).repair).toContain(
+      "https://github.com/orgs/acme/sso?authorization_request=abc",
+    );
   });
 
   it("THROWS on a non-2xx response (never renders a failed fetch as zero PRs)", async () => {
