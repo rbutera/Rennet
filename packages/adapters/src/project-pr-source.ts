@@ -1,4 +1,5 @@
 import type { Octokit } from "@octokit/core";
+import type { SsoState } from "@rennet/core";
 import {
   type ForgeRepoIdentity,
   forgeRepositorySlug,
@@ -40,6 +41,11 @@ import { parseGitHubSso } from "./github-sso";
  *    list, so a broken fetch never renders as "complete, zero PRs" (a lying empty).
  *    Auth is resolved BEFORE this source is constructed: no GitHub token ⇒ no source
  *    is wired ⇒ `prs` stays empty (the B1 local-only surface), never a failed fetch.
+ *  • A `null` repository is NOT an empty repository. GitHub answers 200 with
+ *    `repository: null` both for a repo the token cannot see and for an org whose
+ *    SAML SSO has not authorised the token, so it throws `ProjectPrSourceUnavailable`
+ *    with a repair (the SSO authorisation URL when GitHub sends one) instead of
+ *    rendering a complete-looking empty list.
  */
 
 /** The boundary the project-detail source consumes; a GitHub impl is provided below. */
@@ -236,6 +242,27 @@ function createSemaphore(limit: number): <T>(run: () => Promise<T>) => Promise<T
   };
 }
 
+/**
+ * The repair for a repository GitHub resolved to `null`. GitHub does not say whether
+ * the repo is missing or hidden by SSO, so the copy names both; an `X-GitHub-SSO`
+ * header carrying an authorisation URL is the one case it can be specific about.
+ */
+function repositoryUnavailable(
+  repository: ForgeRepoIdentity,
+  sso: SsoState,
+): ProjectPrSourceUnavailable {
+  const slug = `${repository.owner}/${repository.name}`;
+  const authorize =
+    sso.kind !== "none" && sso.authorizationUrl !== null
+      ? `authorise your GitHub token for this organisation's SSO at ${sso.authorizationUrl}`
+      : "if the organisation uses SAML SSO, authorise the GitHub CLI token for it (github.com/settings/applications → GitHub CLI → Grant)";
+  return new ProjectPrSourceUnavailable(
+    "github",
+    "authentication",
+    `GitHub did not return ${slug} for the signed-in account. Check \`gh repo view ${slug}\`; ${authorize}.`,
+  );
+}
+
 /** The GitHub GraphQL implementation of `ProjectPrSource`. */
 export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig): ProjectPrSource {
   const maxPages = config.maxPages ?? DEFAULT_MAX_PAGES;
@@ -245,7 +272,7 @@ export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig)
   async function graphql<T>(
     query: string,
     variables: Record<string, unknown>,
-  ): Promise<{ data: T; partial: boolean }> {
+  ): Promise<{ data: T; partial: boolean; sso: SsoState }> {
     // `octokit.request` (not `octokit.graphql`) so the `X-GitHub-SSO` header stays
     // visible; octokit throws on a non-2xx, keeping the hard-failure invariant
     // (a broken fetch never renders as "complete, zero PRs").
@@ -255,7 +282,7 @@ export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig)
     if (!parsed.data) {
       throw new Error(`GitHub GraphQL returned no data: ${JSON.stringify(parsed.errors ?? {})}`);
     }
-    return { data: parsed.data, partial: sso.kind === "partial-results" };
+    return { data: parsed.data, partial: sso.kind === "partial-results", sso };
   }
 
   async function resolveViewer(): Promise<ProjectViewer | null> {
@@ -280,7 +307,7 @@ export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig)
     name: string,
     states: readonly PullRequestState[],
     cursor: string | null,
-  ): Promise<{ page: OpenPrsPage | null; partial: boolean }> {
+  ): Promise<{ page: OpenPrsPage | null; partial: boolean; sso: SsoState }> {
     const result = await graphql<{ repository: { pullRequests: OpenPrsPage } | null }>(PRS_QUERY, {
       owner,
       name,
@@ -288,7 +315,11 @@ export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig)
       states: states.map((state) => state.toUpperCase()),
       cursor,
     });
-    return { page: result.data.repository?.pullRequests ?? null, partial: result.partial };
+    return {
+      page: result.data.repository?.pullRequests ?? null,
+      partial: result.partial,
+      sso: result.sso,
+    };
   }
 
   async function listPullRequests(
@@ -303,17 +334,17 @@ export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig)
     const prs: PullRequest[] = [];
     let cursor: string | null = null;
     let pages = 0;
-    let hasNext = false;
+    let hasNext: boolean;
     let sawPartial = false;
     do {
-      const { page, partial } = await fetchPrsPage(
+      const { page, partial, sso } = await fetchPrsPage(
         repository.owner,
         repository.name,
         states,
         cursor,
       );
       if (partial) sawPartial = true;
-      if (!page) break; // repo not found / no access → no rows, and no false completeness claim below
+      if (!page) throw repositoryUnavailable(repository, sso);
       for (const prNode of page.nodes) prs.push(mapNode(prNode, repository, viewerLogin));
       cursor = page.pageInfo.endCursor;
       hasNext = page.pageInfo.hasNextPage;

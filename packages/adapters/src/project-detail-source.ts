@@ -482,7 +482,11 @@ export async function loadProjectDetail(
     ) {
       authUnavailable = "network";
     }
-    forgeUnavailable = unavailable.filter((entry) => entry.repository.forge !== "github");
+    // GitHub's network failure travels as `authUnavailable`; every other unavailable repo,
+    // GitHub's SSO-hidden repository included, renders its own repair.
+    forgeUnavailable = unavailable.filter(
+      (entry) => !(entry.repository.forge === "github" && entry.reason === "network"),
+    );
   }
 
   const perRepo = await Promise.all(
