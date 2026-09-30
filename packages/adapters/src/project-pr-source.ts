@@ -252,10 +252,13 @@ function repositoryUnavailable(
   sso: SsoState,
 ): ProjectPrSourceUnavailable {
   const slug = `${repository.owner}/${repository.name}`;
+  // Enterprise orgs commonly restrict OAuth apps, so the default `gh auth login` token
+  // (the GitHub CLI app) cannot be granted by a member; a classic PAT authorised for the
+  // org's SSO is the path that works without an admin.
   const authorize =
     sso.kind !== "none" && sso.authorizationUrl !== null
       ? `authorise your GitHub token for this organisation's SSO at ${sso.authorizationUrl}`
-      : "if the organisation uses SAML SSO, authorise the GitHub CLI token for it (github.com/settings/applications → GitHub CLI → Grant)";
+      : "if the organisation uses SAML SSO, create a classic personal access token (repo, workflow), use Configure SSO to authorise it for the organisation, then run `gh auth login --with-token` with it";
   return new ProjectPrSourceUnavailable(
     "github",
     "authentication",

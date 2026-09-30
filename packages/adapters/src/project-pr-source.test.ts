@@ -342,6 +342,8 @@ describe("createGitHubProjectPrSource — listPullRequests", () => {
     expect(error).toMatchObject({ forge: "github", reason: "authentication" });
     expect((error as ProjectPrSourceUnavailable).repair).toContain("gh repo view acme/widget");
     expect((error as ProjectPrSourceUnavailable).repair).toContain("SAML SSO");
+    expect((error as ProjectPrSourceUnavailable).repair).toContain("classic personal access token");
+    expect((error as ProjectPrSourceUnavailable).repair).toContain("gh auth login --with-token");
   });
 
   it("names GitHub's SSO authorisation URL when the null repository carries one", async () => {
