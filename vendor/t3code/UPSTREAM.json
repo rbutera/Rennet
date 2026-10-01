@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/pingdotgg/t3code",
-  "commit": "aab4049646ffa8b9bcff92562992e6c3a8554bf0",
-  "date": "2026-09-02T18:44:31+00:00",
+  "commit": "148e6deea046658639aae9fef5b349781cec39d1",
+  "date": "2026-10-01T00:15:28-07:00",
   "defaultBranch": "main",
   "vendorBranch": "t3-vendor",
   "paths": [
