@@ -9,11 +9,11 @@
       "command": "pnpm exec eslint packages/t3-chat/src --max-warnings=0 && pnpm exec biome check packages/t3-chat/src"
     },
     "typecheck": {
-      "command": "pnpm exec tsgo --noEmit -p packages/t3-chat/tsconfig.json",
+      "command": "pnpm exec tsc --noEmit -p packages/t3-chat/tsconfig.json",
       "inputs": ["default", "^production", "t3codeShared"]
     },
     "build": {
-      "command": "pnpm exec tsgo --noEmit -p packages/t3-chat/tsconfig.json",
+      "command": "pnpm exec tsc --noEmit -p packages/t3-chat/tsconfig.json",
       "inputs": ["default", "^production", "t3codeShared"]
     },
     "test": { "command": "pnpm exec vitest run --passWithNoTests packages/t3-chat/src" }

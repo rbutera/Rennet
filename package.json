@@ -148,7 +148,6 @@
     "@types/react-dom": "19.2.3",
     "@typescript-eslint/parser": "8.68.0",
     "@typescript/native": "npm:typescript@7.0.2",
-    "@typescript/native-preview": "7.0.0-dev.20260604.1",
     "@vitejs/plugin-react": "6.1.1",
     "@vitest/coverage-v8": "4.1.11",
     "eslint": "10.9.1",

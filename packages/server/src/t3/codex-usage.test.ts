@@ -50,7 +50,7 @@ const { createInterface } = require('node:readline');
 const { DatabaseSync } = require('node:sqlite');
 if (process.argv.includes('--version')) { console.log('codex-cli 0.147.0'); process.exit(0); }
 const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
-const thread = { id: 'provider-thread', sessionId: 'provider-thread', cliVersion: '0.147.0', createdAt: 0, updatedAt: 0, cwd: ${JSON.stringify(repo)}, ephemeral: false, modelProvider: 'openai', preview: '', source: 'appServer', status: { type: 'idle' }, turns: [] };
+const thread = { id: 'provider-thread', sessionId: 'provider-thread', cliVersion: '0.147.0', createdAt: 0, updatedAt: 0, cwd: ${JSON.stringify(repo)}, ephemeral: false, modelProvider: 'openai', preview: '', source: 'appServer', projectId: null, status: { type: 'idle' }, turns: [] };
 let count = 0;
 const tokens = (inputTokens, cachedInputTokens, outputTokens) => ({ inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens: 100, totalTokens: inputTokens + outputTokens });
 createInterface({ input: process.stdin }).on('line', (line) => {

@@ -9,6 +9,7 @@
  */
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -23,6 +24,7 @@ import { assert, describe } from "vite-plus/test";
 
 import wireFixture from "../testFixtures/codexMultiAgentWire.json" with { type: "json" };
 import { makeCodexSessionRuntime } from "./CodexSessionRuntime.ts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
@@ -165,7 +167,11 @@ function readRecordedRequests() {
 }
 
 const scriptPath = NodePath.join(import.meta.dirname, "../testFixtures/.collab-script.json");
-const peerPath = NodePath.join(import.meta.dirname, "../testFixtures/codexCollabMockPeer.sh");
+// Windows cannot run the shebang wrapper; the .cmd sibling does the same job.
+const peerPath = NodePath.join(
+  import.meta.dirname,
+  `../testFixtures/codexCollabMockPeer.${HostProcessPlatform.defaultValue() === "win32" ? "cmd" : "sh"}`,
+);
 
 describe("CodexSessionRuntime collab integration", () => {
   it.effect("looks up child model metadata once after activity registration", () =>
@@ -203,7 +209,7 @@ describe("CodexSessionRuntime collab integration", () => {
       const runtime = yield* makeCodexSessionRuntime({
         threadId: ThreadId.make("thread-collab-model-activity"),
         binaryPath: peerPath,
-        cwd: "/tmp",
+        cwd: NodeOS.tmpdir(),
         runtimeMode: "full-access",
         environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
       });
@@ -295,7 +301,7 @@ describe("CodexSessionRuntime collab integration", () => {
       const runtime = yield* makeCodexSessionRuntime({
         threadId: ThreadId.make("thread-collab-model-spawn"),
         binaryPath: peerPath,
-        cwd: "/tmp",
+        cwd: NodeOS.tmpdir(),
         runtimeMode: "full-access",
         environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
       });
@@ -374,7 +380,7 @@ describe("CodexSessionRuntime collab integration", () => {
           const runtime = yield* makeCodexSessionRuntime({
             threadId: ThreadId.make(`thread-collab-model-${name}`),
             binaryPath: peerPath,
-            cwd: "/tmp",
+            cwd: NodeOS.tmpdir(),
             runtimeMode: "full-access",
             environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
           });
@@ -413,7 +419,7 @@ describe("CodexSessionRuntime collab integration", () => {
       const runtime = yield* makeCodexSessionRuntime({
         threadId: ThreadId.make("thread-collab-integration"),
         binaryPath: peerPath,
-        cwd: "/tmp",
+        cwd: NodeOS.tmpdir(),
         runtimeMode: "full-access",
         environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
       });
@@ -555,7 +561,7 @@ describe("CodexSessionRuntime collab integration", () => {
       const runtime = yield* makeCodexSessionRuntime({
         threadId: ThreadId.make("thread-collab-stop"),
         binaryPath: peerPath,
-        cwd: "/tmp",
+        cwd: NodeOS.tmpdir(),
         runtimeMode: "full-access",
         environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
       });
@@ -607,6 +613,108 @@ describe("CodexSessionRuntime collab integration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  // it.live: the runtime talks to a real child process; under it.effect's
+  // TestClock the internal timers freeze and the join never completes.
+  it.live("Stop answers a parked app-permission approval with a withheld grant", () =>
+    Effect.gen(function* () {
+      // Interrupting a turn whose app-permission prompt is still parked must
+      // settle that prompt: the handler resumes with "cancel", the peer gets
+      // an empty grant (permission withheld), and nothing hangs until close.
+      const script = {
+        rootThreadId: ROOT,
+        holdTurnOpen: true,
+        notifications: [],
+        serverRequests: [
+          {
+            method: "item/permissions/requestApproval",
+            label: "perm-1",
+            params: {
+              cwd: "/tmp/project",
+              itemId: "app_1",
+              permissions: { network: { enabled: true } },
+              reason: "Fetch data from api.example.com",
+              startedAtMs: 1_778_000_000_000,
+              threadId: "${threadId}",
+              turnId: "${turnId}",
+            },
+          },
+        ],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      const responsesPath = `${scriptPath}.approvalResponses`;
+      NodeFS.rmSync(responsesPath, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(responsesPath, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-codex-permission-stop"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      // One consumer for the whole stream: `events` is a plain queue stream,
+      // so two forks would compete for events and each could starve the
+      // other's filter. Signal the two milestones through Deferreds instead.
+      const requestedReady = yield* Deferred.make<ProviderEvent>();
+      const settledReady = yield* Deferred.make<ProviderEvent>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => {
+          if (event.method === "item/permissions/requestApproval") {
+            return Deferred.succeed(requestedReady, event);
+          }
+          if (event.method === "serverRequest/resolved" && event.requestKind === "permission") {
+            return Deferred.succeed(settledReady, event);
+          }
+          return Effect.void;
+        }),
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "use the connected app" });
+      const requested = yield* Deferred.await(requestedReady).pipe(
+        Effect.timeoutOption("15 seconds"),
+      );
+      assert.isTrue(requested._tag === "Some", "permission approval request never arrived");
+
+      yield* runtime.interruptTurn();
+
+      // The peer emits serverRequest/resolved only AFTER recording the
+      // runtime's answer, so awaiting this receipt makes reading the sidecar
+      // race-free. The runtime correlates that receipt back to the canonical
+      // request (requestKind + requestId) — the same event chain the adapter
+      // folds into approval.resolved, so the card actually closes.
+      const settled = yield* Deferred.await(settledReady).pipe(Effect.timeoutOption("15 seconds"));
+      assert.isTrue(settled._tag === "Some", "interrupt did not settle the parked approval");
+      const settledEvent = settled._tag === "Some" ? settled.value : undefined;
+      assert.isDefined(settledEvent);
+      assert.isDefined(
+        settledEvent?.requestId,
+        "receipt must correlate back to the canonical approval request",
+      );
+
+      const recorded = NodeFS.readFileSync(responsesPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { id: number; label: string; result: unknown });
+      assert.equal(recorded.length, 1);
+      const answer = recorded[0];
+      assert.isDefined(answer);
+      assert.equal(answer.label, "perm-1");
+      // Cancelled approvals withhold the grant: an empty permission profile.
+      assert.deepEqual(answer.result, { permissions: {} });
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.live("Stop targets the active turn when Codex has accepted a queued follow-up", () =>
     Effect.gen(function* () {
       const activeTurnId = "019fe3e8-f908-7f31-8d51-283f4a47897a";
@@ -633,7 +741,7 @@ describe("CodexSessionRuntime collab integration", () => {
       const runtime = yield* makeCodexSessionRuntime({
         threadId: ThreadId.make("thread-codex-queued-stop"),
         binaryPath: peerPath,
-        cwd: "/tmp",
+        cwd: NodeOS.tmpdir(),
         runtimeMode: "full-access",
         environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
       });
@@ -730,7 +838,7 @@ describe("CodexSessionRuntime collab integration", () => {
         const runtime = yield* makeCodexSessionRuntime({
           threadId: ThreadId.make("thread-codex-mcp-elicitation"),
           binaryPath: peerPath,
-          cwd: "/tmp",
+          cwd: NodeOS.tmpdir(),
           runtimeMode: "auto",
           environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
         });
@@ -806,10 +914,10 @@ describe("CodexSessionRuntime collab integration", () => {
           : {}),
       });
       yield* runtime.start();
-      // `interactionMode` is what carries a collaboration mode, and the
-      // collaboration mode is the only thing `browserToolsAvailable` reaches.
-      // Without it the developer instructions are never built and any
-      // assertion about them passes vacuously. Rennet's seat turns set it.
+      // `interactionMode` is what makes the runtime build the turn's
+      // instructions, and the additional context is built alongside the
+      // collaboration mode. Without it neither exists and any assertion about
+      // them passes vacuously. Rennet's seat turns set it.
       yield* runtime.sendTurn({ input: "one turn", interactionMode: "default" });
       // Read BEFORE closing: `runtime.close` closes the scope these fixture
       // files are cleaned up from, so a read after it finds nothing.
@@ -818,17 +926,23 @@ describe("CodexSessionRuntime collab integration", () => {
       return requests;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
-  const developerInstructionsOf = (
+  // T3's runtime info, its tool blocks and the thread's briefing all travel in
+  // `turn/start.additionalContext`, one keyed entry each, not in the
+  // collaboration mode: a model whose catalog ships its own mode text drops the
+  // client's developer instructions entirely.
+  const additionalContextOf = (
     requests: ReadonlyArray<{ method: string; params: Record<string, unknown> }>,
   ) => {
     const turnStart = requests.find((request) => request.method === "turn/start");
     assert.isDefined(turnStart);
-    const collaborationMode = turnStart?.params.collaborationMode as
-      | { settings?: { developer_instructions?: string } }
+    const context = turnStart?.params.additionalContext as
+      | Record<string, { kind?: string; value?: string }>
       | undefined;
-    const instructions = collaborationMode?.settings?.developer_instructions;
-    assert.isString(instructions);
-    return instructions ?? "";
+    assert.isDefined(context);
+    // Always present, so an absence assertion below is never satisfied by an
+    // empty or missing context.
+    assert.isString(context?.t3_code_runtime?.value);
+    return context ?? {};
   };
 
   it.effect("reloads the Codex tool catalog before the turn that needs it", () =>
@@ -856,7 +970,7 @@ describe("CodexSessionRuntime collab integration", () => {
     }),
   );
 
-  it.effect("carries the thread's briefing in the turn's developer instructions", () =>
+  it.effect("carries the thread's briefing in the turn's additional context", () =>
     Effect.gen(function* () {
       // Codex has no system-prompt append, so the Claude leg's
       // `systemPrompt.append` lands here instead. Asserted on the request the
@@ -867,19 +981,21 @@ describe("CodexSessionRuntime collab integration", () => {
         threadId: "thread-briefed",
         threadInstructions: briefing,
       });
-      const instructions = developerInstructionsOf(requests);
-      assert.include(instructions, briefing);
-      // After T3's own blocks, not instead of them.
-      assert.include(instructions, "<collaboration_mode>");
-      assert.isAbove(instructions.indexOf(briefing), instructions.indexOf("<runtime_info>"));
+      const context = additionalContextOf(requests);
+      // Verbatim, under its own key.
+      assert.equal(context.thread_instructions?.value, briefing);
+      // After T3's own entries, not instead of them: position, not membership.
+      const keys = Object.keys(context);
+      assert.equal(keys.at(-1), "thread_instructions");
+      assert.isAbove(keys.indexOf("thread_instructions"), keys.indexOf("t3_code_runtime"));
     }),
   );
 
-  it.effect("sends the same developer instructions when the thread has no briefing", () =>
+  it.effect("sends only T3's own context when the thread has no briefing", () =>
     Effect.gen(function* () {
       const requests = yield* driveOneTurn({ threadId: "thread-unbriefed" });
-      const instructions = developerInstructionsOf(requests);
-      assert.isTrue(instructions.endsWith("</runtime_info>"));
+      const context = additionalContextOf(requests);
+      assert.notProperty(context, "thread_instructions");
     }),
   );
 
@@ -890,7 +1006,7 @@ describe("CodexSessionRuntime collab integration", () => {
         appServerArgs: ["-c", "mcp_servers.t3-code.url=http://127.0.0.1:9111/mcp"],
         sidecarMcpServerConfigured: true,
       });
-      assert.include(developerInstructionsOf(withSidecar), "preview_open");
+      assert.include(additionalContextOf(withSidecar).t3_code_tools?.value ?? "", "preview_open");
     }),
   );
 
@@ -904,12 +1020,89 @@ describe("CodexSessionRuntime collab integration", () => {
         appServerArgs: ["-c", "mcp_servers.t3-code.url=http://127.0.0.1:7391/board/design"],
         sidecarMcpServerConfigured: false,
       });
-      const instructions = developerInstructionsOf(callerOnly);
-      assert.notInclude(instructions, "preview_open");
-      assert.notInclude(instructions, "preview_status");
-      // The rest of the collaboration mode is still there, so this is not an
-      // empty string passing for an absence.
-      assert.include(instructions, "<collaboration_mode>");
+      const context = additionalContextOf(callerOnly);
+      // No tool block at all, and nothing anywhere in the context names the
+      // preview tools. `additionalContextOf` has already asserted the runtime
+      // entry is there, so this is not an empty context passing for an absence.
+      assert.notProperty(context, "t3_code_tools");
+      const everything = Object.values(context)
+        .map((entry) => entry.value ?? "")
+        .join("\n");
+      assert.notInclude(everything, "preview_open");
+      assert.notInclude(everything, "preview_status");
     }),
+  );
+});
+
+describe("CodexSessionRuntime compaction", () => {
+  it.effect("restores T3 context after the root thread compacts", () =>
+    Effect.gen(function* () {
+      const compacted = (threadId: string) => ({
+        method: "item/completed",
+        params: {
+          threadId,
+          turnId: `${threadId}-turn`,
+          completedAtMs: 0,
+          item: { type: "contextCompaction", id: `compaction-${threadId}` },
+        },
+      });
+      const script = {
+        rootThreadId: ROOT,
+        recordRequests: true,
+        // A child's compaction must not inject into the root thread.
+        notifications: [compacted(CHILD_A), compacted(ROOT)],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-compaction-context"),
+        binaryPath: peerPath,
+        cwd: NodeOS.tmpdir(),
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+        models: Effect.succeed([
+          { slug: "gpt-5.6-sol", name: "GPT-5.6 Sol", isCustom: false, capabilities: null },
+        ]),
+      });
+      const completedFiber = yield* runtime.events.pipe(
+        Stream.filter((event) => event.method === "turn/completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "keep going", interactionMode: "default" });
+      yield* Fiber.join(completedFiber);
+
+      // The restore is awaited before later notifications, so it has landed.
+      const requests = readRecordedRequests();
+      assert.lengthOf(requests, 1);
+      const [inject] = requests;
+      assert.isDefined(inject);
+      assert.equal(inject.method, "thread/inject_items");
+      assert.equal(inject.params.threadId, ROOT);
+      const texts = (
+        inject.params.items as ReadonlyArray<{ role: string; content: [{ text: string }] }>
+      ).map((item) => {
+        assert.equal(item.role, "developer");
+        return item.content[0].text;
+      });
+      assert.lengthOf(texts, 1);
+      assert.match(
+        texts[0] ?? "",
+        /^<t3_code_runtime><runtime_info>.*as GPT-5\.6 Sol \(model slug: gpt-5\.6-sol\).*<\/t3_code_runtime>$/s,
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

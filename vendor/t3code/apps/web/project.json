@@ -10,7 +10,7 @@
     "typecheck": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "pnpm exec tsgo --noEmit -p tsconfig.rennet.json",
+        "command": "pnpm exec tsc --noEmit -p tsconfig.rennet.json",
         "cwd": "vendor/t3code/apps/web"
       },
       "inputs": [

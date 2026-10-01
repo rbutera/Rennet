@@ -687,7 +687,7 @@
 }
 
 /* The composer's own prompt text has a purpose-built upstream variable
- * (`ComposerPromptEditor`: `[font-size:var(--font-size-prompt,0.875rem)]`), set by
+ * (`ComposerPromptEditorTiptap`: `text-(length:--font-size-prompt,var(--text-sm))`), set by
  * `applyAppearanceFonts` from T3's settings — which Rennet's mount never calls, so the
  * 14px fallback is what shipped. 13px puts the composer on the same step as the
  * transcript around it. */

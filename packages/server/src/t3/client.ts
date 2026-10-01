@@ -321,10 +321,19 @@ const nowIso = () => new Date().toISOString();
 export async function connectT3(options: T3ClientOptions): Promise<T3Client> {
   const scope = await Effect.runPromise(Scope.make());
   const webSocketConstructor = Layer.succeed(Socket.WebSocketConstructor)(
-    (url: string, protocols?: string | Array<string>) =>
-      new WebSocket(url, protocols, {
-        headers: { authorization: `Bearer ${options.accessToken}` },
-      }) as unknown as globalThis.WebSocket,
+    (url: string, socketOptions?: Socket.WebSocketConstructorOptions) => {
+      const protocols =
+        typeof socketOptions === "string" || Array.isArray(socketOptions)
+          ? socketOptions
+          : undefined;
+      const headers =
+        typeof socketOptions === "object" && !Array.isArray(socketOptions)
+          ? socketOptions.headers
+          : undefined;
+      return new WebSocket(url, protocols, {
+        headers: { ...headers, authorization: `Bearer ${options.accessToken}` },
+      }) as unknown as Socket.WebSocketLike;
+    },
   );
   const protocolLayer = RpcClient.layerProtocolSocket().pipe(
     Layer.provide(

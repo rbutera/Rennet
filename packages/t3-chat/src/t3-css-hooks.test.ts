@@ -79,17 +79,16 @@ describe("the upstream hooks t3.css styles through still exist", () => {
 
   it("the composer's prompt font-size variable is still the one upstream reads", () => {
     // Not an attribute but the same class of dependency: t3.css sets
-    // `--font-size-prompt`, and it only does anything because ComposerPromptEditor reads
-    // it. Upstream's own default is the fallback in that same expression.
+    // `--font-size-prompt`, and it only does anything because ComposerPromptEditorTiptap
+    // reads it. Upstream's own default is the fallback in that same expression.
     //
-    // Anchored on the BASE declaration, `[font-size:var(--font-size-prompt,`, not on the
-    // bare variable name. Upstream reads it twice on one line — once for the desktop
-    // composer and once inside a coarse-pointer media query that floors it at 16px — and
-    // a looser `toContain("var(--font-size-prompt,")` was satisfied by the media query
-    // alone. The control that renamed only the base read stayed GREEN against that
-    // version; this is the assertion that catches it.
-    expect(vendor("components/ComposerPromptEditor.tsx")).toContain(
-      "[font-size:var(--font-size-prompt,",
+    // Anchored on the BASE read, `text-(length:--font-size-prompt,`, not on the bare
+    // variable name. Upstream reads the variable a second time, through
+    // `--font-size-prompt-touch` in index.css, which floors it at 16px on coarse
+    // pointers; a looser `toContain("--font-size-prompt")` is satisfied by that touch
+    // read alone, so renaming only the base read would stay green.
+    expect(vendor("components/ComposerPromptEditorTiptap.tsx")).toContain(
+      "text-(length:--font-size-prompt,",
     );
     expect(css).toContain("--font-size-prompt:");
   });
