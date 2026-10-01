@@ -507,3 +507,98 @@ describe("WS listener attention delivery (#383 M1, attention-notifications)", ()
     expect(socket.readyState).toBe(WebSocket.OPEN);
   });
 });
+
+describe("WS listener: a loopback socket is private only when Rennet opened it", () => {
+  const listeners: WsListener[] = [];
+  afterEach(async () => {
+    for (const listener of listeners.splice(0)) await listener.close();
+  });
+
+  /** Open a socket with `origin`, say hello, send one request; report what answered it. */
+  async function classify(
+    port: number,
+    origin: string | undefined,
+  ): Promise<{ type: string; message?: string }> {
+    const socket = new WebSocket(
+      `ws://127.0.0.1:${port}`,
+      origin === undefined ? {} : { headers: { origin } },
+    );
+    await once(socket, "open");
+    const serverInfo = once(socket, "message");
+    socket.send(
+      JSON.stringify({
+        type: "hello",
+        clientId: "origin-probe",
+        clientType: "rennet-client",
+        protocolVersion: PROTOCOL_VERSION,
+      }),
+    );
+    expect(JSON.parse(String((await serverInfo)[0]))).toMatchObject({ type: "serverInfo" });
+    const answer = once(socket, "message");
+    socket.send(
+      JSON.stringify({ type: "request", requestId: "probe", command: "projects.list", input: {} }),
+    );
+    const frame = JSON.parse(String((await answer)[0])) as { type: string; message?: string };
+    socket.close();
+    return frame;
+  }
+
+  it("serves Rennet's own openers the private surface", async () => {
+    const dispatch = vi.fn(async () => []) as WsListenerDeps["dispatch"];
+    const listener = await startWsListener({ dispatch, serverVersion: "test" });
+    listeners.push(listener);
+    const own = [
+      undefined, // CLI, desktop main, Node clients: no Origin
+      "app://rennet", // the desktop renderer
+      `http://127.0.0.1:${listener.port}`, // the daemon's own served tab
+      `http://localhost:${listener.port}`,
+    ];
+    for (const origin of own) {
+      expect(await classify(listener.port, origin), String(origin)).toMatchObject({
+        type: "response",
+      });
+    }
+    expect(dispatch).toHaveBeenCalledTimes(own.length);
+  });
+
+  it("classes a foreign page that reaches loopback as pairing-only, never private", async () => {
+    const dispatch = vi.fn(async () => []) as WsListenerDeps["dispatch"];
+    const listener = await startWsListener({ dispatch, serverVersion: "test" });
+    listeners.push(listener);
+    const foreign = [
+      "https://evil.example", // any site open in the user's browser
+      `http://evil.example:${listener.port}`, // a DNS-rebound hostname on the daemon's port
+      `http://localhost:${listener.port + 1}`, // another local web server
+      "null", // a sandboxed frame's opaque origin
+    ];
+    for (const origin of foreign) {
+      expect(await classify(listener.port, origin), origin).toMatchObject({
+        type: "rpcError",
+        message: expect.stringContaining("must pair first"),
+      });
+    }
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a cross-site POST /shutdown and still answers its own launcher", async () => {
+    const run = vi.fn();
+    const listener = await startWsListener({
+      dispatch: vi.fn() as WsListenerDeps["dispatch"],
+      serverVersion: "test",
+      shutdown: { claimPath: "/tmp/claim", run },
+    });
+    listeners.push(listener);
+    const url = `http://127.0.0.1:${listener.port}/shutdown`;
+
+    const crossSite = await fetch(url, {
+      method: "POST",
+      headers: { origin: "https://evil.example" },
+    });
+    expect(crossSite.status).toBe(403);
+    expect(run).not.toHaveBeenCalled();
+
+    const launcher = await fetch(url, { method: "POST" });
+    expect(launcher.status).toBe(200);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  });
+});

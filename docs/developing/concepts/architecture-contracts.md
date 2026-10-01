@@ -354,8 +354,12 @@ version that executed its worker.
 
 ## Client projection
 
-Loopback connections receive the private session protocol. Remote and mobile
-connections receive a projected protocol assembled by the server. Projection
+Loopback connections opened by Rennet receive the private session protocol: no
+`Origin` header (a non-browser client), the desktop renderer's `app://rennet`, or
+the daemon's own served UI on a loopback name at its port. A loopback socket opened
+by any other browser origin is classed as a network connection, because every page
+in the user's browser can reach `127.0.0.1`. Remote and mobile connections receive
+a projected protocol assembled by the server. Projection
 maps host paths and state into portable representations and restricts
 shell-specific commands to the shell that can perform them.
 

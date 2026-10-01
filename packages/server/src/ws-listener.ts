@@ -5,10 +5,11 @@
 //
 // #380 adds three things, all confined to NON-loopback connections so the existing
 // desktop app is untouched:
-//   • Connection classes, decided once at `hello` (design D1): `private` (loopback,
-//     no token), `projected` (non-loopback + a valid device token — every frame runs
-//     through the R19 projection codec), or `pairing-only` (non-loopback, no/invalid
-//     token — may invoke ONLY `pairing.exchange`).
+//   • Connection classes, decided once at `hello` (design D1): `private` (loopback
+//     from a Rennet opener, no token), `projected` (otherwise + a valid device token —
+//     every frame runs through the R19 projection codec), or `pairing-only` (otherwise,
+//     no/invalid token — may invoke ONLY `pairing.exchange`). A loopback socket opened
+//     by a foreign web page (its `Origin`) is "otherwise": see `isTrustedLocalOrigin`.
 //   • Opt-in bind beyond loopback (`daemon.listen`) with a Host-header allowlist
 //     (DNS-rebinding guard) that refuses a foreign Host before the WS upgrade.
 //   • Server-initiated request frames (wire support only): `askConnection()` asks one
@@ -383,6 +384,37 @@ function isLoopbackAddress(address: string | undefined): boolean {
   return LOOPBACK_ADDRESSES.has(address) || address.startsWith("127.");
 }
 
+/** The desktop renderer's origin: Electron serves it from the privileged `app://rennet` scheme. */
+const DESKTOP_APP_ORIGIN = "app://rennet";
+
+/**
+ * Is this request's `Origin` one of Rennet's own surfaces, so a loopback socket may be
+ * trusted as the local user? A loopback address alone proves nothing about WHO opened the
+ * socket: every web page in the user's browser can reach `127.0.0.1`, and a DNS-rebound
+ * hostname lands there too. So the trust that `private` carries also requires that the
+ * opener is not a foreign page:
+ *  • no `Origin` — a non-browser client (the CLI, the desktop main process, Node `ws`);
+ *  • `app://rennet` — the desktop renderer;
+ *  • the daemon's own served UI — an `http(s)` origin on a loopback NAME at this daemon's port.
+ * Anything else (another site, another localhost port, a rebound hostname, the opaque
+ * `null` origin of a sandboxed frame) is foreign.
+ */
+function isTrustedLocalOrigin(origin: string | undefined, port: number): boolean {
+  if (origin === undefined) return true;
+  if (origin === DESKTOP_APP_ORIGIN) return true;
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  const host = url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname;
+  const loopbackName = host === "localhost" || isLoopbackAddress(host);
+  const originPort = url.port === "" ? (url.protocol === "https:" ? 443 : 80) : Number(url.port);
+  return loopbackName && originPort === port;
+}
+
 /** A bare IPv4/IPv6 literal (not a DNS name). Loose but sufficient: it only needs to reject hostnames. */
 function isIpLiteral(host: string): boolean {
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":");
@@ -478,6 +510,13 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
       req.method === "POST" &&
       (req.url === "/shutdown" || req.url?.startsWith("/shutdown?"))
     ) {
+      // A bodiless cross-site POST needs no CORS preflight, so without this any web page could
+      // stop the daemon. Its launchers (CLI, desktop main) send no `Origin` at all.
+      if (!isTrustedLocalOrigin(req.headers.origin, boundPort)) {
+        res.writeHead(403, { "content-type": "text/plain" });
+        res.end("forbidden origin");
+        return;
+      }
       const { claimPath, run } = deps.shutdown;
       const ack: DaemonShutdownAck = {
         pid: process.pid,
@@ -528,7 +567,12 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
 
   wss.on("connection", (socket: WebSocket, req: IncomingMessage) => {
     const connectionId = randomUUID();
-    const loopback = isLoopbackAddress(req.socket.remoteAddress ?? undefined);
+    // `private` is the local user's full surface, so it needs a loopback socket AND a Rennet
+    // opener. A foreign page reaching loopback is classed like a remote client instead: it
+    // needs a paired device token, and without one it may only pair.
+    const loopback =
+      isLoopbackAddress(req.socket.remoteAddress ?? undefined) &&
+      isTrustedLocalOrigin(req.headers.origin, boundPort);
     const connection: Connection = {
       socket,
       connectionId,

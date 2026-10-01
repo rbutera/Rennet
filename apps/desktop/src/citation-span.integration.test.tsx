@@ -107,6 +107,11 @@ async function daemonBackedBridge(): Promise<WsRennetBridge> {
     serverVersion: "test",
   });
   listeners.push(listener);
+  // The page is the daemon's own served tab: happy-dom's WebSocket sends the page origin, and
+  // the daemon trusts a loopback socket only from a Rennet origin.
+  (window as unknown as { happyDOM: { setURL(url: string): void } }).happyDOM.setURL(
+    `http://127.0.0.1:${listener.port}/`,
+  );
   const bridge = new WsRennetBridge({
     url: `ws://127.0.0.1:${listener.port}`,
     initialBackoffMs: 10,

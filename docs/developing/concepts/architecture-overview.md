@@ -71,7 +71,9 @@ graceful shutdown.
 
 Stopping is a command the daemon answers, not a signal sent into the dark.
 `POST /shutdown` sits beside `GET /healthz` on the same HTTP port and behind the
-same host guard; the daemon acks with its pid, port, versions and claim path, and
+same host guard. It also refuses a foreign browser `Origin` with a 403, since a
+bodiless cross-site POST needs no CORS preflight; its launchers send no `Origin`.
+The daemon acks with its pid, port, versions and claim path, and
 only once that response has flushed does it run the same shutdown SIGTERM runs.
 The desktop, the version-skew restart, and `rennet stop` all send that command.
 

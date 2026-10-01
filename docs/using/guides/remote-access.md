@@ -17,15 +17,19 @@ The daemon classifies a connection during its initial hello:
 
 ```mermaid
 flowchart TD
-  hello[Client connects] --> loop{Loopback address?}
+  hello[Client connects] --> loop{Loopback address, opened by Rennet?}
   loop -->|yes| private[Private connection]
   loop -->|no| tok{Valid device token?}
   tok -->|yes| projected[Projected connection]
   tok -->|no| pair[Pairing commands only]
 ```
 
-A private connection comes from loopback. It needs no token and receives local
-paths.
+A private connection comes from loopback and was opened by Rennet itself: the
+desktop app, the browser tab the daemon serves, or a command-line client. It needs
+no token and receives local paths. A web page from any other site can also reach
+the loopback address, so a loopback connection whose browser `Origin` is not
+Rennet's is treated like a network connection: it needs a valid device token, and
+without one it can only exchange a pairing code.
 
 A projected connection comes from another network address and presents a valid
 device token. It can run review commands, but structural host paths are replaced
