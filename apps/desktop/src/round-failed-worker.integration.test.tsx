@@ -206,6 +206,11 @@ describe.skipIf(process.platform === "win32")("a failed production round worker"
     servers.push(restarted);
     // No Project is persisted, so establish the post-welcome shell before mounting the route.
     await restarted.dispatch("settings.completeWelcome", {});
+    // The page is the daemon's own served tab: happy-dom's WebSocket sends the page origin, and
+    // the daemon trusts a loopback socket only from a Rennet origin.
+    (window as unknown as { happyDOM: { setURL(url: string): void } }).happyDOM.setURL(
+      `http://127.0.0.1:${restarted.wsPort}/`,
+    );
     const bridge = new WsRennetBridge({
       url: `ws://127.0.0.1:${restarted.wsPort}`,
       initialBackoffMs: 10,
