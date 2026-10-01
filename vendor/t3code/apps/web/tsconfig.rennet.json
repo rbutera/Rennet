@@ -1,4 +1,13 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["src", "vercel.ts", "test", "scripts/warm-dep-cache.ts", "../../scripts/lib/public-config.ts"]
+  "include": [
+    "src",
+    "vercel.ts",
+    "test",
+    "scripts/warm-dep-cache.ts",
+    "../../scripts/lib/public-config.ts"
+  ],
+  "exclude": [
+    "src/bundledDev.test.ts"
+  ]
 }

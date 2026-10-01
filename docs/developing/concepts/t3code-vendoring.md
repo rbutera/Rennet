@@ -25,7 +25,7 @@ paths that are vendored:
 | `apps/server` | The T3 Code server: Effect RPC over WebSocket, orchestration, provider drivers, persistence, CLI |
 | `apps/web` | The thread UI, composer, diff panel, and the client runtime's React bindings |
 | `packages/contracts`, `packages/shared`, `packages/client-runtime` | The typed RPC contract, shared helpers, and the framework-free client state the web app and Rennet's daemon module both consume |
-| `packages/effect-codex-app-server`, `packages/effect-acp`, `packages/tailscale` | Provider transports the server imports |
+| `packages/effect-codex-app-server`, `packages/effect-acp`, `packages/tailscale`, `packages/ssh` | Provider and remote-host transports the server imports |
 | `package.json`, `tsconfig.base.json`, `vite.config.ts`, `scripts/lib` | The root manifest (`"type": "module"`), base compiler options, the root Vite Plus config, and the build helpers `apps/server` and `apps/web` import by relative path |
 | `patches` | Upstream's pnpm patches; only those for installed versions are declared in `pnpm-workspace.yaml` |
 | `LICENSE` | The MIT licence and copyright notice |
@@ -110,7 +110,7 @@ the vendored manifests reference, the `patchedDependencies` for installed
 versions, the package extensions Vite Plus and Effect's Vitest wrapper need, and
 a small set of pins that reproduce upstream's lockfile where a fresh resolve
 would change what the code compiles or generates against: the Claude Agent SDK
-at 0.3.170 for the vendored server, the TanStack router plugin (which
+at 0.3.276 for the vendored server, the TanStack router plugin (which
 regenerates `routeTree.gen.ts` on every build), and React at Rennet's version so
 the hoisted store holds exactly one copy. Overrides also strip the Clerk wallet
 adapters upstream strips.
@@ -120,7 +120,7 @@ Vendored code keeps upstream's formatting and lint. Biome and ESLint ignore
 fold into wall-to-wall conflicts.
 
 Each vendored package is an Nx project named `t3code-<package>` with `typecheck`
-(via `tsgo`), `test` (via `vp test run`), and, for the server and web app,
+(via TypeScript 7's native `tsc`), `test` (via `vp test run`), and, for the server and web app,
 `build` (`vp pack` and `vp build`). Typecheck and build run in `pnpm check`; the
 upstream test suites do not.
 
@@ -135,11 +135,16 @@ ledger, and Rennet's own tests of the code that imports them.
 The suites' inputs include the `t3codeShared`
 named input so a change to the vendored root config busts the cache. Two
 projects typecheck through a `tsconfig.rennet.json` that extends upstream's
-config with a narrower `include`: the server drops `../../scripts/lib` (its
-build-tooling tests import an upstream workspace package that is not vendored)
-and the web app drops `vite.config.ts` (two copies of Vite's types in the
-hoisted store exceed the compiler's comparison depth; the build proves the
-config runs). Four upstream tests are excluded by name because they read files
+config with a narrower file set: the server drops `../../scripts/lib` and
+`scripts/cli.ts` (upstream's build tooling, which imports an upstream workspace
+package that is not vendored), and the web app drops `vite.config.ts` and
+`src/bundledDev.test.ts` (two copies of Vite's types in the hoisted store
+exceed the compiler's comparison depth; the build proves the config runs). The
+web build also runs without upstream's third-party licence plugin, which reads
+upstream files outside the vendored paths and fetches licence texts over the
+network; Rennet's own notices come from `scripts/generate-notices.mjs`.
+`packages/t3-chat` registers T3's router type for its own typecheck, because the
+vendored web modules it compiles are typed against that registration. Four upstream tests are excluded by name because they read files
 outside the vendored paths: the server's triage playbook, mobile activity feed,
 and symlinked-entrypoint tests, and the web app's ghostty runtime ABI test.
 

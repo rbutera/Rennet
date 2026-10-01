@@ -75,9 +75,10 @@ in lower case is Apache-2.0.
 `vendor/t3code/UPSTREAM.json` and advanced by `pnpm t3:fold`. Its packages join
 the workspace under the `vendor/t3code/apps/*` and `vendor/t3code/packages/*`
 globs and keep upstream's toolchain: Vite Plus (`vp`) for bundling and tests,
-`tsgo` from `@typescript/native-preview` for typechecking, and a `catalog:`
+TypeScript 7's native `tsc` for typechecking, and a `catalog:`
 block in `pnpm-workspace.yaml` that repeats upstream's pinned versions,
-including the Effect 4 beta line. The Effect beta and the Clerk client packages
+including the Effect 4 release-candidate line. The Effect release candidate,
+the Clerk client packages, and Vite Plus with its platform binaries
 are name-and-version entries in `minimumReleaseAgeExclude`, the same shape as
 the Claude Agent SDK, because upstream pins them exactly and a fold moves them
 together. A small set of overrides reproduces upstream's lockfile where a fresh
@@ -98,7 +99,7 @@ file is listed in `vendor/t3code/PATCHES.md`; see
 | Type checking | TypeScript |
 | Renderer builds | Vite |
 | Unit and integration tests | Vitest |
-| Vendored T3 Code bundling, tests, and typecheck | Vite Plus (`vp`) and `tsgo`, behind Nx `t3code-*` projects |
+| Vendored T3 Code bundling, tests, and typecheck | Vite Plus (`vp`) and TypeScript 7 `tsc`, behind Nx `t3code-*` projects |
 | Electron journeys | Playwright |
 | Desktop packaging and release | Electron Forge |
 | Desktop runtime | Electron |

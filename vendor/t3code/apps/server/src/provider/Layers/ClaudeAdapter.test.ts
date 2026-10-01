@@ -666,6 +666,7 @@ describe("ClaudeAdapterLive", () => {
       providerInstanceId: ProviderInstanceId.make("claudeAgent"),
       endpoint: "http://127.0.0.1:9111/mcp",
       authorizationHeader: `Bearer ${sidecarSentinel}`,
+      capabilities: new Set(["preview"]),
     });
 
     // The SDK serialises its whole `mcpServers` option into ONE
@@ -771,6 +772,7 @@ describe("ClaudeAdapterLive", () => {
       providerInstanceId: ProviderInstanceId.make("claudeAgent"),
       endpoint: "http://127.0.0.1:9111/mcp",
       authorizationHeader: "Bearer t3-own-secret",
+      capabilities: new Set(["preview"]),
     });
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -813,6 +815,7 @@ describe("ClaudeAdapterLive", () => {
       providerInstanceId: ProviderInstanceId.make("claudeAgent"),
       endpoint: "http://127.0.0.1:9111/mcp",
       authorizationHeader: "Bearer t3-own-secret",
+      capabilities: new Set(["preview"]),
     });
     const mcpServers = {
       board: {

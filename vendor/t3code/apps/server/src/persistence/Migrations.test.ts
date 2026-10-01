@@ -13,7 +13,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { makeMigrationLoader } from "./Migrations.ts";
 import { makeSqlitePersistenceLive } from "./Layers/Sqlite.ts";
-import * as NodeSqliteClient from "./NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 /**
  * Plays the OTHER connection in the fork-column race: it takes SQLite's
