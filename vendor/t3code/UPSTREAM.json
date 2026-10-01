@@ -17,6 +17,7 @@
     "packages/effect-codex-app-server",
     "packages/effect-acp",
     "packages/tailscale",
+    "packages/ssh",
     "apps/server",
     "apps/web"
   ]
