@@ -446,16 +446,23 @@ function locusProbes(
   };
 }
 
+/** Forge discovery's effects without its forge-CLI probes, which source-control detection
+ *  replaces with its own. */
+function withoutForgeProbes<T extends { probeAuth: unknown; probeVersion: unknown }>(
+  deps: T,
+): Omit<T, "probeAuth" | "probeVersion"> {
+  const copy: Partial<T> = { ...deps };
+  delete copy.probeAuth;
+  delete copy.probeVersion;
+  return copy as Omit<T, "probeAuth" | "probeVersion">;
+}
+
 /** The default (host) effects: forge discovery's login-shell PATH and filesystem, with
  *  `--version` and `git lfs version` run on the host under this process's environment. */
 export function defaultSourceControlDetectionDeps(
   run: LocusRun = execaLocusRun,
 ): SourceControlDetectionDeps {
-  const {
-    probeAuth: _probeAuth,
-    probeVersion: _probeVersion,
-    ...forge
-  } = defaultForgeDetectionDeps();
+  const forge = withoutForgeProbes(defaultForgeDetectionDeps());
   // One login-shell harvest per detection pass, however many binaries it resolves.
   let harvested: Promise<string | null> | undefined;
   return {

@@ -6301,7 +6301,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // for itself, so the two cannot disagree.
       const current = sessionStore.load(sessionId);
       if (current?.largeFiles !== undefined) {
-        const { largeFiles: _dropped, ...rest } = current;
+        const rest = { ...current };
+        delete rest.largeFiles;
         sessionStore.save(rest);
       }
     } else {

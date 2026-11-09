@@ -366,7 +366,7 @@ export async function runInstallPlan<P>(
     const line = `$ ${displayStep(step)}\n`;
     record("stdout")(line);
     let exitCode: number | null = null;
-    let failed = false;
+    let failed: boolean;
     let cancelled = options.signal?.aborted === true;
     if (cancelled) {
       failed = true;

@@ -186,8 +186,12 @@ export function largeFileSkipOverridesText(lfsAvailable = false): string {
  * would then fail. So such a path is refused, never encoded.
  */
 export function isIndexablePath(path: string): boolean {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: the control characters are the point.
-  return !/[\u0000-\u001f\u007f]/.test(path);
+  // A code-point scan rather than a regex of control characters, which both linters flag.
+  for (const char of path) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code <= 0x1f || code === 0x7f) return false;
+  }
+  return true;
 }
 
 /** The text of an index naming `gitDirs`, each including `overridesPath`. */
