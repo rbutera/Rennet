@@ -1022,6 +1022,45 @@ describe("a session's own large-file mode", () => {
     await server.dispatch("session.cancelPreparation", { sessionId });
   }, 60_000);
 
+  it("a session told to skip, in a project set to download: the pull request's first checkout skips too", async () => {
+    const fixture = lfsRepository();
+    const { server, mint, waitFor, setMode } = await serverFor(fixture);
+    await setMode("download");
+    const sessionId = await mint({ largeFiles: "skip" });
+    const drafting = await waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("drafting"),
+    );
+    const store = new SessionStore(join(fixture.dataDir, "sessions"));
+    const boundRoot = store.load(sessionId)?.boundRoot ?? "";
+    expect(readFileSync(join(boundRoot, "assets", "model.bin"), "utf8")).toBe(POINTER);
+    // The FRONT DOOR is the pull request's first checkout, and it ran under the session's
+    // mode: no download filter ran at all, not even one that failed and was retried.
+    expect(fixture.filterRuns()).toBe(0);
+    expect(drafting.workspaceNotes).toEqual([LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE]);
+    await server.dispatch("session.cancelPreparation", { sessionId });
+  }, 60_000);
+
+  it("a session told to download, in a project set to skip, without Git LFS: it fails classified and never drafts", async () => {
+    const fixture = lfsRepository();
+    const { mint, waitFor, setMode } = await serverFor(fixture);
+    await setMode("skip");
+    const sessionId = await mint({ largeFiles: "download" });
+    const failed = await waitFor(sessionId, (session) =>
+      expect(["failed", "drafting"]).toContain(session?.preparation?.status),
+    );
+    // Downloading needs Git LFS, which is missing: the session's own mode cannot be met, and
+    // a placeholder checkout under the project's skip would be a review the reviewer did not
+    // ask for.
+    expect(failed.preparation).toMatchObject({
+      status: "failed",
+      stage: "workspace",
+      kind: "tool-missing",
+      tool: "git-lfs",
+      action: "install",
+    });
+    expect(registered(fixture.dataDir)).toEqual([]);
+  }, 60_000);
+
   it("an answer not remembered binds this session under it, and the project still asks", async () => {
     const fixture = lfsRepository();
     const { server, mint, waitFor } = await serverFor(fixture);

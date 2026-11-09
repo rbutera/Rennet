@@ -99,6 +99,8 @@ export interface ProjectPullRequestOpenInput {
   readonly number: number;
   readonly repoPath: string | undefined;
   readonly retrospective: boolean;
+  /** The large-file mode of the session the pull request is opened for, when it was told one. */
+  readonly largeFiles?: "download" | "skip";
 }
 
 export type ProjectPullRequestOpener<TResult> = (

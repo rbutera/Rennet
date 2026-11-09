@@ -3159,6 +3159,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     repoPath: string | undefined,
     retrospective: boolean,
     forge: ForgePort,
+    /** The large-file mode the session this pull request is opened FOR was told, if any. */
+    sessionLargeFiles?: LargeFileMode,
   ): Promise<Review> {
     const root = await resolvePrRepoRoot(prRef, repoPath);
     const locus = locusForRepo(root);
@@ -3227,8 +3229,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           .resolveWorktreePlacement(root)
           .catch(() => defaultWorktreePlacement(dataDir));
       // The session this pull request is being opened for may carry its own large-file mode
-      // (`rennet review --large-files`): it wins over the project's here as at the bind.
-      const sessionMode = sessionLargeFilesFor(review);
+      // (`rennet review --large-files`, or an answer not remembered for the project): it wins
+      // over the project's here as at the bind. PASSED IN by the preparation that opens it,
+      // because the review this call just created is not attached to that session until the
+      // call returns — asking the store by review would find no session and miss the mode.
+      // A review opened again for a session that already owns it finds it in the store.
+      const sessionMode = sessionLargeFiles ?? sessionLargeFilesFor(review);
       const placement =
         sessionMode === undefined
           ? resolvedPlacement
@@ -3320,6 +3326,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     ref: string,
     repoPath: string | undefined,
     retrospective: boolean,
+    sessionLargeFiles?: LargeFileMode,
   ): Promise<Review> {
     const prRef = parseGitHubPrRef(ref);
     if (!prRef) {
@@ -3331,13 +3338,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       repoPath,
       retrospective,
       new GitHubForgeAdapter({ octokit: await resolveGitHubOctokit() }),
+      sessionLargeFiles,
     );
   }
 
   const projectPullRequestOpeners = createForgeRegistry<ProjectPullRequestOpener<Review>>([
     {
       forge: "github",
-      implementation: ({ commandId, repository, number, repoPath, retrospective }) =>
+      implementation: ({ commandId, repository, number, repoPath, retrospective, largeFiles }) =>
         resolveGitHubOctokit().then((octokit) =>
           openPullRequestRef(
             commandId,
@@ -3345,12 +3353,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             repoPath,
             retrospective,
             new GitHubForgeAdapter({ octokit }),
+            largeFiles,
           ),
         ),
     },
     {
       forge: "gitlab",
-      implementation: async ({ commandId, repository, number, repoPath, retrospective }) => {
+      implementation: async ({
+        commandId,
+        repository,
+        number,
+        repoPath,
+        retrospective,
+        largeFiles,
+      }) => {
         const root = await resolvePrRepoRoot({ repo: repository, number }, repoPath);
         return openPullRequestRef(
           commandId,
@@ -3358,6 +3374,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           root,
           retrospective,
           gitLabForgeAdapterForRoot(root),
+          largeFiles,
         );
       },
     },
@@ -5881,6 +5898,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             target.base ?? project?.primaryBranch ?? "HEAD",
           );
         } else {
+          // THIS session's own large-file mode, handed to the front door explicitly: the review
+          // it is about to create is attached to the session only after it returns.
+          const sessionLargeFiles = sessionStore.load(sessionId)?.largeFiles;
           review =
             target.forgeRepository === undefined
               ? await openPullRequest(
@@ -5888,6 +5908,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                   `${target.repository ?? ""}#${target.prNumber}`,
                   root,
                   false,
+                  sessionLargeFiles,
                 )
               : await openProjectPullRequest(projectPullRequestOpeners, {
                   commandId: request.commandId,
@@ -5895,6 +5916,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                   number: target.prNumber,
                   repoPath: root,
                   retrospective: false,
+                  ...(sessionLargeFiles === undefined ? {} : { largeFiles: sessionLargeFiles }),
                 });
         }
         await waitForPreparationDelay(
