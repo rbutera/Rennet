@@ -187,7 +187,14 @@ export function sessionHandlers(rt: DispatchRuntime) {
       // construction: no store wired, or a session
       // with no captured turns yet, returns `[]` — capability present, never fabricated content.
       const rows = rt.deps.transcriptRowsForReview?.(input.reviewId) ?? [];
-      const workspace = (await rt.deps.boundWorkspaceForReview?.(input.reviewId))?.root;
+      // The trail names the bound workspace when there is one. A bind that cannot happen yet —
+      // the large-file question is still open — or that failed leaves the trail on the
+      // repository: a transcript read is never the thing that checks a review out, and never
+      // fails over one.
+      const workspace = await rt.deps
+        .boundWorkspaceForReview?.(input.reviewId)
+        .then((bound) => bound?.root)
+        .catch(() => undefined);
       return parseCommandOutput(name, {
         trail: sessionTrailForReview(review, workspace),
         rows: [...rows],

@@ -1280,6 +1280,21 @@ export class ClassifiedWorkspaceError extends Error {
   }
 }
 
+/**
+ * A bind refused because the large-file question is still open for its review
+ * (large-file-checkout spec): the repository uses Git LFS, its project has not chosen, and
+ * the bind would CREATE a checkout. Only a preparation can ask the question, so a bind
+ * reached any other way — the chat thread, a handoff, a transcript read, any utility turn —
+ * must not check anything out under a mode nobody chose. Its message is plain words; the
+ * answer (`session.chooseLargeFileMode`, or the setting) lets the next bind proceed.
+ */
+export class LargeFileChoicePendingError extends Error {
+  constructor() {
+    super("This review is waiting for you to choose whether to download or skip large files.");
+    this.name = "LargeFileChoicePendingError";
+  }
+}
+
 export interface RennetServerOptions {
   /**
    * The per-user data directory (Electron passes app.getPath("userData")). The SQLite store,
@@ -2799,6 +2814,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       }
       return repinned.boundRoot;
     }
+    // THE LARGE-FILE QUESTION IS NOT THE BIND'S TO ANSWER. While it is open, no path —
+    // the preparation included — creates a checkout: the preparation turns this refusal into
+    // its `awaiting` state, and every other path reports it in plain words.
+    if (await largeFileAnswerOwed(review, workspaceDeps)) throw new LargeFileChoicePendingError();
     // THE FRONT DOOR AND THE BIND AGREE (2.5). A checkout the front door already tried and
     // could not create fails the same way here, classified, instead of being repeated blind —
     // unless the large-file mode changed since (the reviewer's answer is the reason to try
@@ -2891,6 +2910,33 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       );
       return [];
     }
+  }
+
+  /**
+   * Whether the large-file question is owed for this review's first bind: the project has
+   * not answered (`ask`), the tree being checked out routes files through Git LFS, and the
+   * bind would actually CREATE a checkout — a branch review of the reviewer's own checkout
+   * under `share` checks nothing out, so it is never asked.
+   */
+  async function largeFileAnswerOwed(
+    review: Review,
+    workspaceDeps: ReturnType<typeof workspaceDepsFor>,
+  ): Promise<boolean> {
+    const patchset = review.patchsets.find((entry) => entry.id === review.activePatchsetId);
+    if (patchset === undefined) return false;
+    const placement = await workspaceDeps
+      .placementFor(review.repositoryRoot)
+      .catch(() => undefined);
+    if ((placement?.largeFiles ?? "ask") !== "ask") return false;
+    if (
+      !(await repoUsesLfs(review.repositoryRoot, {
+        ref: patchset.repository.headOid,
+        git: gitForRepo(review.repositoryRoot),
+      }))
+    ) {
+      return false;
+    }
+    return bindWouldCreateCheckout(review, workspaceDeps);
   }
 
   /**
@@ -4335,7 +4381,27 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // fallback: this is the read the CHAT and the HANDOFF thread are created from, and a
     // thread's cwd is fixed at creation. Getting the clone here is not a degraded answer, it
     // is a second thread for the same session rooted in the wrong tree.
-    const root = await bindWorkspaceFor(review);
+    // A bind that fails reaches the dock and the handoff as a sentence, never as git's
+    // stderr: the large-file question in its own words, anything else classified, with
+    // git's words left in the log.
+    let root: string;
+    try {
+      root = await bindWorkspaceFor(review);
+    } catch (error) {
+      if (error instanceof LargeFileChoicePendingError) throw error;
+      if (error instanceof ClassifiedWorkspaceError) throw error;
+      siblingLog(
+        `rennet: review ${review.id} could not bind its workspace — ${error instanceof Error ? error.message : String(error)}`,
+      );
+      throw new ClassifiedWorkspaceError(
+        classifyGitFailure(error, {
+          subject:
+            review.postTarget !== undefined || review.retrospective === true
+              ? "pull request"
+              : "branch",
+        }),
+      );
+    }
     const branch =
       review.postTarget === undefined && review.retrospective !== true
         ? review.patchsets.find((entry) => entry.id === review.activePatchsetId)?.repository.headRef
@@ -5746,34 +5812,24 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   }
 
   /**
-   * The workspace stage of a preparation: ask the large-file question when it is owed, else
-   * bind, with a failed bind classified (review-preparation-reliability 2.3).
+   * The workspace stage of a preparation: bind, and ask the large-file question when the bind
+   * says it is owed, with any other failed bind classified (review-preparation-reliability
+   * 2.3).
    *
-   * The question is owed when the session has no binding yet, the project has not answered
-   * (`ask`), the tree being checked out routes files through Git LFS, and the bind would
-   * actually CREATE a checkout — a branch review of the reviewer's own checkout under
-   * `share` checks nothing out, so it is never asked. Then preparation stops in `awaiting`
-   * and returns; `session.chooseLargeFileMode` records the answer and resumes it.
+   * The bind itself decides whether the question is owed (`largeFileAnswerOwed`), so the
+   * preparation and every lazy path agree: no checkout is created under a mode nobody chose.
+   * When it is, preparation stops in `awaiting` and returns; `session.chooseLargeFileMode`
+   * records the answer and resumes it.
    */
   async function prepareWorkspace(
     sessionId: string,
     review: Review,
     controller: AbortController,
   ): Promise<"bound" | "awaiting"> {
-    if (sessionStore.load(sessionId)?.boundRoot === undefined) {
-      const placement = await settingsComposition
-        .resolveWorktreePlacement(review.repositoryRoot)
-        .catch(() => undefined);
-      const patchset = review.patchsets.find((entry) => entry.id === review.activePatchsetId);
-      if (
-        (placement?.largeFiles ?? "ask") === "ask" &&
-        patchset !== undefined &&
-        (await repoUsesLfs(review.repositoryRoot, {
-          ref: patchset.repository.headOid,
-          git: gitForRepo(review.repositoryRoot),
-        })) &&
-        (await bindWouldCreateCheckout(review, workspaceDepsFor(review)))
-      ) {
+    try {
+      await bindWorkspaceFor(review);
+    } catch (error) {
+      if (error instanceof LargeFileChoicePendingError) {
         const lfsAvailable = await gitLfsAvailableOn(locusForRepo(review.repositoryRoot));
         setCurrentPreparation(sessionId, controller, {
           status: "awaiting",
@@ -5783,10 +5839,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         });
         return "awaiting";
       }
-    }
-    try {
-      await bindWorkspaceFor(review);
-    } catch (error) {
       if (error instanceof ClassifiedWorkspaceError) throw error;
       throw new ClassifiedWorkspaceError(
         classifyGitFailure(error, {

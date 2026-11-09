@@ -311,6 +311,48 @@ describe("the workspace stage of a Git LFS pull request (review-preparation-reli
     await server.dispatch("session.cancelPreparation", { sessionId });
   }, 60_000);
 
+  it("while the question is open, a transcript read or a chat thread checks nothing out", async () => {
+    const fixture = lfsRepository();
+    const { server, mint, waitFor } = await serverFor(fixture);
+    const sessionId = await mint();
+    const asked = await waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("awaiting"),
+    );
+    const reviewId = asked.reviewId ?? "";
+    // A filter that runs: a lazy bind that ignored the open question would now check the
+    // pull request out, reading `ask` as download.
+    fixture.installGitLfs();
+
+    // The transcript read answers, on the repository, and binds nothing.
+    const transcript = (await server.dispatch("session.transcript", { reviewId })) as {
+      rows: unknown[];
+    };
+    expect(transcript.rows).toEqual([]);
+    // Creating the review's chat thread is refused, in plain words (asserted below).
+    const sent = (await server.dispatch("chat.t3Send", { reviewId, text: "What changed?" })) as {
+      status: string;
+      reason?: string;
+    };
+
+    const store = new SessionStore(join(fixture.dataDir, "sessions"));
+    expect(store.load(sessionId)?.boundRoot).toBeUndefined();
+    // No checkout exists anywhere: the repository has only the reviewer's own worktree.
+    const worktrees = fixture
+      .git("worktree", "list", "--porcelain")
+      .split("\n")
+      .filter((line) => line.startsWith("worktree "));
+    expect(worktrees).toEqual([`worktree ${fixture.repo}`]);
+    expect(sent).toEqual({
+      status: "unavailable",
+      reason: "This review is waiting for you to choose whether to download or skip large files.",
+    });
+    const still = await waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("awaiting"),
+    );
+    expect(still.preparation).toMatchObject({ status: "awaiting", reviewId });
+    await server.dispatch("session.cancelPreparation", { sessionId });
+  }, 60_000);
+
   it("a front door that fails for missing Git LFS fails the session classified, then Retry binds after the install", async () => {
     const fixture = lfsRepository();
     const { server, projectId, mint, waitFor } = await serverFor(fixture);
