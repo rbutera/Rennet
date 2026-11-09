@@ -13,6 +13,8 @@ const INVOKE_MESSAGE =
   "No direct bridge.invoke in app-ui surfaces — read through useCommand, write through useMutation, stream through useCommandStream (data/ hooks over useBridge). Only src/data/ may call .invoke.";
 const TOGGLE_MESSAGE =
   "No hand-rolled segmented control in app-ui surfaces — use ToggleGroup/Toggle from @rennet/ui instead of hand-rolling a group of aria-pressed buttons or a role=radiogroup with pressed children (autopsy S6).";
+const VIEWPORT_EMULATION_MESSAGE =
+  "No viewport emulation in the desktop e2e harness — resize the real window with resizeAppWindow from apps/desktop/e2e/window-size.ts. An emulated viewport inside a larger Electron window leaves the rest unpainted and strobes it white/black on every re-squeeze. A CDP device-metrics override may change deviceScaleFactor only (width: 0, height: 0).";
 
 /** A rule that reports a single esquery selector — the invoke + hex fences. */
 function selectorRule(selector, message) {
@@ -107,6 +109,15 @@ const rennet = {
       INVOKE_MESSAGE,
     ),
     "no-handrolled-toggle": noHandrolledToggle,
+    // `page.setViewportSize(...)`, and a width/height other than a literal 0 in an
+    // `Emulation.setDeviceMetricsOverride` CDP call (0 means "keep the window's size").
+    "no-viewport-emulation": selectorRule(
+      [
+        "CallExpression[callee.property.name='setViewportSize']",
+        "CallExpression[arguments.0.value='Emulation.setDeviceMetricsOverride'] > ObjectExpression > Property[key.name=/^(width|height)$/]:not([value.value=0])",
+      ].join(", "),
+      VIEWPORT_EMULATION_MESSAGE,
+    ),
   },
 };
 
@@ -332,6 +343,16 @@ export default [
     rules: {
       "rennet/no-direct-invoke": "error",
       "rennet/no-handrolled-toggle": "error",
+    },
+  },
+  {
+    // The desktop e2e harness sizes the REAL Electron window (apps/desktop/e2e/window-size.ts).
+    // Viewport emulation squeezed the page inside a bigger window, and the unpainted rest of
+    // it strobed white/black at the display's refresh rate on the screen of whoever ran it.
+    files: ["apps/desktop/e2e/**/*.ts"],
+    plugins: { rennet },
+    rules: {
+      "rennet/no-viewport-emulation": "error",
     },
   },
 ];

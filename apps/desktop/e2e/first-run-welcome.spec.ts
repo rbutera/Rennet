@@ -2,6 +2,7 @@ import { rmSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { WsRennetBridge } from "@rennet/client";
 import { launchRennet, makeTempDir, seedReviewRepo } from "./harness";
+import { resizeAppWindow } from "./window-size";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The first-run welcome (C21), driven in the real app.
@@ -116,17 +117,17 @@ test("the first-run welcome is what a first run gets, and completing it is what 
       { width: 1280, height: 720 },
       { width: 980, height: 640 },
     ]) {
-      await page.setViewportSize(viewport);
+      await resizeAppWindow(application, page, viewport);
       for (const selector of [".welcome-panel", ".welcome-arrival"]) {
         const bounds = await page.locator(selector).boundingBox();
         expect(bounds).not.toBeNull();
         expect((bounds?.y ?? 0) + (bounds?.height ?? 0)).toBeLessThanOrEqual(viewport.height);
       }
     }
-    await page.setViewportSize({ width: 390, height: 844 });
+    await resizeAppWindow(application, page, { width: 390, height: 844 });
     await page.getByRole("button", { name: /^Continue$/ }).scrollIntoViewIfNeeded();
     await expect(page.getByRole("button", { name: /^Continue$/ })).toBeInViewport();
-    await page.setViewportSize({ width: 980, height: 640 });
+    await resizeAppWindow(application, page, { width: 980, height: 640 });
 
     // ── Step 2 — Tools. Detection is DISCLOSED, never claimed: git is required and present,
     // and this environment's harnesses are switched off, so their rows say so. ──

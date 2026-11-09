@@ -21,6 +21,7 @@ import {
   seedReviewRepo,
   writeRepoFile,
 } from "./harness";
+import { resizeAppWindow } from "./window-size";
 
 test("the board reports a failed drafting attempt without disguising it as empty", async () => {
   test.setTimeout(120_000);
@@ -196,7 +197,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       timeout: 60_000,
     });
 
-    await page.setViewportSize({ width: 1440, height: 900 });
+    await resizeAppWindow(application, page, { width: 1440, height: 900 });
     const topBar = page.locator('[data-slot="session-top-bar"]');
     const rail = topBar.locator('[data-slot="lens-switcher"] [role="tablist"]');
     await expect(rail).toBeVisible();
@@ -329,7 +330,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     await expect(artifactSource).toHaveAttribute("href", `#${designSectionId}`);
     await expect(artifactSource).toHaveAttribute("data-target-id", designSectionId);
     await expect(artifactSource).toHaveAttribute("aria-label", "Jump to widget/spec.md");
-    await page.setViewportSize({ width: 1440, height: 480 });
+    await resizeAppWindow(application, page, { width: 1440, height: 480 });
     const boardScroller = page
       .locator(".min-h-0.flex-1.overflow-y-auto")
       .filter({ has: page.locator('[data-kind="lens-board-view"]') });
@@ -364,7 +365,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
         return sectionBox.y >= unobscuredTop - 1;
       })
       .toBe(true);
-    await page.setViewportSize({ width: 1440, height: 900 });
+    await resizeAppWindow(application, page, { width: 1440, height: 900 });
     const capabilityGrid = board.getByRole("navigation", { name: "Design capabilities" });
     const capability = capabilityGrid.getByRole("link", { name: "Jump to widget-value" });
     await expect(capability).toHaveAttribute("href", `#${designSectionId}`);
@@ -412,7 +413,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       "none",
     );
 
-    await page.setViewportSize({ width: 720, height: 900 });
+    await resizeAppWindow(application, page, { width: 720, height: 900 });
     await expect
       .poll(async () => (await topBar.boundingBox())?.width ?? Number.POSITIVE_INFINITY)
       .toBeLessThan(containerThreshold);
@@ -422,7 +423,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     await expect(sequenceTab).toBeVisible();
     await expect(sequenceTab).toHaveAccessibleName(/Sequence/);
 
-    await page.setViewportSize({ width: 1440, height: 900 });
+    await resizeAppWindow(application, page, { width: 1440, height: 900 });
     await expect
       .poll(() => sequenceLabel.evaluate((label) => getComputedStyle(label).display))
       .not.toBe("none");
@@ -556,7 +557,7 @@ test("review activity and code evidence remain usable across navigation", async 
       ],
     });
     await page.reload();
-    await page.setViewportSize({ width: 1440, height: 900 });
+    await resizeAppWindow(application, page, { width: 1440, height: 900 });
     const board = page.locator("article[data-lens]");
     const tabs = page.getByRole("tablist", { name: "Lens" });
     for (const name of ["Design", "Sequence", "Decisions", "Flagged", "Noise"]) {
@@ -765,7 +766,7 @@ test("review activity and code evidence remain usable across navigation", async 
         }),
       );
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
-    await page.setViewportSize({ width: 900, height: 800 });
+    await resizeAppWindow(application, page, { width: 900, height: 800 });
     const narrowHeader = page.locator('[data-slot="session-top-bar"]');
     await expect
       .poll(async () => {

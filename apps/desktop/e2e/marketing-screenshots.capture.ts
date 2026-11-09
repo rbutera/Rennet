@@ -11,6 +11,7 @@ import {
   seedMarketingBoard,
   seedMarketingRepo,
 } from "./marketing-fixture";
+import { resizeAppWindow } from "./window-size";
 
 /**
  * Capture the marketing site's product screenshots from the SHIPPED app (#470).
@@ -27,7 +28,10 @@ import {
  */
 
 const RAW_DIR = resolve("apps/marketing/.screenshots-raw");
-/** The hero slot on the marketing page is 1536×1024 CSS pixels; capture at exactly that. */
+/**
+ * The hero slot on the marketing page is 1536×1024 CSS pixels; the app window's content area is
+ * resized to exactly that, so the page renders at the size the capture claims.
+ */
 const VIEWPORT = { width: 1536, height: 1024 };
 
 async function openCapturedReview(page: Page, repository: string, userData: string) {
@@ -224,10 +228,13 @@ async function waitForConversation(page: Page): Promise<void> {
 
 /**
  * Render and read pixels at a device scale factor of 2 whatever the display is.
- * `--force-device-scale-factor` is ignored by Chromium on macOS, and Playwright's own
- * viewport emulation pins the factor to 1, so the capture goes through one CDP session of
- * its own: the override is re-sent right before every screenshot (a later viewport change
- * would otherwise win) and the screenshot is taken on the same session.
+ * `--force-device-scale-factor` is ignored by Chromium on macOS, and the display's own factor
+ * is 1 on a non-Retina monitor, so the capture goes through one CDP session of its own and
+ * overrides the scale factor ONLY. The size stays the real window's: the window is resized to
+ * `VIEWPORT` with `resizeAppWindow`, and `width: 0, height: 0` tell Chromium to keep using it.
+ * A sized override here is the bug `window-size.ts` describes: it squeezes the page inside a
+ * window of another size, and the unpainted rest strobes white and black. The override is
+ * re-sent right before every screenshot and the screenshot is taken on the same session.
  */
 class RetinaCapture {
   private constructor(private readonly session: CDPSession) {}
@@ -238,8 +245,8 @@ class RetinaCapture {
 
   async screenshot(path: string): Promise<void> {
     await this.session.send("Emulation.setDeviceMetricsOverride", {
-      width: VIEWPORT.width,
-      height: VIEWPORT.height,
+      width: 0,
+      height: 0,
       deviceScaleFactor: 2,
       mobile: false,
     });
@@ -318,7 +325,7 @@ test("capture the marketing product screenshots from the shipped app", async () 
   let { application } = await launchRennet({ repository, userData, home });
   try {
     let page = await application.firstWindow();
-    await page.setViewportSize(VIEWPORT);
+    await resizeAppWindow(application, page, VIEWPORT);
     await completeWelcome(page);
     await addProject(page, repository);
     await openCapturedReview(page, repository, userData);
@@ -332,7 +339,7 @@ test("capture the marketing product screenshots from the shipped app", async () 
     seedMarketingConversation({ userData, reviewId: fixture.reviewId });
     ({ application } = await launchRennet({ repository, userData, home }));
     page = await application.firstWindow();
-    await page.setViewportSize(VIEWPORT);
+    await resizeAppWindow(application, page, VIEWPORT);
     const retina = await RetinaCapture.attach(page);
     const board = page.locator("article[data-lens]");
 
@@ -341,8 +348,8 @@ test("capture the marketing product screenshots from the shipped app", async () 
     for (const scheme of ["light", "dark"] as const) {
       await page.emulateMedia({ colorScheme: scheme, reducedMotion: "reduce" });
       await route(page, fixture.sessionId, "?view=board&lens=sequence");
+      // A reload keeps the native window, and with it the size set above.
       await page.reload();
-      await page.setViewportSize(VIEWPORT);
       await expect(board).toHaveAttribute("data-generation", fixture.generation, {
         timeout: 60_000,
       });
