@@ -67,6 +67,9 @@ export interface SourceControlDetectionDeps
   /** Run `<gitPath> lfs version` in the locus, under the daemon's environment; the version,
    *  or `null`. */
   probeGitLfs(gitPath: string): Promise<string | null>;
+  /** macOS: whether `xcode-select -p` says the command line developer tools are missing.
+   *  `false` when it could not be asked. Absent ⇒ never asked. */
+  developerToolsMissing?(): Promise<boolean>;
 }
 
 export interface DetectSourceControlOptions {
@@ -101,6 +104,8 @@ function knownDirectories(home: string, platform: NodeJS.Platform | undefined): 
 type Resolution =
   | { readonly kind: "resolved"; readonly path: string; readonly version: string }
   | { readonly kind: "unanswered"; readonly path: string; readonly output: string }
+  /** A placeholder that is known not to be the tool, so it was never run. */
+  | { readonly kind: "shim"; readonly path: string }
   | { readonly kind: "missing" };
 
 function resolveBinaryFilename(
@@ -121,10 +126,12 @@ function resolveBinaryFilename(
 }
 
 /** The first executable candidate, in PATH order, proven or not: the one a bare `binary`
- *  would run. Nothing when no searched directory has one. */
+ *  would run. Nothing when no searched directory has one. `isShim` is asked before the
+ *  candidate is run, and a shim is reported without running it. */
 async function resolveBinary(
   binary: string,
   deps: SourceControlDetectionDeps,
+  isShim?: (path: string) => Promise<boolean>,
 ): Promise<Resolution> {
   const delimiter = deps.platform === "win32" ? ";" : ":";
   const joinFor = deps.platform === "win32" ? win32Path.join : posixPath.join;
@@ -150,6 +157,7 @@ async function resolveBinary(
     if (!(await deps.isExecutable(path))) continue;
     // The first executable one is what runs. A failure here is the answer: a later
     // candidate that works is one no bare `git` would ever reach.
+    if (isShim !== undefined && (await isShim(path))) return { kind: "shim", path };
     const probe = await deps.probeVersion(path);
     return probe.version === null
       ? { kind: "unanswered", path, output: probe.output }
@@ -159,8 +167,31 @@ async function resolveBinary(
 }
 
 /** The xcrun shim `/usr/bin/git` is on a Mac without the Command Line Tools: it is on the
- *  PATH, it is executable, and all it does is say the tools are missing. */
-const XCRUN_WITHOUT_TOOLS = /xcrun: error: invalid active developer path/i;
+ *  PATH, it is executable, and all it does is say the tools are missing. A broken tools
+ *  install says "invalid active developer path"; a fresh Mac says "No developer tools were
+ *  found", whether or not it could open the install dialog. */
+const XCRUN_WITHOUT_TOOLS =
+  /xcrun: error: invalid active developer path|No developer tools were found/i;
+
+/** Where macOS keeps that shim. */
+const MACOS_GIT_SHIM = "/usr/bin/git";
+
+/**
+ * Whether the git that would run is the macOS shim with no developer tools behind it.
+ * Asked of `xcode-select -p`, which only reads the configured path, because running the
+ * shim itself on a fresh Mac opens the system's install dialog: detection must never do
+ * that. Only for `/usr/bin/git` on macOS, the one path the shim lives at.
+ */
+function isGitShimWithoutTools(
+  deps: SourceControlDetectionDeps,
+): ((path: string) => Promise<boolean>) | undefined {
+  const developerToolsMissing = deps.developerToolsMissing;
+  if (deps.platform !== "darwin" || developerToolsMissing === undefined) return undefined;
+  return async (path) => path === MACOS_GIT_SHIM && (await developerToolsMissing());
+}
+
+const DEVELOPER_TOOLS_MISSING_DETAIL =
+  "Git is not installed: the macOS command line developer tools are missing. Run `xcode-select --install`, or `brew install git`.";
 
 /** One line of what a failing binary printed, for a detail. */
 function firstLine(output: string): string {
@@ -197,7 +228,7 @@ export async function detectGit(
   deps: SourceControlDetectionDeps,
 ): Promise<DetectedSourceControlTool> {
   try {
-    const resolved = await resolveBinary("git", deps);
+    const resolved = await resolveBinary("git", deps, isGitShimWithoutTools(deps));
     switch (resolved.kind) {
       case "resolved":
         return {
@@ -207,6 +238,14 @@ export async function detectGit(
           path: resolved.path,
           detail: "Git is installed.",
         };
+      case "shim":
+        return {
+          id: "git",
+          version: null,
+          status: "not-installed",
+          path: resolved.path,
+          detail: DEVELOPER_TOOLS_MISSING_DETAIL,
+        };
       case "unanswered": {
         if (deps.platform === "darwin" && XCRUN_WITHOUT_TOOLS.test(resolved.output)) {
           return {
@@ -214,8 +253,7 @@ export async function detectGit(
             version: null,
             status: "not-installed",
             path: resolved.path,
-            detail:
-              "Git is not installed: the macOS command line developer tools are missing. Run `xcode-select --install`, or `brew install git`.",
+            detail: DEVELOPER_TOOLS_MISSING_DETAIL,
           };
         }
         const said = firstLine(resolved.output);
@@ -272,7 +310,8 @@ export async function detectGitLfs(
             : lfsMissingDetail(deps.platform),
       };
     }
-    if (resolved.kind === "unanswered") {
+    // No shim check is passed for git-lfs, so anything unproven here was run and did not answer.
+    if (resolved.kind !== "resolved") {
       return {
         id: "git-lfs",
         version: null,
@@ -426,6 +465,14 @@ export function defaultSourceControlDetectionDeps(
       return harvested;
     },
     ...locusProbes({ kind: "host" }, run),
+    async developerToolsMissing(): Promise<boolean> {
+      try {
+        const result = await run("/usr/bin/xcode-select", ["-p"]);
+        return result.exitCode !== undefined && result.exitCode !== 0;
+      } catch {
+        return false;
+      }
+    },
   };
 }
 

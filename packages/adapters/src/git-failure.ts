@@ -69,6 +69,8 @@ const GIT_MISSING: readonly RegExp[] = [
   /'git(?:\.exe)?' is not recognized as an internal or external command/i,
   /spawn\s+\S*\bgit(?:\.exe)?\s+ENOENT/i,
   /xcrun: error: invalid active developer path/i,
+  // A fresh Mac's /usr/bin/git shim, whether or not it could open the install dialog.
+  /No developer tools were found/i,
 ];
 
 const LARGE_FILE: readonly RegExp[] = [

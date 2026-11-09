@@ -31,6 +31,8 @@ interface Fixture {
   readonly lfsHealth?: Record<string, string>;
   readonly platform?: NodeJS.Platform;
   readonly throwOnList?: boolean;
+  /** What `xcode-select -p` says about the developer tools. Absent ⇒ no such probe. */
+  readonly developerToolsMissing?: boolean;
 }
 
 function recordingDeps(fixture: Fixture): { deps: SourceControlDetectionDeps; calls: string[] } {
@@ -58,6 +60,14 @@ function recordingDeps(fixture: Fixture): { deps: SourceControlDetectionDeps; ca
       return Promise.resolve(fixture.lfsHealth?.[gitPath] ?? null);
     },
     platform: fixture.platform ?? "darwin",
+    ...(fixture.developerToolsMissing === undefined
+      ? {}
+      : {
+          developerToolsMissing: () => {
+            calls.push("xcode-select -p");
+            return Promise.resolve(fixture.developerToolsMissing === true);
+          },
+        }),
   };
   return { deps, calls };
 }
@@ -185,6 +195,97 @@ describe("git and git-lfs probes", () => {
     expect(await detectGit(recordingDeps({ ...fixture, platform: "linux" }).deps)).toMatchObject({
       status: "unreachable",
     });
+  });
+
+  it.each([
+    "xcode-select: note: No developer tools were found, requesting install. If developer tools are located at a non-default location on disk, use `sudo xcode-select --switch path/to/Xcode.app` to specify the Xcode that you wish to use for command line developer tools, and cancel the installation dialog.",
+    "xcode-select: note: No developer tools were found, and no install could be requested (perhaps no UI is present), please install manually from 'developer.apple.com'.",
+  ])("reads the fresh-Mac shim's words as Git not installed: %s", async (shim) => {
+    const git = await detectGit(
+      recordingDeps({
+        envPath: "/usr/bin:/bin",
+        dirContents: { "/usr/bin": ["git"] },
+        executables: new Set(["/usr/bin/git"]),
+        failures: { "/usr/bin/git": shim },
+        platform: "darwin",
+      }).deps,
+    );
+    expect(git).toMatchObject({ status: "not-installed", version: null, path: "/usr/bin/git" });
+    expect(git.detail).toContain("`xcode-select --install`");
+  });
+
+  it("never runs /usr/bin/git when xcode-select says the developer tools are missing", async () => {
+    const shim = {
+      envPath: "/usr/bin:/bin",
+      dirContents: { "/usr/bin": ["git"] },
+      executables: new Set(["/usr/bin/git"]),
+      platform: "darwin" as const,
+    };
+    const missing = recordingDeps({ ...shim, developerToolsMissing: true });
+    const git = await detectGit(missing.deps);
+    expect(git).toMatchObject({ status: "not-installed", version: null, path: "/usr/bin/git" });
+    expect(git.detail).toContain("`xcode-select --install`");
+    expect(missing.calls).toEqual(["xcode-select -p"]);
+
+    // With the tools present, /usr/bin/git is the real git and is asked as before.
+    const present = recordingDeps({
+      ...shim,
+      developerToolsMissing: false,
+      versions: { "/usr/bin/git": "2.39.5" },
+    });
+    expect(await detectGit(present.deps)).toMatchObject({ status: "available", version: "2.39.5" });
+    expect(present.calls).toEqual(["xcode-select -p", "version /usr/bin/git"]);
+  });
+
+  it("the host deps ask xcode-select -p and never hand /usr/bin/git to the runner", async () => {
+    const ran: string[] = [];
+    const run: LocusRun = async (file, args) => {
+      ran.push([file, ...args].join(" "));
+      return file === "/usr/bin/xcode-select"
+        ? {
+            exitCode: 2,
+            stdout: "",
+            stderr:
+              "xcode-select: error: unable to get active developer directory, use `sudo xcode-select --switch path/to/Xcode.app` to set one (or see `man xcode-select`)",
+          }
+        : { exitCode: 0, stdout: "git version 2.39.5 (Apple Git-154)", stderr: "" };
+    };
+    const deps: SourceControlDetectionDeps = {
+      ...defaultSourceControlDetectionDeps(run),
+      platform: "darwin",
+      envPath: "/usr/bin:/bin",
+      loginShellPath: () => Promise.resolve(null),
+      listDir: (directory) => Promise.resolve(directory === "/usr/bin" ? ["git"] : []),
+      isExecutable: (path) => Promise.resolve(path === "/usr/bin/git"),
+    };
+
+    expect(await detectGit(deps)).toMatchObject({
+      status: "not-installed",
+      path: "/usr/bin/git",
+    });
+    expect(ran).toEqual(["/usr/bin/xcode-select -p"]);
+  });
+
+  it("asks xcode-select only when the git that would run is /usr/bin/git on macOS", async () => {
+    const homebrewFirst = recordingDeps({
+      ...HOMEBREW,
+      dirContents: { ...HOMEBREW.dirContents, "/usr/bin": ["git"] },
+      envPath: "/opt/homebrew/bin:/usr/bin",
+      developerToolsMissing: true,
+    });
+    expect(await detectGit(homebrewFirst.deps)).toMatchObject({ status: "available" });
+    expect(homebrewFirst.calls).not.toContain("xcode-select -p");
+
+    const linux = recordingDeps({
+      envPath: "/usr/bin:/bin",
+      dirContents: { "/usr/bin": ["git"] },
+      executables: new Set(["/usr/bin/git"]),
+      versions: { "/usr/bin/git": "2.43.0" },
+      platform: "linux",
+      developerToolsMissing: true,
+    });
+    expect(await detectGit(linux.deps)).toMatchObject({ status: "available" });
+    expect(linux.calls).toEqual(["version /usr/bin/git"]);
   });
 
   it("reports git-lfs as unreachable when git cannot run it", async () => {

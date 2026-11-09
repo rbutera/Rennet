@@ -93,6 +93,20 @@ const CASES: ReadonlyArray<{
     tool: "git",
   },
   {
+    name: "fresh Mac, the developer-tools shim asks to install",
+    input:
+      "xcode-select: note: No developer tools were found, requesting install. If developer tools are located at a non-default location on disk, use `sudo xcode-select --switch path/to/Xcode.app` to specify the Xcode that you wish to use for command line developer tools, and cancel the installation dialog.\nSee `man xcode-select` for more details.",
+    kind: "tool-missing",
+    tool: "git",
+  },
+  {
+    name: "fresh Mac, the developer-tools shim cannot ask",
+    input:
+      "xcode-select: note: No developer tools were found, and no install could be requested (perhaps no UI is present), please install manually from 'developer.apple.com'.",
+    kind: "tool-missing",
+    tool: "git",
+  },
+  {
     name: "git-lfs present but the download fails",
     input: execaShaped(
       "git worktree add --detach /tmp/wt 433815ccab8d",
