@@ -116,9 +116,14 @@ export function LargeFileChoice({
   const download = useRef<HTMLButtonElement | null>(null);
   const wasNeedsLfs = useRef(needsLfs);
   useEffect(() => {
-    if (wasNeedsLfs.current && !needsLfs) download.current?.focus();
+    // Only when the reviewer's control went with the screen. A control that survives the
+    // swap (Close) keeps focus: moving it would turn their next Enter into a Download.
+    const active = document.activeElement;
+    const focusLost =
+      active === null || active === document.body || active.getAttribute("role") === "dialog";
+    if (open && wasNeedsLfs.current && !needsLfs && focusLost) download.current?.focus();
     wasNeedsLfs.current = needsLfs;
-  }, [needsLfs]);
+  }, [open, needsLfs]);
 
   const answer = (mode: LargeFileMode, remember = true) => {
     setFailure(undefined);
