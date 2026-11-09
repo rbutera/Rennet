@@ -1,6 +1,8 @@
+import type { ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { delimiter as hostDelimiter, posix as posixPath } from "node:path";
+import type { Readable } from "node:stream";
 import { execa } from "execa";
 import type { SourceControlToolId } from "./git-failure";
 
@@ -180,6 +182,9 @@ export type InstallRunResult<P> =
       readonly probe: P;
     };
 
+/** The line the output gains when a step's pipes were closed before they had ended. */
+export const OUTPUT_NOT_CAPTURED = "(Output after the installer finished was not captured.)";
+
 /** How much installer output the result keeps. The tail, because the verdict is last. */
 export const INSTALL_OUTPUT_CAP = 64_000;
 
@@ -189,10 +194,13 @@ const KILL_GRACE_MS = 2_000;
 /** How often a cancelled step's process group is checked for being gone. */
 const GROUP_POLL_MS = 50;
 
-/** How long the output pipes stay open after a step exits. A descendant that left the
- *  step's process group (a daemon that called `setsid`) can hold them open forever, and
- *  execa would wait for it; by now the step's own output has long been read. */
-const PIPE_DRAIN_MS = 500;
+/** How long the output pipes may sit silent after a step exits before they are closed. A
+ *  descendant that left the step's process group (a daemon that called `setsid`) can hold
+ *  them open forever, and execa would wait for it. Every chunk restarts the window. */
+const PIPE_IDLE_MS = 500;
+
+/** How long after a step exits its pipes are closed regardless, however chatty. */
+const PIPE_DRAIN_CAP_MS = 5_000;
 
 /**
  * The installer's output, kept to its tail, counting honestly what it let go of. The
@@ -223,6 +231,41 @@ class OutputTail {
     this.discarded += cut;
     this.text = this.text.slice(cut);
   }
+}
+
+/**
+ * Close a step's output pipes once it has exited and they have gone quiet: after
+ * PIPE_IDLE_MS without a chunk, or PIPE_DRAIN_CAP_MS after the exit at the latest. Output
+ * still arriving keeps them open, so a descendant's late verdict is read. A pipe closed
+ * before it had ended may have lost output, and `note` says so: never a silent cut.
+ */
+function closePipesAfterExit(
+  spawned: ChildProcess,
+  pipes: readonly (Readable | null | undefined)[],
+  note: (text: string) => void,
+): void {
+  const open = pipes.filter((pipe): pipe is Readable => pipe !== null && pipe !== undefined);
+  const drain = () => {
+    let idle: NodeJS.Timeout | undefined;
+    const close = () => {
+      clearTimeout(idle);
+      clearTimeout(cap);
+      for (const pipe of open) pipe.off("data", rearm);
+      const cut = open.filter((pipe) => !pipe.readableEnded && !pipe.destroyed);
+      if (cut.length === 0) return;
+      for (const pipe of cut) pipe.destroy();
+      note(`${OUTPUT_NOT_CAPTURED}\n`);
+    };
+    const rearm = () => {
+      clearTimeout(idle);
+      idle = setTimeout(close, PIPE_IDLE_MS).unref();
+    };
+    const cap = setTimeout(close, PIPE_DRAIN_CAP_MS).unref();
+    for (const pipe of open) pipe.on("data", rearm);
+    rearm();
+  };
+  if (spawned.exitCode !== null || spawned.signalCode !== null) drain();
+  else spawned.once("exit", drain);
 }
 
 /** Signal every process in group `pgid`. A group that is already gone is no error. */
@@ -350,13 +393,7 @@ export async function runInstallPlan<P>(
         // execa 10 hands back the spawned process itself as `nodeChildProcess`: a plain
         // ChildProcess, present even when the spawn failed (then it never exits).
         const spawned = child.nodeChildProcess;
-        const releasePipes = () =>
-          setTimeout(() => {
-            child.stdout?.destroy();
-            child.stderr?.destroy();
-          }, PIPE_DRAIN_MS).unref();
-        if (spawned.exitCode !== null || spawned.signalCode !== null) releasePipes();
-        else spawned.once("exit", releasePipes);
+        closePipesAfterExit(spawned, [child.stdout, child.stderr], record("stderr"));
         const escalation = escalateOnAbort(spawned.pid, options.signal);
         const result = await child.finally(() => escalation.settled());
         exitCode = result.exitCode ?? null;

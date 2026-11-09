@@ -8,6 +8,7 @@ import {
   INSTALL_OUTPUT_CAP,
   type InstallOutputStream,
   type InstallPlan,
+  OUTPUT_NOT_CAPTURED,
   resolveInstallPlan,
   runInstallPlan,
   TOOL_DOCS_URL,
@@ -362,6 +363,29 @@ describe("runInstallPlan", () => {
     },
     20_000,
   );
+
+  it("never drops output written after the step exits without saying so", async () => {
+    const bin = dir("rennet-stub-brew-late-");
+    // The step exits at once; a child it left behind writes its verdict a second later,
+    // through the pipes it inherited.
+    script(
+      bin,
+      "brew",
+      ["( sleep 1; echo final-diagnostic ) &", 'echo "==> Done"', "exit 0"].join("\n"),
+    );
+    const plan = await resolveInstallPlan("git", {
+      platform: "darwin",
+      envPath: bin,
+      brewDirectories: [],
+    });
+    const { result } = await run(plan, "/bin:/usr/bin");
+    expect(result.status).toBe("installed");
+    if (result.status !== "installed") return;
+    expect(result.output).toContain("==> Done");
+    const captured = result.output.includes("final-diagnostic");
+    const flagged = result.output.includes(OUTPUT_NOT_CAPTURED);
+    expect(captured || flagged).toBe(true);
+  });
 
   it("counts every discarded character in the omitted marker and never splits a character", async () => {
     const bin = dir("rennet-stub-brew-loud-");
