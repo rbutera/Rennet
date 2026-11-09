@@ -129,8 +129,8 @@ test("the first-run welcome is what a first run gets, and completing it is what 
     await expect(page.getByRole("button", { name: /^Continue$/ })).toBeInViewport();
     await resizeAppWindow(application, page, { width: 980, height: 640 });
 
-    // ── Step 2 — Tools. Detection is DISCLOSED, never claimed: git is required and present,
-    // and this environment's harnesses are switched off, so their rows say so. ──
+    // ── Step 2 — Tools. Detection is DISCLOSED, never claimed: git's row is the local
+    // probe's answer, and this environment's harnesses are switched off, so their rows say so. ──
     await page.getByRole("button", { name: /^Continue$/ }).click();
     await expect(page.getByText("Your tools, already connected.")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Git", exact: true })).toBeVisible();
