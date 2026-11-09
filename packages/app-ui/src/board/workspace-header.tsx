@@ -90,7 +90,10 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
     );
   }
 
-  const stage = (failed || cancelled) && preparation.stage === "capture" ? "Capture" : "Review";
+  // Only the boards stage reads as Review. Every other stage, including `workspace` and any
+  // stage a newer daemon adds, takes the capture copy: it stopped before the review existed
+  // as boards (review-preparation-reliability D5).
+  const stage = (failed || cancelled) && preparation.stage !== "boards" ? "Capture" : "Review";
 
   return (
     <header

@@ -547,6 +547,29 @@ describe("a run that is over never says a seat is still writing", () => {
     );
   });
 
+  // review-preparation-reliability (c): a stage this surface has no copy of yet — the
+  // workspace stage — reads with the capture copy, never as a boards failure.
+  it("labels a workspace-stage failure with the capture copy", async () => {
+    const live = liveBridge({
+      review: false,
+      preparation: {
+        status: "failed",
+        stage: "workspace",
+        reason: "Git LFS isn't installed, so this pull request's large files can't be checked out.",
+        kind: "tool-missing",
+        action: "install",
+        tool: "git-lfs",
+        detail: "git-lfs: command not found",
+      },
+    });
+    open(live, "?lens=design");
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="preparation-stage"]')?.textContent).toBe(
+        "Capture failed",
+      ),
+    );
+  });
+
   it("draws no board being written while capture is still running", async () => {
     // The explicit decision D13 left open: during capture nothing is being written, so no
     // board carries the in-progress copy. The rail is where the five lenses are listed.
