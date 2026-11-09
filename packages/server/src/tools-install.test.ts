@@ -34,7 +34,7 @@ function stub(dir: string, name: string, body: string): void {
   chmodSync(join(dir, name), 0o755);
 }
 
-async function installer(brew: string, git: string) {
+async function installer(brew: string, git: string, opts: { probeThrows?: () => boolean } = {}) {
   const dataDir = realpathSync(mkdtempSync(join(tmpdir(), "rennet-tools-data-")));
   const bin = realpathSync(mkdtempSync(join(tmpdir(), "rennet-tools-brew-")));
   dirs.push(dataDir, bin);
@@ -50,6 +50,7 @@ async function installer(brew: string, git: string) {
     sourceControl: {
       installPlanDeps: { platform: "darwin", envPath: "", brewDirectories: [bin] },
       detect: async (): Promise<readonly DetectedSourceControlTool[]> => {
+        if (opts.probeThrows?.() === true) throw new Error("acme probe is unavailable");
         const present = existsSync(installed);
         return [
           { id: "git", version: "2.53.0", status: "available", path: "/usr/bin/git", detail: "" },
@@ -301,7 +302,7 @@ describe("tools.install (Install for me)", () => {
   it.skipIf(process.platform === "win32")(
     "cancelling the fresh install while it waits for the cancelled one to die starts nothing",
     async () => {
-      const { server, bin } = await installer(
+      const { server, events, bin } = await installer(
         `trap "" TERM; ${SLEEPING_BREW.replace("sleep 2", "sleep 3")}`,
         "exit 0",
       );
@@ -313,8 +314,7 @@ describe("tools.install (Install for me)", () => {
         }) as Promise<CommandOutput<"tools.install">>;
       const first = randomUUID();
       const cancelled = install(first);
-      // Let the first brew start before cancelling it.
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await heard(events, first, "==> starting");
       expect(await server.dispatch("tools.cancelInstall", { commandId: first })).toEqual({
         cancelled: true,
       });
@@ -328,6 +328,48 @@ describe("tools.install (Install for me)", () => {
       expect((await cancelled).result).toMatchObject({ status: "failed", cancelled: true });
       expect(result).toMatchObject({ status: "failed", cancelled: true });
       // Only the first, cancelled brew ever ran.
+      expect(runsOf(bin)).toBe(1);
+    },
+    30_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "a cancelled waiting retry starts nothing even when the dying run rejects",
+    async () => {
+      let probeBroken = false;
+      const { server, events, bin } = await installer(
+        `trap "" TERM; ${SLEEPING_BREW.replace("sleep 2", "sleep 3")}`,
+        "exit 0",
+        { probeThrows: () => probeBroken },
+      );
+      const install = (commandId: string) =>
+        server.dispatch("tools.install", {
+          tool: "git-lfs",
+          locus: { kind: "host" },
+          commandId,
+        }) as Promise<CommandOutput<"tools.install">>;
+      const first = randomUUID();
+      const dying = install(first).catch((error: unknown) => error);
+      await heard(events, first, "==> starting");
+      // The dying run's re-probe throws, so its result rejects.
+      probeBroken = true;
+      expect(await server.dispatch("tools.cancelInstall", { commandId: first })).toEqual({
+        cancelled: true,
+      });
+      const again = randomUUID();
+      const queued = install(again).catch((error: unknown) => error);
+      expect(await server.dispatch("tools.cancelInstall", { commandId: again })).toEqual({
+        cancelled: true,
+      });
+      expect(await dying).toBeInstanceOf(Error);
+      const answer = await queued;
+      // Either a cancelled result or the probe's own error — never an install.
+      if (!(answer instanceof Error)) {
+        expect((answer as CommandOutput<"tools.install">).result).toMatchObject({
+          status: "failed",
+          cancelled: true,
+        });
+      }
       expect(runsOf(bin)).toBe(1);
     },
     30_000,

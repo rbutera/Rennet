@@ -2259,7 +2259,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         .then((dyingResult) => {
           pendingInstallRetries.delete(input.commandId);
           if (toolInstallRuns.get(key) === running) toolInstallRuns.delete(key);
-          if (waiter.signal.aborted && dyingResult !== undefined) return dyingResult;
+          if (waiter.signal.aborted) {
+            // Cancelled while waiting: start no installer, whatever the dying run did (it may
+            // have rejected). An already-aborted run answers cancelled without spawning.
+            if (dyingResult !== undefined) return dyingResult;
+            const cancelled = new AbortController();
+            cancelled.abort("Cancelled by reviewer.");
+            return runSourceControlInstall(input, cancelled.signal, (stream, chunk) =>
+              emitToolInstallOutput(input.commandId, input.tool, stream, chunk),
+            );
+          }
           return installSourceControlTool(input);
         });
     }
