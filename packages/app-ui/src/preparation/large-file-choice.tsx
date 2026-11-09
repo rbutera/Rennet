@@ -81,7 +81,14 @@ export function LargeFileChoice({
         onOpenChange(next);
       }}
     >
-      <DialogContent data-kind="large-file-choice" className="gap-5 p-6 sm:max-w-lg">
+      <DialogContent
+        data-kind="large-file-choice"
+        className="gap-5 p-6"
+        // Wider than the kit's 24rem default, so each choice's one line reads on one line.
+        // Inline because, in the packaged app, a `sm:max-w-*` utility override of the kit's
+        // `sm:max-w-sm` did not take effect (the dialog rendered full-width); a style wins.
+        style={{ maxWidth: "min(520px, calc(100% - 2rem))" }}
+      >
         {needsLfs ? (
           <>
             <DialogHeader>
