@@ -2411,6 +2411,48 @@ describe("round.dispatch mints onto the session the reads answer (the call site,
     expect(existsSync(join(home, ".rennet"))).toBe(false);
   }, 30_000);
 
+  it('names a Current Checkout session by its checkout, never "New review"', async () => {
+    // review-preparation-reliability: the chat dock titled this row "New review" — the
+    // server's placeholder for a session that claims nothing. It is named by the project
+    // until capture attaches the review, then by the branch that review read.
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-checkout-title-data-"));
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-checkout-title-repo-")));
+    dirs.push(dataDir, repo);
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo });
+    git("init", "-b", "feat/checkout-title");
+    writeFileSync(join(repo, "a.txt"), "one\n");
+    git("add", "a.txt");
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "x");
+    writeFileSync(join(repo, "a.txt"), "one\ntwo\n");
+
+    const server = await createRennetServer({ dataDir, env: {} });
+    shutdowns.push(server.shutdown);
+    const added = (await server.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: repo,
+        kind: "repo",
+        repos: [{ name: "widget", path: repo, branches: 1 }],
+        primaryBranch: "main",
+      },
+      includedRepos: ["widget"],
+      primaryBranch: "main",
+    })) as { project: { id: string; name: string } };
+    const minted = (await server.dispatch("session.mint", {
+      projectId: added.project.id,
+      commandId: randomUUID(),
+    })) as { session: { id: string; title: string } | null };
+    expect(minted.session?.title).not.toBe("New review");
+    expect([added.project.name, "feat/checkout-title"]).toContain(minted.session?.title);
+
+    const checkoutId = minted.session?.id ?? "";
+    await waitForReviewSession(server, checkoutId);
+    const listed = (await server.dispatch("session.list", {})) as {
+      sessions: { id: string; title: string }[];
+    };
+    expect(listed.sessions.find((row) => row.id === checkoutId)?.title).toBe("feat/checkout-title");
+  }, 30_000);
+
   it("runs the round in the bound checkout, records its root, and recaptures the successor", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "rennet-round-equal-head-data-"));
     const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-round-equal-head-repo-")));

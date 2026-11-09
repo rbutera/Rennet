@@ -18,7 +18,7 @@ import { bindThread, findBindingsForSessions, sweepIfArchived, sweepThreads } fr
 import type { WorkBranchState } from "../work-branch-state";
 import { projectHandlers } from "./project";
 import { createDispatchRuntime, type DispatchDeps } from "./runtime";
-import { sessionHandlers, sidebarSessionOf } from "./session";
+import { sessionHandlers, sessionTrailForReview, sidebarSessionOf } from "./session";
 
 // The sidebar's sessions and the project rename (C18), driven over the REAL durable stores
 // the composition root wires. Positive controls: a rename and a pin SURVIVE a fresh store
@@ -116,6 +116,28 @@ const roundRecord = (
 });
 
 type Rows = { sessions: { id: string; title: string; pinned?: boolean; archived?: boolean }[] };
+
+describe("a session that claims nothing is named by its checkout", () => {
+  it("takes the caller's fallback, and never shadows a rename or a claim with it", () => {
+    expect(sidebarSessionOf(seed("s1"), [], undefined, "feat/checkout").title).toBe(
+      "feat/checkout",
+    );
+    expect(sidebarSessionOf(seed("s2", "main"), [], undefined, "feat/checkout").title).toBe("main");
+    expect(
+      sidebarSessionOf({ ...seed("s3"), title: "Mine" }, [], undefined, "feat/checkout").title,
+    ).toBe("Mine");
+  });
+
+  it('names a detached review\'s trail by its project, not "New review"', () => {
+    const trail = sessionTrailForReview({
+      id: "rev-1",
+      repositoryRoot: "/repos/widget",
+      activePatchsetId: "ps-1",
+      patchsets: [{ id: "ps-1", repository: {} }],
+    } as unknown as Parameters<typeof sessionTrailForReview>[0]);
+    expect(trail.title).toBe("widget");
+  });
+});
 
 describe("sidebar round activity projection", () => {
   it("projects the durable operation and preserves failure through the command schema", () => {

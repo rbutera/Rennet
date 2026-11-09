@@ -4650,12 +4650,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // Durable rounds ledger (C15 2.2): one record per round, reconciled — the regeneration
   // round's real generation + frozen-predecessor id supersedes the dispatch placeholder.
   const roundRecordStore = new RoundRecordStore(join(dataDir, "rounds"));
+  /** What a session that claims nothing is called: the branch its attached review read,
+   *  else its project's name. Only consulted for a row with no rename and no claim. */
+  const unclaimedSessionTitle = (session: SessionModel): string | undefined => {
+    if (session.title !== undefined || session.claim !== undefined) return undefined;
+    const review =
+      session.reviewId === undefined ? undefined : service.reviewById(session.reviewId);
+    const branch = review?.patchsets.find((patchset) => patchset.id === review.activePatchsetId)
+      ?.repository.headRef;
+    return branch ?? projectStore.list().find((project) => project.id === session.projectId)?.name;
+  };
   const sidebarSessionFor = (session: SessionModel) => {
     const operation = roundOperationStore.read(session.id);
     return sidebarSessionOf(
       session,
       roundRecordStore.read(session.id),
       operation?.reviewId === session.reviewId ? operation : undefined,
+      unclaimedSessionTitle(session),
     );
   };
   // The live round-progress channel (C15 3.1): an append-only `RoundEvent` log per review,

@@ -2188,7 +2188,8 @@ export const sidebarSessionSchema = z
     id: z.string().min(1),
     /** The project this session belongs to — the sidebar's grouping key. */
     projectId: z.string().min(1),
-    /** The reviewer's chosen title, else the claimed branch, else "New review". */
+    /** The reviewer's chosen title, else the claimed branch, else (a session that claims
+     *  nothing: Current Checkout) the branch its review read or its project's name. */
     title: z.string().min(1),
     /** Latest completed round receipt, derived server-side from the durable round ledger.
      * Absent before this session has returned a round. */

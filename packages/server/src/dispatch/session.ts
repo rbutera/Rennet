@@ -63,8 +63,12 @@ export function sessionTrailForReview(review: Review, workspace?: string): Sessi
       ? "teammate-pr"
       : "your-pr"
     : "your-branch";
-  const title = branch ?? (review.postTarget ? `PR #${review.postTarget.number}` : "New review");
   const projectName = basename(review.repositoryRoot) || undefined;
+  // A review of a detached checkout has no branch and no PR: it is the project as a whole,
+  // so it is named by the project, never by a "New review" placeholder.
+  const title =
+    branch ??
+    (review.postTarget ? `PR #${review.postTarget.number}` : (projectName ?? "New review"));
   // The workspace every turn of this session runs in (session-bound-workspace): shown beside
   // the branch so the reviewer can see WHICH checkout a seat read. Absent when nothing has
   // bound one, rather than guessing the repository root.
@@ -99,6 +103,14 @@ export function sidebarSessionOf(
   session: SessionModel,
   roundRecords: readonly RoundRecord[] = [],
   operation?: Pick<RoundOperation, "operationId" | "state">,
+  /**
+   * The title for a session with no rename and no claim — the Current Checkout row, which
+   * claims nothing. The composition root passes the attached review's branch, else the
+   * project's name, so the row (and the chat dock that reads it) names the checkout rather
+   * than the "New review" placeholder (review-preparation-reliability: "'New review' …
+   * really bad UX"). Absent keeps the placeholder for a caller that knows neither.
+   */
+  fallbackTitle?: string,
 ): SidebarSession {
   const completedRoundNumber = latestCompletedRoundNumber(roundRecords);
   const reviewActivity: SidebarSession["reviewActivity"] =
@@ -117,7 +129,7 @@ export function sidebarSessionOf(
   return {
     id: session.id,
     projectId: session.projectId,
-    title: session.title ?? session.claim?.branch ?? "New review",
+    title: session.title ?? session.claim?.branch ?? fallbackTitle ?? "New review",
     target: session.claim?.prNumber === undefined ? "your-branch" : "your-pr",
     ...(session.pinned ? { pinned: true } : {}),
     ...(session.archivedAt === undefined ? {} : { archived: true }),
