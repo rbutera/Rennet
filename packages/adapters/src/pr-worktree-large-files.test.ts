@@ -302,14 +302,14 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
 /** Whether an unpinned git on this machine prints German under a German locale. */
 function gitSpeaksGerman(): boolean {
   try {
-    execFileSync("git", ["rev-parse", "--acme-no-such-option"], {
+    execFileSync("git", ["acme-no-such-command"], {
       env: { ...process.env, LANG: "de_DE.UTF-8", LC_ALL: "de_DE.UTF-8", LANGUAGE: "de" },
       stdio: ["ignore", "ignore", "pipe"],
     });
     return false;
   } catch (error) {
     const stderr = String((error as { stderr?: Buffer | string }).stderr ?? "");
-    return stderr.length > 0 && !/unknown option|unrecognized/i.test(stderr);
+    return stderr.length > 0 && !/is not a git command/i.test(stderr);
   }
 }
 
