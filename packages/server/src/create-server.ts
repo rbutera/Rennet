@@ -6513,16 +6513,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return beginSessionPreparation(session, preparationRequestFor(session, commandId));
   }
 
-  async function retrySessionPreparation(
+  /**
+   * Retry runs a preparation again only when it STOPPED, exactly as an answer to the
+   * large-file question does (`resumeStoppedPreparation`). A preparation that finished leaves
+   * no `preparation` behind, and that is a settled review: a late Retry — a stale install
+   * continuation, a second window — must never send it back to drafting.
+   */
+  function retrySessionPreparation(
     sessionId: string,
     commandId: string,
   ): Promise<SessionModel | undefined> {
-    await sessionPreparationRuns.get(sessionId)?.catch(() => undefined);
-    const session = sessionStore.load(sessionId);
-    if (session === undefined) return undefined;
-    const preparation = session.preparation;
-    if (preparation?.status === "capturing" || preparation?.status === "drafting") return session;
-    return beginSessionPreparation(session, preparationRequestFor(session, commandId));
+    return resumeStoppedPreparation(sessionId, commandId);
   }
 
   /** The request that runs a session's preparation again: its claim, and the review it

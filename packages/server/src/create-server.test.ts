@@ -1419,6 +1419,72 @@ describe("session.mint — provider-qualified PR dispatch", () => {
     });
   });
 
+  it("a Retry that arrives after the preparation finished leaves the settled review alone", async () => {
+    // A stale Retry — an install continuation landing late, a second window — reaches a session
+    // whose preparation already finished. Finished leaves no `preparation`, and that is a
+    // settled review: Retry must not send it back to capturing and drafting.
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-retry-settled-state-"));
+    const repo = mkdtempSync(join(tmpdir(), "rennet-retry-settled-repo-"));
+    dirs.push(dataDir, repo);
+    execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "t@t"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+    writeFileSync(join(repo, "a.txt"), "one\n");
+    execFileSync("git", ["add", "a.txt"], { cwd: repo });
+    execFileSync("git", ["commit", "-m", "base"], { cwd: repo });
+    writeFileSync(join(repo, "a.txt"), "one\ntwo\n");
+
+    const first = await createRennetServer({
+      dataDir,
+      env: { RENNET_TEST_CAPTURE_PREPARATION_DELAY_MS: "30000" },
+    });
+    shutdowns.push(first.shutdown);
+    const added = (await first.dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery: {
+        path: repo,
+        kind: "repo",
+        repos: [{ name: "repo", path: repo, branches: 1 }],
+        primaryBranch: "main",
+      },
+      includedRepos: ["repo"],
+      primaryBranch: "main",
+    })) as { project: { id: string } };
+    const minted = (await first.dispatch("session.mint", {
+      projectId: added.project.id,
+      commandId: randomUUID(),
+    })) as { session: PreparationSession | null };
+    const sessionId = minted.session?.id ?? "";
+    await first.dispatch("session.cancelPreparation", { sessionId });
+    first.shutdown();
+
+    // The preparation finished: its record carries no `preparation` any more.
+    const store = new SessionStore(join(dataDir, "sessions"));
+    const stored = store.load(sessionId);
+    if (stored === undefined) throw new Error("the minted session was not stored");
+    const settled = { ...stored };
+    delete settled.preparation;
+    store.save(settled);
+
+    const restarted = await createRennetServer({
+      dataDir,
+      env: { RENNET_TEST_CAPTURE_PREPARATION_DELAY_MS: "30000" },
+    });
+    shutdowns.push(restarted.shutdown);
+    const retried = (await restarted.dispatch("session.retryPreparation", {
+      sessionId,
+      commandId: randomUUID(),
+    })) as { session: PreparationSession | null };
+    expect(retried.session?.id).toBe(sessionId);
+    expect(retried.session?.preparation).toBeUndefined();
+    const listed = (await restarted.dispatch("session.list", {})) as {
+      sessions: PreparationSession[];
+    };
+    expect(
+      listed.sessions.find((session) => session.id === sessionId)?.preparation,
+    ).toBeUndefined();
+  });
+
   it("BINDS on a read when nothing bound at capture, instead of answering the clone", async () => {
     // The "next use retries" claim, executed. Two states reach this code path: a session
     // minted before the binding existed, and one whose first bind threw. Both have no
