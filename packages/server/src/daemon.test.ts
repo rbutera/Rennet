@@ -28,6 +28,33 @@ const RUNNING: RunningDaemon = {
   stop: () => undefined,
 };
 
+describe("startDaemon: skip mode reaches every daemon child (large-file-checkout)", () => {
+  it("adds the skip-mode index include after the user's own command-line config, before the server runs", async () => {
+    const env: NodeJS.ProcessEnv = {
+      PATH: "/usr/bin:/bin",
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "core.autocrlf",
+      GIT_CONFIG_VALUE_0: "input",
+    };
+    const seenByRun: NodeJS.ProcessEnv[] = [];
+    const run = vi.fn(async () => {
+      seenByRun.push({ ...env });
+      return RUNNING;
+    });
+    await startDaemon(CONFIG, { env, hydratePath: async () => undefined, run });
+    expect(seenByRun[0]).toMatchObject({
+      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_KEY_0: "core.autocrlf",
+      GIT_CONFIG_VALUE_0: "input",
+      GIT_CONFIG_KEY_1: "include.path",
+      GIT_CONFIG_VALUE_1: join(CONFIG.dataDir, "large-files", "skip-checkouts.gitconfig"),
+    });
+    // No blanket override: a download-mode checkout's git sees the user's own filter.
+    expect(Object.values(seenByRun[0] ?? {})).not.toContain("filter.lfs.required");
+    expect(seenByRun[0]?.GIT_LFS_SKIP_SMUDGE).toBeUndefined();
+  });
+});
+
 describe("startDaemon (daemon-process-environment)", () => {
   let dir: string | undefined;
   afterEach(() => {

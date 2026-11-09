@@ -12,7 +12,9 @@ import { parseArgs } from "node:util";
 import {
   defaultForgeDetectionDeps,
   hydrateProcessPath,
+  largeFileSkipIndexPath,
   resolveGitHubCliToken,
+  withLargeFileSkipIndex,
 } from "@rennet/adapters";
 import { PROTOCOL_VERSION } from "@rennet/protocol";
 import { createRennetServer } from "./create-server";
@@ -188,5 +190,20 @@ export async function startDaemon(
   deps: StartDaemonDeps = { env: process.env, hydratePath: hydrateDaemonPath, run: runDaemon },
 ): Promise<RunningDaemon> {
   await deps.hydratePath(deps.env);
+  includeLargeFileSkipIndex(deps.env, config.dataDir);
   return deps.run(config);
+}
+
+/**
+ * Point every child of this daemon at its skip-mode index (review-preparation-reliability,
+ * large-file-checkout): one `include.path` entry in `GIT_CONFIG_*`, appended after any the
+ * environment already carries. The index names the checkouts whose project skips Git LFS
+ * content, so every later git command a daemon child runs in one of them — the T3 sidecar's
+ * seat, chat and round threads, the cold utility turns, Rennet's own git — leaves large files
+ * as placeholders there, and runs exactly as the user's config says everywhere else. Set
+ * BEFORE `runDaemon`, for the same reason PATH is: the sidecar copies this environment the
+ * moment it spawns, and it lives as long as the daemon.
+ */
+export function includeLargeFileSkipIndex(env: NodeJS.ProcessEnv, dataDir: string): void {
+  Object.assign(env, withLargeFileSkipIndex(env, largeFileSkipIndexPath(dataDir)));
 }
