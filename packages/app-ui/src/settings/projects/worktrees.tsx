@@ -68,9 +68,10 @@ const KEYS = {
   pattern: "worktreePattern",
   prPattern: "prWorktreePattern",
   workspace: "workspace",
+  largeFiles: "largeFiles",
 } as const satisfies Record<
   string,
-  "worktreeRoot" | "worktreePattern" | "prWorktreePattern" | "workspace"
+  "worktreeRoot" | "worktreePattern" | "prWorktreePattern" | "workspace" | "largeFiles"
 >;
 
 type FieldKey = keyof typeof KEYS;
@@ -78,6 +79,14 @@ type FieldKey = keyof typeof KEYS;
 const WORKSPACE_OPTIONS = [
   { id: "share", label: "share" },
   { id: "own", label: "own" },
+] as const;
+
+/** `checkout.largeFiles` (large-file-checkout spec). "Ask each time" is no recorded choice:
+ *  writing it RESETS the repo entry, so the next checkout of the project asks again. */
+const LARGE_FILE_OPTIONS = [
+  { id: "ask", label: "Ask each time" },
+  { id: "download", label: "Download" },
+  { id: "skip", label: "Skip" },
 ] as const;
 
 /** What a workspace IS. The row's own fact, in the reviewer's words — never "created by
@@ -228,7 +237,7 @@ function RepoWorktrees({
   }
 
   const field = (
-    key: Exclude<FieldKey, "workspace">,
+    key: Exclude<FieldKey, "workspace" | "largeFiles">,
     rowLabel: string,
     hint: string,
     /** The grammar a LAYOUT field takes, shown only while the field is empty. Location has
@@ -286,6 +295,12 @@ function RepoWorktrees({
   };
 
   const workspace = prefs?.workspace ?? { value: "share", layer: "builtin" as const };
+  // Shown where it matters: a repository that uses Git LFS, or one that already has a choice
+  // recorded (which keeps a recorded choice changeable even if the engine did not look).
+  const largeFiles = prefs?.largeFiles;
+  const showLargeFiles = row.usesLfs === true || largeFiles?.layer === "repo";
+  const largeFileMode =
+    largeFiles?.value === "download" || largeFiles?.value === "skip" ? largeFiles.value : "ask";
 
   return (
     <>
@@ -358,6 +373,41 @@ function RepoWorktrees({
           </span>
         ) : null}
       </Row>
+      {showLargeFiles ? (
+        <Row
+          label="Large files in review checkouts"
+          hint="this repository stores large files with Git LFS"
+          stacked
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <Segmented
+              ariaLabel={`Large files in review checkouts for ${label}`}
+              options={LARGE_FILE_OPTIONS}
+              value={largeFileMode}
+              disabled={!editable || busy}
+              onChange={(next) => void writeRepo("largeFiles", next === "ask" ? null : next)}
+            />
+            <ProvenanceChip
+              provenance={{ layer: largeFiles?.layer ?? "builtin", contributions: [] }}
+            />
+          </div>
+          {/* What each choice does to the checkout, in the reviewer's terms. A change reaches
+              the next checkout; one already made keeps the files it has. */}
+          <span className="text-xs text-ink-soft">
+            Download — full files in the checkout, slower to open. Skip — faster, and large files
+            appear as small placeholder files. A change applies to the next checkout.
+          </span>
+          {notice?.key === "largeFiles" ? (
+            <span
+              data-slot="worktree-refusal"
+              role="status"
+              className="whitespace-pre-wrap text-2xs text-accent"
+            >
+              {notice.text}
+            </span>
+          ) : null}
+        </Row>
+      ) : null}
       <Workspaces repoPath={row.repoPath} label={label} />
       {row.configMalformed ? (
         <div className="py-1 text-2xs text-ink-soft">

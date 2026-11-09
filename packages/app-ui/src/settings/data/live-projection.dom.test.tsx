@@ -523,6 +523,52 @@ describe("LiveSettingsProjectionProvider — host cards, source control + agents
     cleanup();
   });
 
+  // source-control-tooling: the daemon's `git` / `git-lfs` probe reaches each card as rows,
+  // keyed by the host that answered. TWO hosts, the WSL one missing Git LFS, so a projection
+  // that folded one host's probe onto every card would show the wrong state on one of them.
+  it("folds each host's own Git and Git LFS probe onto its card", async () => {
+    const lfs = (status: "available" | "not-installed") => ({
+      id: "git-lfs" as const,
+      version: status === "available" ? "3.6.1" : null,
+      status,
+      detail: status === "available" ? "Git LFS 3.6.1" : "Git LFS isn't installed.",
+    });
+    const git = { id: "git" as const, version: "2.51.0", status: "available" as const, detail: "" };
+    mountLive(
+      foldBridge({
+        sections: [LOCAL_SECTION, WSL_SECTION],
+        status: [
+          { source: "local", reachable: true, version: "4.3.0" },
+          { source: "wsl:Ubuntu", reachable: true, version: "4.3.0" },
+        ],
+        forges: [
+          {
+            source: "local",
+            asked: true,
+            detected: [GH_AVAILABLE],
+            sourceControl: [git, lfs("available")],
+          },
+          {
+            source: "wsl:Ubuntu",
+            asked: true,
+            detected: [],
+            sourceControl: [git, lfs("not-installed")],
+          },
+        ],
+      }),
+    );
+    const lfsRow = (host: string) =>
+      card(host).querySelector('[data-slot="git-tool-row"][data-tool="git-lfs"]');
+    await waitFor(() => expect(lfsRow("local")?.getAttribute("data-status")).toBe("available"));
+    expect(lfsRow("local")?.textContent).toContain("3.6.1");
+    expect(lfsRow("wsl:Ubuntu")?.getAttribute("data-status")).toBe("not-installed");
+    expect(lfsRow("wsl:Ubuntu")?.textContent).not.toContain("3.6.1");
+    expect(
+      card("local").querySelector('[data-slot="git-tool-row"][data-tool="git"]'),
+    ).not.toBeNull();
+    cleanup();
+  });
+
   it("a second host renders ITS own daemon line + agents, and borrows no tooling", async () => {
     const { findByText } = mountLive(
       foldBridge({

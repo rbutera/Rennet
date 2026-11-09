@@ -82,6 +82,23 @@ export interface DetectedTool {
   readonly enabled: boolean;
 }
 
+/**
+ * `git` or `git-lfs` on one host (source-control-tooling spec), as the daemon probed it with
+ * the environment its own git work runs under. Its own shape rather than a `DetectedTool`:
+ * there is no ruling to toggle, and a missing one offers Install for me instead.
+ */
+export interface SourceControlTool {
+  readonly id: "git" | "git-lfs";
+  readonly label: string;
+  /** The proven version; absent ⇒ nothing was proven, and none is shown. */
+  readonly version?: string;
+  readonly status: "available" | "not-installed" | "unreachable";
+  /** One line of honest state and the exact fix; backticked spans render as code. */
+  readonly detail: string;
+  /** Whether a project on this host needs it (Git LFS only). Absent ⇒ not said. */
+  readonly required?: boolean;
+}
+
 // ── Model mappings (§5) ────────────────────────────────────────────────────────
 
 export type RoleEffort = "low" | "medium" | "high" | "xhigh";
@@ -151,6 +168,9 @@ export interface SettingsProjection {
   readonly hosts: readonly SettingsHost[];
   /** Source-control tooling detected per host id (absent host ⇒ nothing detected). */
   readonly sourceControlByHost: Readonly<Record<string, readonly DetectedTool[]>>;
+  /** `git` and `git-lfs` per host id, from the same probe the first-run tools stage reads.
+   *  Absent host ⇒ not probed (an unasked host, or an engine that predates the probe). */
+  readonly gitToolsByHost: Readonly<Record<string, readonly SourceControlTool[]>>;
   /** Coding harnesses detected per host id. */
   readonly agentsByHost: Readonly<Record<string, readonly DetectedTool[]>>;
   /** The review-role → model mappings shown in the Review section (empty ⇒ no section). */
@@ -266,6 +286,7 @@ export interface SettingsProjection {
 export const EMPTY_SETTINGS_PROJECTION: SettingsProjection = {
   hosts: [],
   sourceControlByHost: {},
+  gitToolsByHost: {},
   agentsByHost: {},
   reviewRoles: [],
   nameByProject: {},

@@ -59,15 +59,21 @@ export function DetectionRow({
   tool,
   mark,
   toggle,
+  footer,
 }: {
-  readonly tool: DetectedTool;
+  readonly tool: Pick<DetectedTool, "label" | "version" | "status" | "detail"> & {
+    readonly enabled?: boolean;
+  };
   readonly mark: ReactNode;
   readonly toggle: {
     readonly label: string;
     readonly onChange: (enabled: boolean) => void;
   } | null;
+  /** What the reviewer can do about this row beyond reading it — Install for me for a
+   *  missing source-control tool — under the row, where it has room to stream. */
+  readonly footer?: ReactNode;
 }) {
-  return (
+  const row = (
     <Row
       label={
         <span className="flex items-center gap-2">
@@ -83,13 +89,20 @@ export function DetectionRow({
     >
       {toggle ? (
         <Switch
-          checked={tool.enabled}
+          checked={tool.enabled ?? true}
           onCheckedChange={toggle.onChange}
           aria-label={toggle.label}
           size="sm"
         />
       ) : null}
     </Row>
+  );
+  if (!footer) return row;
+  return (
+    <div className="flex flex-col">
+      {row}
+      <div className="pb-2.5">{footer}</div>
+    </div>
   );
 }
 
