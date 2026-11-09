@@ -62,7 +62,7 @@ import {
   reviewCliUnsupportedMessage,
   reviewDocumentPath,
 } from "./cli-review";
-import { defaultDataDir, runDaemon } from "./daemon";
+import { defaultDataDir, startDaemon } from "./daemon";
 import { readDaemonFile, removeDaemonFile } from "./daemon-file";
 import { findHealthyDaemon, requestDaemonShutdown } from "./supervise";
 import { resolveSidecarBundle, type StopSidecarOutcome, stopSidecar } from "./t3/sidecar";
@@ -362,7 +362,9 @@ async function serve(
     uiDist,
     t3BundlePath,
   };
-  const daemon = await runDaemon(config);
+  // Hydrate PATH first, exactly as the detached entry does: a `serve` started from a
+  // launchd job or a bare `env -i` shell must find the same tools the user's terminal does.
+  const daemon = await startDaemon(config);
   io.out(
     `rennet daemon listening on ${daemon.info.host ?? "127.0.0.1"}:${daemon.info.wsPort} (pid ${daemon.info.pid}, v${daemon.info.version})`,
   );

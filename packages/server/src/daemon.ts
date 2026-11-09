@@ -9,7 +9,11 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { defaultForgeDetectionDeps, resolveGitHubCliToken } from "@rennet/adapters";
+import {
+  defaultForgeDetectionDeps,
+  hydrateProcessPath,
+  resolveGitHubCliToken,
+} from "@rennet/adapters";
 import { PROTOCOL_VERSION } from "@rennet/protocol";
 import { createRennetServer } from "./create-server";
 import { type DaemonInfo, removeDaemonFile, writeDaemonFile } from "./daemon-file";
@@ -150,4 +154,39 @@ export async function runDaemon(
   }
 
   return { info, stop };
+}
+
+/** Write PATH-resolution fall-throughs to stderr, which the desktop shell sends to daemon.log. */
+function hydrateDaemonPath(env: NodeJS.ProcessEnv): Promise<string> {
+  return hydrateProcessPath(env, {
+    warn: (message) => process.stderr.write(`rennet daemon: PATH: ${message}\n`),
+  });
+}
+
+export interface StartDaemonDeps {
+  /** The environment every child inherits: `process.env` in a real process. */
+  readonly env: NodeJS.ProcessEnv;
+  /** Resolve the user's tool PATH into `env.PATH` (daemon-process-environment). */
+  readonly hydratePath: (env: NodeJS.ProcessEnv) => Promise<unknown>;
+  readonly run: typeof runDaemon;
+}
+
+/**
+ * The process entries' start (`daemon-main.ts` and `rennet serve`): hydrate PATH, THEN run.
+ *
+ * A Dock-launched app hands its detached daemon launchd's bare PATH, and every git child
+ * (and the LFS filter, hooks and credential helpers git runs) inherits it — so a required
+ * `git-lfs` in `/opt/homebrew/bin` was "command not found" for the daemon's whole life.
+ * Assigning the resolved PATH to `process.env` before `runDaemon` means every execa call
+ * inherits it with no per-call-site change, and the order is load-bearing: `runDaemon`
+ * snapshots `process.env.PATH` into its forge detection deps the moment it starts.
+ * Resolution never throws and never blocks past its own timeouts, so the daemon still starts
+ * when every step fails.
+ */
+export async function startDaemon(
+  config: DaemonConfig,
+  deps: StartDaemonDeps = { env: process.env, hydratePath: hydrateDaemonPath, run: runDaemon },
+): Promise<RunningDaemon> {
+  await deps.hydratePath(deps.env);
+  return deps.run(config);
 }

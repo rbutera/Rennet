@@ -69,6 +69,18 @@ healthy daemon. Otherwise it starts the server as a detached child, keeps that
 child handle, and records the new claim. The daemon removes its claim during
 graceful shutdown.
 
+The daemon resolves its own `PATH` before it serves. A desktop launched from the
+Dock or Finder hands its daemon launchd's bare `PATH`, which lacks Homebrew. So
+the daemon reads the user's login-shell `PATH` between markers, with a 5-second
+timeout, and falls back to `launchctl getenv PATH` on macOS. It then appends the
+inherited `PATH` and the package-manager directories `/opt/homebrew/bin`,
+`/opt/homebrew/sbin` and `/usr/local/bin`, keeping order and dropping repeats.
+Every child the daemon spawns inherits that value, including git and the LFS
+filters, hooks and credential helpers git runs. `rennet serve` resolves `PATH`
+the same way. On Windows the inherited `PATH` is used unchanged. A healthy daemon
+whose build version differs from the app's is restarted on the next app start,
+so a daemon that outlived an upgrade does not keep the old environment.
+
 Stopping is a command the daemon answers, not a signal sent into the dark.
 `POST /shutdown` sits beside `GET /healthz` on the same HTTP port and behind the
 same host guard. It also refuses a foreign browser `Origin` with a 403, since a

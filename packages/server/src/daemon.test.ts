@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { resolveDaemonConfig } from "./daemon";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { hydrateProcessPath } from "@rennet/adapters";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { type DaemonConfig, type RunningDaemon, resolveDaemonConfig, startDaemon } from "./daemon";
 
 describe("daemon argument parsing", () => {
   it("parses the daemon entry's strict options", () => {
@@ -15,4 +20,88 @@ describe("daemon argument parsing", () => {
   it("rejects a missing option value", () => {
     expect(() => resolveDaemonConfig(["--data-dir"], {})).toThrow(/argument missing/i);
   });
+});
+
+const CONFIG: DaemonConfig = { dataDir: "/tmp/rennet-acme", serverVersion: "1.2.2", env: {} };
+const RUNNING: RunningDaemon = {
+  info: { pid: 1, wsPort: 1, protocolVersion: 1, version: "1.2.2", startedAt: "" },
+  stop: () => undefined,
+};
+
+describe("startDaemon (daemon-process-environment)", () => {
+  let dir: string | undefined;
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = undefined;
+  });
+
+  it("does not run the daemon until PATH is hydrated, so the server starts on the resolved PATH", async () => {
+    const env: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin" };
+    let finishHydration: () => void = () => undefined;
+    const hydratePath = vi.fn(
+      (target: NodeJS.ProcessEnv) =>
+        new Promise<void>((resolve) => {
+          finishHydration = () => {
+            target.PATH = "/opt/homebrew/bin:/usr/bin:/bin";
+            resolve();
+          };
+        }),
+    );
+    const pathSeenByRun: Array<string | undefined> = [];
+    const run = vi.fn(async () => {
+      pathSeenByRun.push(env.PATH);
+      return RUNNING;
+    });
+
+    const started = startDaemon(CONFIG, { env, hydratePath, run });
+    await Promise.resolve();
+    // Hydration is still pending, so the server has not started on the bare PATH.
+    expect(hydratePath).toHaveBeenCalledWith(env);
+    expect(run).not.toHaveBeenCalled();
+
+    finishHydration();
+    await expect(started).resolves.toBe(RUNNING);
+    expect(run).toHaveBeenCalledWith(CONFIG);
+    expect(pathSeenByRun).toEqual(["/opt/homebrew/bin:/usr/bin:/bin"]);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "started with PATH=/usr/bin:/bin, the daemon's children find a tool only the login shell knows",
+    async () => {
+      // A tool in a directory that is on the user's login-shell PATH and nowhere else, and a
+      // login shell (a stub standing in for the user's zsh) that prints a banner first.
+      dir = mkdtempSync(join(tmpdir(), "rennet-daemon-path-"));
+      const toolDir = join(dir, "tools");
+      mkdirSync(toolDir);
+      writeFileSync(join(toolDir, "acme-lfs"), "#!/bin/sh\necho acme-lfs ok\n");
+      chmodSync(join(toolDir, "acme-lfs"), 0o755);
+      const shell = join(dir, "login-shell");
+      writeFileSync(
+        shell,
+        `#!/bin/sh\necho "Welcome to acme-box"\nPATH=${toolDir}:/usr/bin:/bin exec /bin/sh -c "$2"\n`,
+      );
+      chmodSync(shell, 0o755);
+
+      const env: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin", SHELL: shell };
+      // Before hydration the tool is unreachable, as it is for a Dock-launched daemon.
+      expect(spawnSync("acme-lfs", { env: { ...env } }).error).toBeDefined();
+
+      let childOutput: string | undefined;
+      await startDaemon(CONFIG, {
+        env,
+        // The real resolver, against the stub login shell.
+        hydratePath: (target) => hydrateProcessPath(target, { userShell: () => undefined }),
+        run: async () => {
+          // Stand-in for any git child the server spawns: it inherits the daemon's env.
+          childOutput = spawnSync("acme-lfs", { env: { ...env }, encoding: "utf8" }).stdout.trim();
+          return RUNNING;
+        },
+      });
+
+      expect(childOutput).toBe("acme-lfs ok");
+      expect(env.PATH?.split(":")[0]).toBe(toolDir);
+      // The curated package-manager directories ride along after the inherited PATH.
+      expect(env.PATH?.split(":")).toContain("/usr/local/bin");
+    },
+  );
 });

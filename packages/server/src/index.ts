@@ -27,6 +27,8 @@ export {
   type RunningDaemon,
   resolveDaemonConfig,
   runDaemon,
+  type StartDaemonDeps,
+  startDaemon,
 } from "./daemon";
 export {
   type DaemonInfo,
