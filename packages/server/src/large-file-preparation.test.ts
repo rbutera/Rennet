@@ -220,10 +220,17 @@ async function serverFor(
     );
     return seen as Session;
   };
-  const mint = async (mintOptions: { readonly pr?: boolean; readonly commandId?: string } = {}) => {
+  const mint = async (
+    mintOptions: {
+      readonly pr?: boolean;
+      readonly commandId?: string;
+      readonly largeFiles?: "download" | "skip";
+    } = {},
+  ) => {
     const minted = (await server.dispatch("session.mint", {
       projectId: added.project.id,
       commandId: mintOptions.commandId ?? randomUUID(),
+      ...(mintOptions.largeFiles === undefined ? {} : { largeFiles: mintOptions.largeFiles }),
       branch: "feature",
       ...(mintOptions.pr === false ? {} : { prNumber: 7 }),
       repository: "acme/widget",
@@ -781,6 +788,62 @@ describe("cancel and answer around the workspace stage", () => {
       expect(session?.preparation?.status).toBe("drafting"),
     );
     expect(drafting.preparation?.status).toBe("drafting");
+    await server.dispatch("session.cancelPreparation", { sessionId });
+  }, 60_000);
+});
+
+/**
+ * A session can be told its own large-file mode, leaving its project's choice alone — the
+ * headless `rennet review --large-files`, or an answer given with `remember: false`.
+ */
+describe("a session's own large-file mode", () => {
+  const projectChoice = async (server: Awaited<ReturnType<typeof serverFor>>["server"]) => {
+    const view = (await server.dispatch("settings.get", {})) as {
+      projects: { prefs?: { largeFiles?: { value: string; layer: string } } }[];
+    };
+    return view.projects[0]?.prefs?.largeFiles;
+  };
+
+  it("a mint told to skip never asks, checks out placeholders, and records nothing on the project", async () => {
+    const fixture = lfsRepository();
+    const { server, mint, waitFor } = await serverFor(fixture);
+    const sessionId = await mint({ largeFiles: "skip" });
+    const store = new SessionStore(join(fixture.dataDir, "sessions"));
+    await vi.waitFor(() => expect(store.load(sessionId)?.boundRoot).toBeDefined(), {
+      timeout: 20_000,
+      interval: 25,
+    });
+    const drafting = await waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("drafting"),
+    );
+    expect(drafting.preparation?.status).toBe("drafting");
+    const boundRoot = store.load(sessionId)?.boundRoot ?? "";
+    // Skipped, though the project never chose and Git LFS is "missing".
+    expect(readFileSync(join(boundRoot, "assets", "model.bin"), "utf8")).toBe(POINTER);
+    expect(registered(fixture.dataDir)).toEqual([gitDirOf(boundRoot)]);
+    expect(await projectChoice(server)).toEqual({ value: "ask", layer: "builtin" });
+    await server.dispatch("session.cancelPreparation", { sessionId });
+  }, 60_000);
+
+  it("an answer not remembered binds this session under it, and the project still asks", async () => {
+    const fixture = lfsRepository();
+    const { server, mint, waitFor } = await serverFor(fixture);
+    const sessionId = await mint();
+    await waitFor(sessionId, (session) => expect(session?.preparation?.status).toBe("awaiting"));
+    await server.dispatch("session.chooseLargeFileMode", {
+      sessionId,
+      mode: "skip",
+      remember: false,
+    });
+    const store = new SessionStore(join(fixture.dataDir, "sessions"));
+    await vi.waitFor(() => expect(store.load(sessionId)?.boundRoot).toBeDefined(), {
+      timeout: 20_000,
+      interval: 25,
+    });
+    const boundRoot = store.load(sessionId)?.boundRoot ?? "";
+    expect(readFileSync(join(boundRoot, "assets", "model.bin"), "utf8")).toBe(POINTER);
+    expect(store.load(sessionId)?.largeFiles).toBe("skip");
+    expect(await projectChoice(server)).toEqual({ value: "ask", layer: "builtin" });
     await server.dispatch("session.cancelPreparation", { sessionId });
   }, 60_000);
 });

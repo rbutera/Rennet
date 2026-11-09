@@ -54,6 +54,7 @@ import {
   buildCaptureFailureDocument,
   buildReviewDocument,
   foldPreparationLines,
+  formatElapsed,
   lensDraftLines,
   parseReviewTarget,
   REVIEW_USAGE,
@@ -107,7 +108,7 @@ const HELP = [
   "  rennet stop    [--data-dir <dir>]   stop the running daemon",
   "  rennet pair    [--data-dir <dir>]   mint a device pairing code (5-minute TTL)",
   "  rennet devices [--revoke <id>] [--data-dir <dir>]   list or revoke paired devices",
-  "  rennet review  <base>..<head> [path] | --pr <n> [path] [--out <file>] [--timeout <s>] [--data-dir <dir>]   review a range or PR over the daemon",
+  "  rennet review  <base>..<head> [path] | --pr <n> [path] [--out <file>] [--timeout <s>] [--large-files download|skip] [--data-dir <dir>]   review a range or PR over the daemon",
   "  rennet map     [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--data-dir <dir>]   build & store the repo map",
   "  rennet benchmarks export [--out <file>] [--data-dir <dir>] [--revision <rev>] [--timestamp <iso>]   write the docs benchmark data",
   "",
@@ -797,23 +798,38 @@ function terminalResult(
       settledAtMs: Date.now(),
     };
   }
-  // The large-file question (large-file-checkout spec) is the reviewer's to answer, and a
-  // headless run has nobody to ask. It stops here with the way to answer it, rather than
-  // waiting out the timeout for an answer that cannot come.
-  if (preparation.status === "awaiting") {
-    return {
-      outcome: "failed",
-      reviewId: preparation.reviewId,
-      reason: AWAITING_LARGE_FILES_REASON,
-      settledAtMs: Date.now(),
-    };
-  }
   return null;
 }
 
-/** Why a headless review stopped at the large-file question, and how to answer it. */
-const AWAITING_LARGE_FILES_REASON =
-  "this repository uses Git LFS and its project has not chosen whether review checkouts download or skip large files; choose in Rennet (the review asks), then run again";
+/**
+ * What a headless run prints when it answered the large-file question itself: the project
+ * has no choice recorded and `--large-files` was not passed, so this review downloads large
+ * files, as a headless run always did, and nothing is recorded for the project.
+ */
+export const HEADLESS_LARGE_FILES_LINE =
+  "this repository uses Git LFS and its project has no large-file choice, so this review downloads large files; pass --large-files skip to skip them, or choose in Rennet's settings";
+
+/**
+ * Answer the large-file question for a headless run (large-file-checkout spec): nobody is
+ * there to ask, so the run never stops at `awaiting`. The answer is `--large-files` when it
+ * was passed, else download, and it is this SESSION's only (`remember: false`): the project's
+ * question stays open for the next review that has a person to ask.
+ */
+async function answerLargeFilesHeadless(
+  socket: CliSocket,
+  sessionId: string,
+  largeFiles: "download" | "skip" | undefined,
+  elapsedMs: number,
+  io: CliIo,
+): Promise<void> {
+  if (largeFiles === undefined) io.out(`${formatElapsed(elapsedMs)}${HEADLESS_LARGE_FILES_LINE}`);
+  await socket.invoke("session.chooseLargeFileMode", {
+    sessionId,
+    mode: largeFiles ?? "download",
+    commandId: newCommandId(),
+    remember: false,
+  });
+}
 
 /**
  * Watch a session's preparation to a settled/failed/cancelled state (or the timeout), printing
@@ -828,6 +844,7 @@ async function pollPreparation(
   initialReviewId: string | undefined,
   startedAtMs: number,
   timeoutMs: number,
+  largeFiles: "download" | "skip" | undefined,
   io: CliIo,
 ): Promise<PollResult> {
   let reviewId = initialReviewId;
@@ -843,9 +860,14 @@ async function pollPreparation(
       io.out(line);
     }
     const deadline = startedAtMs + timeoutMs;
+    let answered = false;
     while (true) {
       const done = terminalResult(previous, reviewId);
       if (done) return done;
+      if (previous?.status === "awaiting" && !answered) {
+        answered = true;
+        await answerLargeFilesHeadless(socket, sessionId, largeFiles, Date.now() - startedAtMs, io);
+      }
       if (Date.now() > deadline) {
         return {
           outcome: "timeout",
@@ -985,6 +1007,8 @@ type MintInput = {
   projectId: string;
   commandId: string;
   branch: string;
+  /** This session's own large-file mode (`--large-files`); the project's is untouched. */
+  largeFiles?: "download" | "skip";
   base?: string;
   prNumber?: number;
   repository?: string;
@@ -1078,6 +1102,7 @@ async function driveReview(
       projectId,
       commandId: newCommandId(),
       branch: requestedHead,
+      ...(target.largeFiles === undefined ? {} : { largeFiles: target.largeFiles }),
       base: target.base,
       repository: standing.repository,
       ...(standing.forgeRepository === undefined
@@ -1114,6 +1139,7 @@ async function driveReview(
       projectId,
       commandId: newCommandId(),
       branch: row.branch,
+      ...(target.largeFiles === undefined ? {} : { largeFiles: target.largeFiles }),
       prNumber: row.number,
       repository: row.repository,
       ...(row.forgeRepository === undefined ? {} : { forgeRepository: row.forgeRepository }),
@@ -1161,6 +1187,7 @@ async function driveReview(
     row.reviewId,
     startedAtMs,
     target.timeoutMs,
+    target.largeFiles,
     io,
   );
   if (result.reviewId === undefined) {
@@ -1239,8 +1266,8 @@ async function resolveReattach(
       io.out(`already reviewed at ${requestedHead}; reusing the settled boards`);
       return { kind: "fast", reviewId: row.reviewId };
     }
-    // Still waiting on the large-file answer: report it rather than archive the session that
-    // is asking (the poll stops at once with the reason).
+    // Still waiting on the large-file answer: keep the session that is asking, and let the
+    // poll answer it (a headless run never stops there).
     if (headMatches && preparation?.status === "awaiting") return { kind: "poll", row };
     if (headMatches && preparation?.status === "failed" && preparation.reviewId !== undefined) {
       const retried = (await socket.invoke("session.retryPreparation", {

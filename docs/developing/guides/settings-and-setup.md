@@ -427,17 +427,43 @@ global rung and no detector: the choice is about one project's large files.
 
 When the question is owed, preparation stops in the `awaiting` state before
 anything is checked out, and `session.chooseLargeFileMode` records the answer on
-the repository rung and resumes it. Writing `ask` is a reset: the entry is
-dropped and the next checkout asks again. A change applies to the next checkout;
-a checkout already made in skip mode keeps its pointer files.
+the repository rung and resumes it. With `remember: false` it records the answer
+on that session only, and the project's question stays open. While the question
+is open nothing checks the review out: a chat thread or a handoff reports that
+the review is waiting for the choice, and a transcript read names the repository.
+Writing `ask` is a reset: the entry is dropped and the next checkout asks again.
+
+A session can also carry its own mode (`session.mint`'s `largeFiles`, which
+`rennet review --large-files` sends). It overrides the project's for that
+session's checkouts and writes nothing to the project.
+
+A mode belongs to the checkout it was created under. A change applies to the
+next checkout Rennet creates, including a pull-request snapshot a re-pin
+replaces; a checkout that is reused, by the same session or a later one, keeps
+the mode it was made with and its pointer files.
 
 Skip mode also covers every later git command a session's processes run in that
 checkout: the seat, chat and round threads, utility turns, and Rennet's own git.
 The daemon starts with one `include.path` entry in its `GIT_CONFIG_*`
-environment, pointing at `~/.rennet/large-files/skip-checkouts.gitconfig`. A
-skip-mode bind adds an `includeIf "gitdir:…"` section for its checkout's git
-directory there, so the overrides apply in that checkout and nowhere else. This
-covers checkouts on the host only: a WSL distribution's git does not see the
+environment, pointing at `~/.rennet/large-files/skip-checkouts.gitconfig`. When
+Rennet creates a checkout in skip mode it adds an `includeIf "gitdir:…"` section
+for that checkout's git directory there, so the overrides apply in that checkout
+and nowhere else. The reviewer's own checkout is never added, and neither is any
+checkout Rennet did not create. A checkout's entry is removed when Rennet removes
+the checkout, and any entry whose git directory is gone is dropped at the next
+start or the next checkout, because git reuses that directory's name for the next
+worktree added there. A git directory whose path contains a line break or other
+control character cannot be named in git's config, so that checkout is left out
+and its session says so.
+
+The overrides depend on whether Git LFS is installed on the host:
+
+| Git LFS | What later git commands in a skip-mode checkout do |
+|---|---|
+| Installed | Run Git LFS's own skip filter (`git-lfs filter-process --skip`): a checkout leaves pointer files, and a large file added there is still stored as a pointer. |
+| Not installed | Run no filter at all, which is the only way git can check the files out. A large file changed there is committed as an ordinary file, and the session says so beside the review. Install for me switches every skip-mode checkout to the first row and drops that note. |
+
+This covers checkouts on the host only: a WSL distribution's git does not see the
 daemon's environment.
 
 **Workspaces** lists every workspace Rennet knows for the scoped repository — the
@@ -615,7 +641,7 @@ The pool is shared by filesystem work and GitHub name resolution.
 rennet serve
 rennet status
 rennet stop
-rennet review <base>..<head> [path] | --pr <number> [path] [--out <file>] [--timeout <seconds>]
+rennet review <base>..<head> [path] | --pr <number> [path] [--out <file>] [--timeout <seconds>] [--large-files download|skip]
 rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>]
 ```
 
@@ -638,6 +664,12 @@ path as its final stdout line, so a consumer can `tail -1`. Exit `0` means the
 boards settled; `1` means the daemon was absent, the preparation failed or was
 cancelled, or `--timeout` (default 1800s) elapsed, and the document is still
 written with the outcome and reason; `2` is a usage error.
+
+A headless run never stops at the large-file question. `--large-files download`
+or `--large-files skip` sets the mode for that review's checkout only. Without
+the flag, a repository whose project has a choice uses it; one whose project has
+none downloads large files, as a headless run always did, prints one line saying
+so and how to choose, and records nothing on the project.
 
 `serve`, `status`, and `stop` operate on the daemon. `stop` asks the verified
 daemon to shut itself down over its own HTTP port (`POST /shutdown`, beside

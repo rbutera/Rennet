@@ -20,6 +20,30 @@ import {
   reviewDocumentPath,
 } from "./cli-review";
 
+describe("parseReviewTarget: --large-files (large-file-checkout, headless)", () => {
+  it("takes download or skip, on a range or a pull request", () => {
+    expect(parseReviewTarget(["main..feat", "--large-files", "skip"])).toMatchObject({
+      kind: "range",
+      largeFiles: "skip",
+    });
+    expect(parseReviewTarget(["--pr", "7", "--large-files", "download"])).toMatchObject({
+      kind: "pr",
+      largeFiles: "download",
+    });
+  });
+
+  it("absent means the project's choice: the target carries no mode", () => {
+    expect("largeFiles" in parseReviewTarget(["main..feat"])).toBe(false);
+  });
+
+  it("refuses any other value, naming it", () => {
+    expect(parseReviewTarget(["main..feat", "--large-files", "lazy"])).toEqual({
+      kind: "usage",
+      message: "--large-files 'lazy' is not download or skip",
+    });
+  });
+});
+
 describe("parseReviewTarget (tasks.md 2.2)", () => {
   it("parses a branch range", () => {
     const target = parseReviewTarget(["main..feat/x"]);
@@ -110,16 +134,14 @@ describe("foldPreparationLines (tasks.md 3.1)", () => {
     ]);
   });
 
-  it("prints the large-file question once, when preparation starts waiting on it", () => {
+  it("prints nothing for the large-file question: the headless run answers it and says so itself", () => {
     const awaiting: SessionPreparation = {
       status: "awaiting",
       kind: "large-file-choice",
       lfsAvailable: false,
       reviewId: "r1",
     };
-    expect(foldPreparationLines(undefined, awaiting, 3000)).toEqual([
-      "[+3s] waiting  for the large-file choice",
-    ]);
+    expect(foldPreparationLines(undefined, awaiting, 3000)).toEqual([]);
     expect(foldPreparationLines(awaiting, awaiting, 4000)).toEqual([]);
   });
 

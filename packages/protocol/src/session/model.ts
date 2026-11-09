@@ -2018,6 +2018,13 @@ export const SessionModelSchema = z
      */
     workspaceNotes: z.array(z.string().min(1)).optional(),
     /**
+     * How THIS session's checkouts treat Git LFS content, when the session was told rather
+     * than its project: a headless `rennet review --large-files`, or an answer given without
+     * remembering it for the project. Overrides the project's `checkout.largeFiles` for this
+     * session only; absent ⇒ the project's choice (or its question) applies.
+     */
+    largeFiles: LargeFileModeSchema.optional(),
+    /**
      * WHERE this session's work branch was pushed: the remote it went to and the branch
      * name it landed under. Written by the pull-request submission, and only when the work
      * branch differs from the reviewed branch — under `share` a push moves the branch the

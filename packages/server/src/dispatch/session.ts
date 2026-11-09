@@ -247,6 +247,7 @@ export function sessionHandlers(rt: DispatchRuntime) {
         ...(input.replacesSessionId === undefined
           ? {}
           : { replacesSessionId: input.replacesSessionId }),
+        ...(input.largeFiles === undefined ? {} : { largeFiles: input.largeFiles }),
         ...(input.branch === undefined
           ? {}
           : {
@@ -294,6 +295,7 @@ export function sessionHandlers(rt: DispatchRuntime) {
           input.sessionId,
           input.mode,
           input.commandId ?? randomUUID(),
+          input.remember ?? true,
         )) ?? null;
       return parseCommandOutput(name, { session });
     },

@@ -19,6 +19,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { WebSocket, WebSocketServer } from "ws";
 import {
   type CliIo,
+  HEADLESS_LARGE_FILES_LINE,
   NO_SIDECAR_WARNING,
   runCli as runSourceCli,
   writeCaptureFailureDocument,
@@ -836,7 +837,7 @@ describe("rennet review ↔ a real daemon over the wire (#379, headless-review-c
   // A single-repo copy of the owner-loop fixture repo: `main` plus a two-commit `feature/shared`
   // with one cited source change and one uncited modification (the Noise lane's material), so the
   // scripted seat plan drafts all five boards.
-  function seedRepo(root: string): void {
+  function seedRepo(root: string, options: { readonly lfs?: boolean } = {}): void {
     git(root, "init", "-q", "-b", "main");
     git(root, "config", "user.email", "rennet@example.test");
     git(root, "config", "user.name", "Rennet Test");
@@ -862,6 +863,16 @@ describe("rennet review ↔ a real daemon over the wire (#379, headless-review-c
       ].join("\n"),
     );
     git(root, "add", ".gitignore", OWNER_LOOP_SOURCE, OWNER_LOOP_UNCITED, OWNER_LOOP_SPEC);
+    if (options.lfs === true) {
+      // The repository routes a file through Git LFS from its base on, so the reviewed head
+      // uses LFS while the range's diff is exactly the plain fixture's.
+      writeRepoFile(root, ".gitattributes", "*.bin filter=lfs diff=lfs merge=lfs -text\n");
+      // Ordinary bytes, not a hand-made pointer: where git-lfs is configured system-wide the
+      // commit stores them through it and a download finds them locally; elsewhere they are
+      // committed as they are. Either way a download-mode checkout succeeds.
+      writeRepoFile(root, "assets/model.bin", "a widget model\n");
+      git(root, "add", ".gitattributes", "assets/model.bin");
+    }
     git(root, "commit", "-qm", "base");
     git(root, "remote", "add", "origin", "git@github.com:owner/target.git");
     git(root, "checkout", "-qb", "feature/shared");
@@ -965,6 +976,59 @@ describe("rennet review ↔ a real daemon over the wire (#379, headless-review-c
     const rerunPath = second.out.at(-1) ?? "";
     expect(rerunPath).toBe(documentPath);
     expect(JSON.parse(readFileSync(rerunPath, "utf8")).reviewId).toBe(document.reviewId);
+  }, 90_000);
+
+  it("never stops at the large-file question: with no choice and no flag it downloads, says so, and records nothing", async () => {
+    const root = mkdtempSync(resolve(tmpdir(), "rennet-review-lfs-"));
+    dirs.push(root);
+    const home = resolve(root, "home");
+    const dataDir = resolve(root, "data");
+    const repoDir = resolve(root, "repo");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(repoDir, { recursive: true });
+    const repo = realpathSync(repoDir);
+    seedRepo(repo, { lfs: true });
+    const { planPath } = writeOwnerLoopScriptedHarnessPlan(root);
+    const scriptedSeats = loadScriptedT3Seats(planPath);
+    const server = await createRennetServer({
+      dataDir,
+      serverVersion: "0.0.0-test",
+      env: { ...process.env, HOME: home, RENNET_DISABLE_HARNESS: "1" },
+      testHarnessPort: loadScriptedHarnessPlan(planPath),
+      testT3Seats: scriptedSeats.resolve,
+    });
+    shutdowns.push(server.shutdown);
+    writeDaemonFile(dataDir, {
+      pid: process.pid,
+      wsPort: server.wsPort,
+      host: server.wsHost,
+      protocolVersion: PROTOCOL_VERSION,
+      version: "0.0.0-test",
+      startedAt: new Date().toISOString(),
+    });
+
+    const captured = captureIo();
+    const code = await runSourceCli(
+      ["review", "main..feature/shared", repo, "--data-dir", dataDir],
+      captured.io,
+      { ...process.env, HOME: home },
+    );
+    // The branch is out nowhere, so the review needs a checkout, and the repository uses Git
+    // LFS while its project has no choice: the daemon asks. The headless run answered.
+    expect(captured.err.join("\n")).not.toContain("large-file");
+    expect(code).toBe(0);
+    const said = captured.out.filter((line) => line.includes("large files"));
+    expect(said).toHaveLength(1);
+    expect(said[0]).toMatch(/^\[\+\d+s\] /);
+    expect(said[0]).toContain(HEADLESS_LARGE_FILES_LINE);
+    // Downloaded, for this review only: the project still has no choice, so the app asks.
+    const view = (await server.dispatch("settings.get", {})) as {
+      projects: { prefs?: { largeFiles?: { value: string; layer: string } } }[];
+    };
+    expect(view.projects[0]?.prefs?.largeFiles).toEqual({ value: "ask", layer: "builtin" });
+    const document = JSON.parse(readFileSync(captured.out.at(-1) ?? "", "utf8"));
+    expect(document.outcome).toBe("settled");
   }, 90_000);
 
   it("writes a findable failure document when the capture stage fails, through the real CLI (c)", async () => {

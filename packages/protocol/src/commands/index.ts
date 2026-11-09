@@ -1681,6 +1681,13 @@ const definitions = {
          * clients and rows without a forge remote. */
         forgeRepository: forgeRepoIdentitySchema.optional(),
         /**
+         * How this session's checkouts treat Git LFS content, overriding the project's
+         * `checkout.largeFiles` for this session only and recording nothing on the project
+         * (a headless `rennet review --large-files`). Absent ⇒ the project's choice applies,
+         * and a project that has not chosen asks.
+         */
+        largeFiles: LargeFileModeSchema.optional(),
+        /**
          * The refused review session whose target claim this mint replaces. The host persists
          * the fresh claimant before archiving this session, so an interruption cannot hide the
          * only review. Absent keeps ordinary mint-or-reattach behavior unchanged.
@@ -1721,6 +1728,12 @@ const definitions = {
       sessionId: z.string().min(1),
       mode: LargeFileModeSchema,
       commandId: commandIdSchema.optional(),
+      /**
+       * `false` records the answer for THIS session only and leaves the project's choice
+       * unset, so the next review of the project asks again (a headless run that had nobody
+       * to ask). Absent ⇒ `true`: the answer is the project's.
+       */
+      remember: z.boolean().optional(),
     }),
     output: z.object({ session: sidebarSessionSchema.nullable() }),
   },

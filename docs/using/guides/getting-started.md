@@ -99,6 +99,12 @@ outcome, and every lens's board or its typed absence) to
 prints that absolute path as its last line, so a script can take `tail -1`. The
 path is always absolute, even when `--data-dir` is relative.
 
+If the repository uses Git LFS, pass `--large-files skip` to leave large files as
+placeholders in the review's checkout, or `--large-files download` to fetch them.
+The flag applies to that review only. Without it, the project's choice from the
+app applies; if the project has none yet, the review downloads them and says so
+in one line, and the app still asks the next time.
+
 The exit code carries the outcome: `0` when the boards settled, `1` when the
 daemon was not running or the review failed, was cancelled, or ran past
 `--timeout` (default half an hour). Once a session exists, a document is written

@@ -727,6 +727,8 @@ export interface DispatchDeps {
       projectId: string;
       commandId: string;
       replacesSessionId?: string;
+      /** This session's large-file mode, overriding its project's (`session.mint`). */
+      largeFiles?: LargeFileMode;
       target?: {
         branch: string;
         /** The branch capture's base ref (headless-review-cli D2); branch arm only, not part
@@ -740,13 +742,15 @@ export interface DispatchDeps {
     cancelPreparation(sessionId: string): SidebarSession | undefined;
     retryPreparation(sessionId: string, commandId: string): Promise<SidebarSession | undefined>;
     /**
-     * Record the answer to the large-file question as the project's `checkout.largeFiles` and
-     * resume the session's preparation when it stopped for it (large-file-checkout spec).
+     * Record the answer to the large-file question as the project's `checkout.largeFiles` — or,
+     * with `remember: false`, as this session's own — and resume the session's preparation
+     * when it stopped for it (large-file-checkout spec).
      */
     chooseLargeFileMode(
       sessionId: string,
       mode: LargeFileMode,
       commandId: string,
+      remember?: boolean,
     ): Promise<SidebarSession | undefined>;
     rename(sessionId: string, title: string): SidebarSession | undefined;
     setPinned(sessionId: string, pinned: boolean): SidebarSession | undefined;

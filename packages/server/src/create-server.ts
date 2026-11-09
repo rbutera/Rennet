@@ -2872,7 +2872,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // ladder the Worktrees card shows, read by repository root. `settingsComposition` is
       // constructed further down this factory; a bind only ever happens on a dispatched
       // command, long after construction, so the reference is live by the time it is read.
-      placementFor: (repoRoot: string) => settingsComposition.resolveWorktreePlacement(repoRoot),
+      //
+      // …with this SESSION's large-file mode over the project's, when the session was told one
+      // (`rennet review --large-files`, or an answer not remembered for the project).
+      placementFor: async (repoRoot: string) => {
+        const placement = await settingsComposition.resolveWorktreePlacement(repoRoot);
+        const override = sessionLargeFilesFor(review);
+        return override === undefined ? placement : { ...placement, largeFiles: override };
+      },
       worktreeFacts: worktreeFactsFor,
       // The claim, asked of the sessions that are live AT THE BIND — not at daemon start.
       // A session archived a minute ago has released its workspace, and the whole point of
@@ -2903,6 +2910,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       pendingPrWorktreeFor: (reviewId: string) => frontDoorFor(reviewId)?.path,
     };
     return workspaceDeps;
+  }
+
+  /** The large-file mode the session owning `review` was told for itself, if any. */
+  function sessionLargeFilesFor(review: Review): LargeFileMode | undefined {
+    return sessionStore.load(sessionIdForReview(review))?.largeFiles;
   }
 
   async function resolveBoundWorkspace(review: Review, sessionId: string): Promise<string> {
@@ -3171,10 +3183,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // binding never had a chance to place it. One placement read, both callers. A
       // settings read that fails takes the builtin, which is what this line always used:
       // a pull-request review must not be refused over where its checkout goes.
-      const placement: { readonly largeFiles?: LargeFilesChoice } & WorktreePlacement =
+      const resolvedPlacement: { readonly largeFiles?: LargeFilesChoice } & WorktreePlacement =
         await settingsComposition
           .resolveWorktreePlacement(root)
           .catch(() => defaultWorktreePlacement(dataDir));
+      // The session this pull request is being opened for may carry its own large-file mode
+      // (`rennet review --large-files`): it wins over the project's here as at the bind.
+      const sessionMode = sessionLargeFilesFor(review);
+      const placement =
+        sessionMode === undefined
+          ? resolvedPlacement
+          : { ...resolvedPlacement, largeFiles: sessionMode };
       const worktree = prWorktreePath(
         placement.root,
         placement.prPattern,
@@ -6069,6 +6088,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     sessionId: string,
     mode: LargeFileMode,
     commandId: string,
+    remember = true,
   ): Promise<SessionModel | undefined> {
     const session = sessionStore.load(sessionId);
     if (session === undefined) return undefined;
@@ -6081,7 +6101,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     if (repoRoot === undefined) {
       throw new Error("This session has no repository to record the large-file choice for.");
     }
-    await settingsComposition.writeLargeFiles(repoRoot, mode);
+    if (remember) {
+      await settingsComposition.writeLargeFiles(repoRoot, mode);
+      // The project's answer is the one that applies now: drop any mode this session was told
+      // for itself, so the two cannot disagree.
+      const current = sessionStore.load(sessionId);
+      if (current?.largeFiles !== undefined) {
+        const { largeFiles: _dropped, ...rest } = current;
+        sessionStore.save(rest);
+      }
+    } else {
+      // This session only: the project keeps no answer, and its next review asks.
+      const current = sessionStore.load(sessionId);
+      if (current !== undefined) sessionStore.save({ ...current, largeFiles: mode });
+    }
     if (reviewId !== undefined) clearFrontDoorFailure(reviewId);
     return resumeStoppedPreparation(sessionId, commandId);
   }
@@ -6600,7 +6633,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // Mint first and return immediately. The durable preparation snapshot owns the capture
       // and first-generation work after navigation, including cancellation, retry, restart
       // recovery, and the exact lens events emitted by the server pipeline.
-      start: async ({ projectId, commandId, replacesSessionId, target }) => {
+      start: async ({ projectId, commandId, replacesSessionId, target, largeFiles }) => {
         const legacyPrRef =
           target?.prNumber === undefined || target.forgeRepository !== undefined
             ? null
@@ -6644,7 +6677,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                   resolvedRoot,
                 );
         if (!entered.reattached) sessionStore.save(entered.session);
-        const current = sessionStore.load(entered.session.id) ?? entered.session;
+        const loaded = sessionStore.load(entered.session.id) ?? entered.session;
+        // This session's own large-file mode, recorded before its preparation starts so the
+        // front door and the bind both read it. A session already bound keeps the mode its
+        // checkout was created with.
+        if (largeFiles !== undefined && loaded.boundRoot === undefined) {
+          sessionStore.save({ ...loaded, largeFiles });
+        }
+        const current = sessionStore.load(entered.session.id) ?? loaded;
         const prepared =
           entered.reattached &&
           (current.reviewId !== undefined ||
@@ -6669,8 +6709,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         const session = await retrySessionPreparation(sessionId, commandId);
         return session && sidebarSessionFor(session);
       },
-      chooseLargeFileMode: async (sessionId, mode, commandId) => {
-        const session = await chooseLargeFileMode(sessionId, mode, commandId);
+      chooseLargeFileMode: async (sessionId, mode, commandId, remember) => {
+        const session = await chooseLargeFileMode(sessionId, mode, commandId, remember);
         return session && sidebarSessionFor(session);
       },
       rename: (sessionId, title) => {

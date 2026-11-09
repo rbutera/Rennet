@@ -111,7 +111,7 @@ export function resolvePrTarget<Row extends ScopablePr>(
 
 /** One usage line for every `rennet review` refusal, so the flags cannot drift. */
 export const REVIEW_USAGE =
-  "Usage: rennet review <base>..<head> [path] | rennet review --pr <number> [path]   [--data-dir <dir>] [--out <file>] [--timeout <seconds>]";
+  "Usage: rennet review <base>..<head> [path] | rennet review --pr <number> [path]   [--data-dir <dir>] [--out <file>] [--timeout <seconds>] [--large-files download|skip]";
 
 /** The options every review invocation shares, whichever target it names. */
 interface ReviewOptions {
@@ -119,6 +119,12 @@ interface ReviewOptions {
   readonly dataDir?: string;
   readonly out?: string;
   readonly timeoutMs: number;
+  /**
+   * How this review's checkout treats Git LFS content (`--large-files`), for this run only:
+   * the project's own choice is neither read nor written. Absent ⇒ the project's choice, and a
+   * project that has none downloads, as a headless run always did.
+   */
+  readonly largeFiles?: "download" | "skip";
 }
 
 /** What `parseReviewTarget` resolved from argv: a range, a PR, or a usage refusal. */
@@ -149,6 +155,7 @@ export function parseReviewTarget(argv: readonly string[]): ReviewTarget {
         out: { type: "string" },
         pr: { type: "string" },
         timeout: { type: "string" },
+        "large-files": { type: "string" },
       },
     });
     parsed = { values: result.values, positionals: result.positionals };
@@ -164,11 +171,16 @@ export function parseReviewTarget(argv: readonly string[]): ReviewTarget {
     }
     timeoutMs = seconds * 1000;
   }
+  const largeFiles = parsed.values["large-files"];
+  if (largeFiles !== undefined && largeFiles !== "download" && largeFiles !== "skip") {
+    return usage(`--large-files '${largeFiles}' is not download or skip`);
+  }
   const shared: ReviewOptions = {
     path: undefined,
     dataDir: parsed.values["data-dir"],
     out: parsed.values.out,
     timeoutMs,
+    ...(largeFiles === undefined ? {} : { largeFiles }),
   };
 
   if (parsed.values.pr !== undefined) {
@@ -258,10 +270,9 @@ export function foldPreparationLines(
     return lines;
   }
 
-  if (next.status === "awaiting") {
-    if (previous?.status !== "awaiting") lines.push(`${prefix}waiting  for the large-file choice`);
-    return lines;
-  }
+  // The large-file question: a headless run answers it at once (see `rennet review`'s poll),
+  // and says so in its own line, so the record's brief `awaiting` prints nothing here.
+  if (next.status === "awaiting") return lines;
 
   const previousLanes = new Map(lanesOf(previous).map((lane) => [lane.id, lane]));
   for (const lane of lanesOf(next)) {
