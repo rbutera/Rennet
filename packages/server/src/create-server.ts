@@ -6465,10 +6465,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * project's `checkout.largeFiles` on the repo rung of the session's repository, then
    * resume the session's preparation, which binds under the answer.
    *
-   * Resumed only when preparation stopped for it — `awaiting`, or a `failed`/`cancelled`
-   * one, where choosing is the recovery the failure offered. A preparation still running
-   * keeps running and the answer applies to its next checkout; a session with no preparation
-   * left is a settled review, which an answer must never send back to drafting.
+   * Resumed only when preparation stopped FOR it — `awaiting`, or `failed` with a recovery
+   * the answer serves (choosing a mode, or installing Git LFS, which Skip sidesteps). Never
+   * from `cancelled`: the reviewer stopped that review, and only their Retry starts it again
+   * (no surface offers the choice there). A preparation still running keeps running and the
+   * answer applies to its next checkout; a session with no preparation left is a settled
+   * review, which an answer must never send back to drafting.
    *
    * Any recorded front-door failure for the review is cleared: a new mode is exactly the
    * reason to try the checkout again rather than report the failure it may have fixed.
@@ -6506,12 +6508,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       if (current !== undefined) sessionStore.save({ ...current, largeFiles: mode });
     }
     if (reviewId !== undefined) clearFrontDoorFailure(reviewId);
-    return resumeStoppedPreparation(sessionId, commandId);
+    return resumeStoppedPreparation(sessionId, commandId, answersLargeFileQuestion);
+  }
+
+  /** Whether a stopped preparation is one a large-file answer resumes: it was waiting on the
+   *  question, or failed with a recovery the answer serves. Never a cancelled one. */
+  function answersLargeFileQuestion(preparation: SessionPreparation): boolean {
+    if (preparation.status === "awaiting") return true;
+    if (preparation.status !== "failed") return false;
+    return (
+      preparation.action === "choose-large-files" ||
+      (preparation.action === "install" && preparation.tool === "git-lfs")
+    );
   }
 
   /**
-   * Resume a preparation that STOPPED — `awaiting`, `failed` or `cancelled` — and nothing
-   * else, decided at the moment of acting rather than from a read taken before an await. A
+   * Resume a preparation that STOPPED — `awaiting`, `failed` or `cancelled`, narrowed by
+   * `resumes` — and nothing else, decided at the moment of acting rather than from a read taken before an await. A
    * preparation that is running (the answer arrived twice, or after another resume) is left
    * alone, and so is a session whose preparation finished: an answer never sends a settled
    * review back to drafting. A cancelled run still winding down is waited for first.
@@ -6519,6 +6532,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   async function resumeStoppedPreparation(
     sessionId: string,
     commandId: string,
+    resumes: (preparation: SessionPreparation) => boolean = () => true,
   ): Promise<SessionModel | undefined> {
     const isRunning = (): boolean => {
       const controller = sessionPreparations.get(sessionId);
@@ -6531,16 +6545,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     if (isRunning()) return sessionStore.load(sessionId);
     const session = sessionStore.load(sessionId);
     if (session === undefined) return undefined;
-    const status = session.preparation?.status;
+    const preparation = session.preparation;
+    const status = preparation?.status;
     if (status !== "awaiting" && status !== "failed" && status !== "cancelled") return session;
+    if (preparation === undefined || !resumes(preparation)) return session;
     return beginSessionPreparation(session, preparationRequestFor(session, commandId));
   }
 
   /**
    * Retry runs a preparation again only when it STOPPED, exactly as an answer to the
    * large-file question does (`resumeStoppedPreparation`). A preparation that finished leaves
-   * no `preparation` behind, and that is a settled review: a late Retry — a stale install
-   * continuation, a second window — must never send it back to drafting.
+   * no `preparation` behind, and that is a settled review: a late Retry — a second window,
+   * a click that crossed the settle — must never send it back to drafting.
    */
   function retrySessionPreparation(
     sessionId: string,

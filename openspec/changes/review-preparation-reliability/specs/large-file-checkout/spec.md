@@ -41,3 +41,7 @@ When the user chooses download and `git-lfs` is not available, the modal SHALL o
 #### Scenario: Download chosen, git-lfs missing
 - **WHEN** the user chooses Download large files and `git-lfs` is absent
 - **THEN** the modal offers Install for me and Skip for now, and the checkout continues after either
+
+#### Scenario: an answer after a cancel
+- **WHEN** the user cancelled the preparation and a large-file answer arrives afterwards
+- **THEN** the choice is recorded and the cancelled preparation is not resumed; only Retry starts it again

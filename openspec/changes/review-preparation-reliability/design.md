@@ -61,7 +61,7 @@ See proposal.md for the motivation. The facts the approach rests on:
 
 - **Setting.** A new registry key, `checkout.largeFiles`, with values `"download" | "skip"`, layer `repo`, and no builtin value (unset means "ask").
 - **The prompt.** `runSessionPreparation` checks the project's mode before `bindWorkspaceFor`. When the repo uses LFS and the mode is unset, preparation enters a new non-terminal state, `awaiting{kind:"large-file-choice", lfsAvailable}`. The UI renders the modal from that state.
-- **The answer.** The answer goes through `session.chooseLargeFileMode({mode, remember:true})`. It writes the repo setting and resumes preparation. This is a protocol addition, not a blocking dialog in the daemon.
+- **The answer.** The answer goes through `session.chooseLargeFileMode({mode, remember:true})`. It writes the repo setting and resumes preparation when it stopped for the answer: `awaiting`, or `failed` with choosing a mode (or installing Git LFS, which skipping sidesteps) as its recovery. It never resumes a `cancelled` preparation; only Retry restarts that. This is a protocol addition, not a blocking dialog in the daemon.
 - **Checkout flags.**
   - `ensurePrWorktree` and the branch and sibling worktree adds take a `largeFiles` option.
   - In skip mode, git is invoked with `-c filter.lfs.process= -c filter.lfs.smudge= -c filter.lfs.required=false`, plus `GIT_LFS_SKIP_SMUDGE=1`.

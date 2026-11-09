@@ -989,6 +989,38 @@ describe("cancel and answer around the workspace stage", () => {
     expect(after.preparation).toEqual(cancelled.session?.preparation);
   }, 60_000);
 
+  it("an answer that arrives after a cancel records the choice and does not resume the review", async () => {
+    // A late answer — a second window, a stale dialog — must not start a review the reviewer
+    // stopped. Only Retry does that, and Retry re-asks.
+    const fixture = lfsRepository();
+    const { server, mint, waitFor } = await serverFor(fixture);
+    const sessionId = await mint();
+    await waitFor(sessionId, (session) => expect(session?.preparation?.status).toBe("awaiting"));
+    const cancelled = (await server.dispatch("session.cancelPreparation", { sessionId })) as {
+      session: Session | null;
+    };
+    expect(cancelled.session?.preparation?.status).toBe("cancelled");
+
+    const answered = (await server.dispatch("session.chooseLargeFileMode", {
+      sessionId,
+      mode: "skip",
+    })) as { session: Session | null };
+    expect(answered.session?.preparation).toEqual(cancelled.session?.preparation);
+    // Recorded for the project all the same: it is what the reviewer chose.
+    const view = (await server.dispatch("settings.get", {})) as {
+      projects: { prefs?: { largeFiles?: { value: string } } }[];
+    };
+    expect(view.projects[0]?.prefs?.largeFiles?.value).toBe("skip");
+    // Still cancelled a moment later, and nothing was checked out.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const after = await waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("cancelled"),
+    );
+    expect(after.preparation).toEqual(cancelled.session?.preparation);
+    const store = new SessionStore(join(fixture.dataDir, "sessions"));
+    expect(store.load(sessionId)?.boundRoot).toBeUndefined();
+  }, 60_000);
+
   it("two quick answers run one preparation, and neither waits on its drafting", async () => {
     const fixture = lfsRepository();
     const { server, mint, waitFor } = await serverFor(fixture);
