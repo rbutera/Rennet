@@ -20,9 +20,11 @@ export function toolsHandlers(rt: DispatchRuntime) {
     "tools.cancelInstall": async (rawInput) => {
       const name = "tools.cancelInstall" as const;
       const input = parseCommandInput(name, rawInput);
-      return parseCommandOutput(name, {
-        cancelled: deps.tools?.cancelInstall(input.commandId) ?? false,
-      });
+      // A command that already finished answers with its retained verdict beside `false`.
+      return parseCommandOutput(
+        name,
+        deps.tools?.cancelInstall(input.commandId) ?? { cancelled: false },
+      );
     },
   } satisfies Record<string, CommandHandler>;
 }

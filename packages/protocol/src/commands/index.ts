@@ -136,6 +136,41 @@ export function commandIdFor(key: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${version}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
+/**
+ * What one `tools.install` came to (source-control-tooling spec): the re-probed tool after
+ * the run, never the installer's own opinion of it. Shared by `tools.cancelInstall`, which
+ * answers with a finished command's verdict.
+ */
+const toolInstallResultSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("installed"),
+    /** What ran, as one line a person can read and copy. */
+    command: z.string().min(1),
+    output: z.string(),
+    probe: detectedSourceControlToolSchema,
+  }),
+  z.object({
+    status: z.literal("failed"),
+    command: z.string().min(1),
+    /** One plain sentence; `output` is the detail. */
+    message: z.string().min(1),
+    /** The step that failed, as a person would type it. */
+    failedCommand: z.string().min(1),
+    exitCode: z.number().int().nullable(),
+    /** Present when the install stopped because it was cancelled. */
+    cancelled: z.literal(true).optional(),
+    output: z.string(),
+    probe: detectedSourceControlToolSchema,
+  }),
+  z.object({
+    status: z.literal("manual"),
+    /** The command to run by hand on that locus. */
+    command: z.string().min(1),
+    docsUrl: z.string().min(1),
+    probe: detectedSourceControlToolSchema,
+  }),
+]);
+
 const definitions = {
   "app.bootstrap": {
     input: z.object({}),
@@ -524,44 +559,17 @@ const definitions = {
       locus: locusSchema,
       commandId: commandIdSchema,
     }),
-    output: z.object({
-      result: z.discriminatedUnion("status", [
-        z.object({
-          status: z.literal("installed"),
-          /** What ran, as one line a person can read and copy. */
-          command: z.string().min(1),
-          output: z.string(),
-          probe: detectedSourceControlToolSchema,
-        }),
-        z.object({
-          status: z.literal("failed"),
-          command: z.string().min(1),
-          /** One plain sentence; `output` is the detail. */
-          message: z.string().min(1),
-          /** The step that failed, as a person would type it. */
-          failedCommand: z.string().min(1),
-          exitCode: z.number().int().nullable(),
-          /** Present when the install stopped because it was cancelled. */
-          cancelled: z.literal(true).optional(),
-          output: z.string(),
-          probe: detectedSourceControlToolSchema,
-        }),
-        z.object({
-          status: z.literal("manual"),
-          /** The command to run by hand on that locus. */
-          command: z.string().min(1),
-          docsUrl: z.string().min(1),
-          probe: detectedSourceControlToolSchema,
-        }),
-      ]),
-    }),
+    output: z.object({ result: toolInstallResultSchema }),
   },
   // Stop a running `tools.install` by its `commandId`: the running step and everything it
   // started are terminated and no later step runs. `cancelled: false` when nothing by that id
-  // was running (it had already finished, or never started).
+  // was running (it had already finished, or never started). When it had FINISHED recently
+  // the daemon still holds its verdict and answers with it as `result`, so a cancel that
+  // arrives late — after a dropped connection — learns what really happened. Optional: an
+  // older daemon never sends it.
   "tools.cancelInstall": {
     input: z.object({ commandId: commandIdSchema }),
-    output: z.object({ cancelled: z.boolean() }),
+    output: z.object({ cancelled: z.boolean(), result: toolInstallResultSchema.optional() }),
   },
   "forge.setEnabled": {
     input: z.object({

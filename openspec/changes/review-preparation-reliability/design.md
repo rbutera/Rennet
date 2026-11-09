@@ -54,6 +54,7 @@ See proposal.md for the motivation. The facts the approach rests on:
   - It resolves an installer plan per platform. On macOS with `brew` on the hydrated PATH, the plan is `brew install git-lfs` then `git lfs install`. For `git`, it is `brew install git` (or `xcode-select --install`).
   - It streams stdout and stderr over the existing event channel, then re-probes.
   - With no installer it returns `{plan: "manual", command, docsUrl}`.
+  - A command id is one request, however often it arrives. One still waiting re-joins its own run and gets the output so far as a single `replace` snapshot; one that finished gets its retained verdict back (kept about ten minutes, a few dozen entries), and `tools.cancelInstall` on it stops nothing and reports that verdict. A client that lost its connection asks again under the same id and settles only from the daemon's verdict, never from a probe; a Cancel pressed while disconnected is sent on reconnect instead of re-asking for the install.
 - No elevation is needed, because Homebrew installs run as the user. Rule Zero applies: there is no confirmation ceremony beyond the user pressing **Install for me**.
 
 ### 4. Large-file mode

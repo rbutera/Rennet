@@ -2220,12 +2220,65 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const toolInstallKey = (tool: SourceControlToolId, locus: Locus): string =>
     `${tool}@${locus.kind === "wsl" ? `wsl:${locus.distro}` : "host"}`;
 
+  /**
+   * Every `tools.install` command still waiting on its verdict, by command id — whether it
+   * started a run, joined one, or queued behind a dying one. The SAME command id sent again
+   * (a client whose connection dropped mid-install asking again) is that command, not a new
+   * install: it re-joins this promise and hears the output so far as one snapshot.
+   */
+  type ToolInstallVerdict = CommandOutput<"tools.install">["result"];
+  const toolInstallsByCommandId = new Map<string, Promise<ToolInstallVerdict>>();
+  /**
+   * The verdicts of FINISHED installs, by every command id that was waiting on one, kept for
+   * a while so a client that lost its connection before the answer reached it can still ask.
+   * Without this a finished run left no trace, and the same command id asked again ran the
+   * installer a second time. Bounded in time and size: a client reconnects in seconds, and a
+   * command id older than this is answered as a fresh request (as after a daemon restart).
+   */
+  const finishedToolInstalls = new Map<
+    string,
+    {
+      readonly outcome:
+        | { readonly ok: true; readonly result: ToolInstallVerdict }
+        | { readonly ok: false; readonly error: unknown };
+      readonly at: number;
+    }
+  >();
+  const FINISHED_TOOL_INSTALL_TTL_MS = 10 * 60_000;
+  const FINISHED_TOOL_INSTALL_CAP = 32;
+
+  function finishedToolInstall(commandId: string) {
+    const entry = finishedToolInstalls.get(commandId);
+    if (entry === undefined) return undefined;
+    if (Date.now() - entry.at > FINISHED_TOOL_INSTALL_TTL_MS) {
+      finishedToolInstalls.delete(commandId);
+      return undefined;
+    }
+    return entry;
+  }
+
+  function retainToolInstall(
+    commandId: string,
+    outcome: NonNullable<ReturnType<typeof finishedToolInstall>>["outcome"],
+  ): void {
+    const now = Date.now();
+    finishedToolInstalls.delete(commandId);
+    finishedToolInstalls.set(commandId, { outcome, at: now });
+    // Oldest first (insertion order): drop what has expired, then what is over the cap.
+    for (const [id, entry] of finishedToolInstalls) {
+      const expired = now - entry.at > FINISHED_TOOL_INSTALL_TTL_MS;
+      if (!expired && finishedToolInstalls.size <= FINISHED_TOOL_INSTALL_CAP) break;
+      finishedToolInstalls.delete(id);
+    }
+  }
+
   function emitToolInstallOutput(
     commandId: string,
     tool: SourceControlToolId,
     stream: "stdout" | "stderr",
     chunk: string,
     command?: string,
+    replace?: true,
   ): void {
     const event = {
       kind: "tool-install-output",
@@ -2233,9 +2286,26 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       stream,
       chunk,
       ...(command === undefined ? {} : { command }),
+      ...(replace === undefined ? {} : { replace }),
     } as const;
     options.broadcastProgress?.(commandId, event);
     wsListener?.broadcastProgress(commandId, event);
+  }
+
+  /**
+   * Send `commandId` the run's output so far as ONE snapshot that replaces whatever its
+   * listener holds: a command joining late has heard nothing, and one re-joining after a
+   * dropped connection has heard part of it, so appending would lose or repeat the gap.
+   */
+  function replayToolInstall(commandId: string, tool: SourceControlToolId, run: ToolInstallRun) {
+    emitToolInstallOutput(
+      commandId,
+      tool,
+      "stdout",
+      run.streamed.map((entry) => entry.chunk).join(""),
+      run.command,
+      true,
+    );
   }
 
   /**
@@ -2246,12 +2316,50 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    *
    * A successful install clears every recorded front-door checkout failure, so the next bind
    * attempts the checkout instead of reporting the failure the install just fixed.
+   *
+   * A command id is ONE request, however often it arrives: one still waiting re-joins its
+   * own answer (with a snapshot of the output so far), and one that has finished gets its
+   * retained verdict back — the installer never runs twice for it.
    */
   function installSourceControlTool(input: {
     readonly tool: SourceControlToolId;
     readonly locus: Locus;
     readonly commandId: string;
-  }): Promise<CommandOutput<"tools.install">["result"]> {
+  }): Promise<ToolInstallVerdict> {
+    const finished = finishedToolInstall(input.commandId);
+    if (finished !== undefined) {
+      return finished.outcome.ok
+        ? Promise.resolve(finished.outcome.result)
+        : Promise.reject(finished.outcome.error);
+    }
+    const waiting = toolInstallsByCommandId.get(input.commandId);
+    if (waiting !== undefined) {
+      for (const run of toolInstallRuns.values()) {
+        if (run.commandIds.has(input.commandId))
+          replayToolInstall(input.commandId, input.tool, run);
+      }
+      return waiting;
+    }
+    const verdict = startOrJoinToolInstall(input);
+    toolInstallsByCommandId.set(input.commandId, verdict);
+    void verdict
+      .then(
+        (result) => retainToolInstall(input.commandId, { ok: true, result }),
+        (error: unknown) => retainToolInstall(input.commandId, { ok: false, error }),
+      )
+      .finally(() => {
+        if (toolInstallsByCommandId.get(input.commandId) === verdict) {
+          toolInstallsByCommandId.delete(input.commandId);
+        }
+      });
+    return verdict;
+  }
+
+  function startOrJoinToolInstall(input: {
+    readonly tool: SourceControlToolId;
+    readonly locus: Locus;
+    readonly commandId: string;
+  }): Promise<ToolInstallVerdict> {
     const key = toolInstallKey(input.tool, input.locus);
     const running = toolInstallRuns.get(key);
     // A run that was CANCELLED is only dying (its installer gets SIGKILL after a grace): never
@@ -2279,18 +2387,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
               emitToolInstallOutput(input.commandId, input.tool, stream, chunk),
             );
           }
-          return installSourceControlTool(input);
+          return startOrJoinToolInstall(input);
         });
     }
     if (running !== undefined) {
       if (!running.commandIds.has(input.commandId)) {
         running.commandIds.add(input.commandId);
-        if (running.command !== undefined) {
-          emitToolInstallOutput(input.commandId, input.tool, "stdout", "", running.command);
-        }
-        for (const { stream, chunk } of running.streamed) {
-          emitToolInstallOutput(input.commandId, input.tool, stream, chunk, running.command);
-        }
+        replayToolInstall(input.commandId, input.tool, running);
       }
       return running.result;
     }
@@ -2402,20 +2505,27 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     };
   }
 
-  /** Stop the `tools.install` run `commandId` names (any command that started or joined it);
-   *  `false` when none is running. */
-  function cancelSourceControlInstall(commandId: string): boolean {
+  /** Stop the `tools.install` run `commandId` names (any command that started or joined it).
+   *  `cancelled: false` when none is running; a command that has already FINISHED is left as
+   *  it was and its retained verdict comes back, so a cancel that arrives late (after a
+   *  dropped connection) learns what actually happened instead of guessing. */
+  function cancelSourceControlInstall(commandId: string): {
+    readonly cancelled: boolean;
+    readonly result?: ToolInstallVerdict;
+  } {
     const waiting = pendingInstallRetries.get(commandId);
     if (waiting !== undefined) {
       waiting.abort("Cancelled by reviewer.");
-      return true;
+      return { cancelled: true };
     }
     for (const run of toolInstallRuns.values()) {
       if (!run.commandIds.has(commandId)) continue;
       run.controller.abort("Cancelled by reviewer.");
-      return true;
+      return { cancelled: true };
     }
-    return false;
+    const finished = finishedToolInstall(commandId);
+    if (finished?.outcome.ok === true) return { cancelled: false, result: finished.outcome.result };
+    return { cancelled: false };
   }
 
   /** Abort every running install and wait for each to end: its process group is gone (or

@@ -604,7 +604,7 @@ export interface DispatchDeps {
       locus: Locus;
       commandId: string;
     }): Promise<CommandOutput<"tools.install">["result"]>;
-    cancelInstall(commandId: string): boolean;
+    cancelInstall(commandId: string): CommandOutput<"tools.cancelInstall">;
   };
   /**
    * The durable benchmark archive's read side (#731, D8) — the newest `limit` recorded

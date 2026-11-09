@@ -399,6 +399,35 @@ describe("WsRennetBridge", () => {
     ]);
   });
 
+  it("keeps a re-join snapshot's replace flag through the wire parse", async () => {
+    // The daemon re-sends a run's whole output as ONE event flagged `replace` when a command
+    // re-joins after a dropped connection. The frame is parsed against the wire schema on the
+    // way in; a field the schema did not name would be stripped there, and the drawer would
+    // append the snapshot onto what it already held — every line before the drop, twice.
+    const stub = await startStub();
+    stubs.push(stub);
+    const bridge = trackBridge(new WsRennetBridge({ url: stub.url }));
+    await new Promise<void>((resolve) => {
+      const check = () => (stub.helloCount > 0 ? resolve() : setTimeout(check, 5));
+      check();
+    });
+    const chunks: unknown[] = [];
+    bridge.onToolInstallProgress("install-1", (event) => chunks.push(event));
+    stub.broadcast({
+      type: "progressEvent",
+      commandId: "install-1",
+      event: {
+        kind: "tool-install-output",
+        tool: "git-lfs",
+        stream: "stdout",
+        chunk: "==> Downloading\n==> Pouring git-lfs\n",
+        replace: true,
+      },
+    });
+    await waitFor(() => chunks.length === 1);
+    expect(chunks[0]).toMatchObject({ replace: true });
+  });
+
   it("deduplicates live diagnostics on catch-up while a fresh bridge replays them", async () => {
     const stub = await startStub();
     stubs.push(stub);

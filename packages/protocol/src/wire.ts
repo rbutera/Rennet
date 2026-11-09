@@ -845,6 +845,13 @@ export const toolInstallProgressEventSchema = z.object({
    * older daemon omits it, and the command then appears with the result.
    */
   command: z.string().min(1).optional(),
+  /**
+   * A snapshot: `chunk` is the run's WHOLE output so far and replaces what the listener
+   * holds, rather than following it. Sent when a command joins a run late or re-joins after
+   * a dropped connection, so output that streamed in between is neither lost nor repeated.
+   * Optional: absent means an ordinary chunk, and an older daemon never sends it.
+   */
+  replace: z.literal(true).optional(),
 });
 export type ToolInstallProgressEvent = z.infer<typeof toolInstallProgressEventSchema>;
 
