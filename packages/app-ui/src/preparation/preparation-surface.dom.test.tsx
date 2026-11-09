@@ -666,6 +666,38 @@ describe("the large-file choice while preparation waits on it", () => {
     expect(recorded.installs).toHaveLength(1);
   });
 
+  it("lands focus on Download when an install returns the dialog to its choices, and announces it in a region already there", async () => {
+    // The install lands with no action from the reviewer: the "needs Git LFS" screen gives way
+    // to the choices, and the control they were on (the running install's Cancel) unmounts. A
+    // live region inserted with its text already inside is one many screen readers never
+    // read, so the announcement goes into a region that was on the page, empty, beforehand.
+    const install = deferred();
+    const { user, recorded } = surface(awaiting(false), {
+      review: true,
+      installGate: install.promise,
+    });
+    const dialog = await choiceDialog();
+    await user.click(within(dialog).getByRole("button", { name: /Download large files/ }));
+    await user.click(await within(dialog).findByRole("button", { name: "Install for me" }));
+    await waitFor(() => expect(recorded.installs).toHaveLength(1));
+    within(dialog).getByRole("button", { name: "Cancel" }).focus();
+
+    const region = dialog.querySelector<HTMLElement>('[data-slot="lfs-installed"]');
+    expect(region?.getAttribute("role")).toBe("status");
+    expect(region?.textContent).toBe("");
+
+    install.resolve();
+    await waitFor(() =>
+      expect(region?.textContent).toBe("Git LFS is installed. You can download large files now."),
+    );
+    // The SAME node, still on the page: its text changed, it was not inserted.
+    expect(region?.isConnected).toBe(true);
+    const download = within(dialog).getByRole("button", { name: /Download large files/ });
+    await waitFor(() => expect(document.activeElement).toBe(download));
+    // Focus is not an answer: nothing was recorded for the reviewer.
+    expect(recorded.choices).toEqual([]);
+  });
+
   it("skips for this review only when the reviewer picks Skip for now", async () => {
     const { user, recorded } = surface(awaiting(false), { review: true });
     const dialog = await choiceDialog();

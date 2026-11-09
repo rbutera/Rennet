@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from "@rennet/ui";
 import { ArrowLeft, Check, Download, FileDown } from "lucide-react";
-import { type RefObject, useId } from "react";
+import { type Ref, type RefObject, useEffect, useId, useRef } from "react";
 import { Icon } from "../components/icon";
 import { InstallForMe } from "../components/install-for-me";
 import { useMutation } from "../data";
@@ -110,6 +110,15 @@ export function LargeFileChoice({
   // unmounts it. Closing it here would flash the "waiting for your choice" line for the
   // beat between the answer landing and the refreshed row arriving.
   const busy = choose.pending || answered;
+  // Leaving the "needs Git LFS" screen unmounts the control the reviewer was on (the running
+  // install's Cancel, or Back), and focus would fall to the dialog or the page. It goes to
+  // Download: after an install that is the step the screen just made available.
+  const download = useRef<HTMLButtonElement | null>(null);
+  const wasNeedsLfs = useRef(needsLfs);
+  useEffect(() => {
+    if (wasNeedsLfs.current && !needsLfs) download.current?.focus();
+    wasNeedsLfs.current = needsLfs;
+  }, [needsLfs]);
 
   const answer = (mode: LargeFileMode, remember = true) => {
     setFailure(undefined);
@@ -143,15 +152,40 @@ export function LargeFileChoice({
         // `sm:max-w-sm` did not take effect (the dialog rendered full-width); a style wins.
         style={{ maxWidth: "min(520px, calc(100% - 2rem))" }}
       >
+        {/* One header element across both screens, so the dialog's label never remounts. */}
+        {needsLfs ? (
+          <DialogHeader>
+            <DialogTitle>Downloading large files needs Git LFS</DialogTitle>
+            <DialogDescription>
+              Git LFS isn't installed on the machine that checks this repository out. Install it and
+              the review continues with full files, or skip large files for now.
+            </DialogDescription>
+          </DialogHeader>
+        ) : (
+          <DialogHeader>
+            <DialogTitle>This repository stores large files with Git LFS</DialogTitle>
+            <DialogDescription>
+              Choose how review checkouts of this project treat them.
+            </DialogDescription>
+          </DialogHeader>
+        )}
+        {/* On the page on BOTH screens, empty (and out of the layout) until the install lands:
+            a live region inserted with its text already inside is one many screen readers
+            never announce, and the install lands with no action from the reviewer. */}
+        <p
+          role="status"
+          data-slot="lfs-installed"
+          className="flex items-center gap-2 text-ink text-sm empty:sr-only"
+        >
+          {installedHere ? (
+            <>
+              <Icon icon={Check} strokeWidth={2.5} className="size-3.5 text-green" />
+              Git LFS is installed. You can download large files now.
+            </>
+          ) : null}
+        </p>
         {needsLfs ? (
           <>
-            <DialogHeader>
-              <DialogTitle>Downloading large files needs Git LFS</DialogTitle>
-              <DialogDescription>
-                Git LFS isn't installed on the machine that checks this repository out. Install it
-                and the review continues with full files, or skip large files for now.
-              </DialogDescription>
-            </DialogHeader>
             <InstallForMe tool="git-lfs" locus={locus} owner={owner} />
             <div className="flex flex-wrap items-center gap-2">
               <Button
@@ -175,24 +209,9 @@ export function LargeFileChoice({
           </>
         ) : (
           <>
-            <DialogHeader>
-              <DialogTitle>This repository stores large files with Git LFS</DialogTitle>
-              <DialogDescription>
-                Choose how review checkouts of this project treat them.
-              </DialogDescription>
-            </DialogHeader>
-            {installedHere ? (
-              <p
-                role="status"
-                data-slot="lfs-installed"
-                className="flex items-center gap-2 text-ink text-sm"
-              >
-                <Icon icon={Check} strokeWidth={2.5} className="size-3.5 text-green" />
-                Git LFS is installed. You can download large files now.
-              </p>
-            ) : null}
             <div className="grid gap-3">
               <ChoiceCard
+                ref={download}
                 mode="download"
                 icon={Download}
                 title="Download large files"
@@ -228,6 +247,7 @@ export function LargeFileChoice({
 }
 
 function ChoiceCard({
+  ref,
   mode,
   icon,
   title,
@@ -236,6 +256,7 @@ function ChoiceCard({
   disabled,
   onChoose,
 }: {
+  readonly ref?: Ref<HTMLButtonElement>;
   readonly mode: LargeFileMode;
   readonly icon: typeof Download;
   readonly title: string;
@@ -247,6 +268,7 @@ function ChoiceCard({
   const describedBy = useId();
   return (
     <button
+      ref={ref}
       type="button"
       data-choice={mode}
       aria-describedby={describedBy}
