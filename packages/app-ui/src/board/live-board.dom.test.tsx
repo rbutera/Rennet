@@ -643,9 +643,11 @@ describe("a run that is over never says a seat is still writing", () => {
     expect(document.querySelectorAll('[data-kind="lens-switcher"] [data-lens]')).toHaveLength(5);
     // ONE block says what happened, and nothing under it says it again: the empty board
     // that used to sit beneath the strip ("No board for this generation yet.") is gone.
-    expect(document.querySelector('[data-testid="preparation-failure"]')?.textContent).toContain(
-      "Could not resolve the repository.",
-    );
+    // The reason is unclassified (no `kind`), so it is daemon text: the block leads with a
+    // plain sentence and keeps the reason behind Details (failure-copy.ts).
+    const block = document.querySelector('[data-testid="preparation-failure"]');
+    expect(block?.textContent).toContain("Rennet couldn't prepare this review.");
+    expect(block?.textContent).not.toContain("Could not resolve the repository.");
     expect(document.body.textContent).not.toContain("No board for this generation yet.");
     expect(document.querySelector('[data-kind="board-empty"]')).toBeNull();
   });

@@ -376,7 +376,13 @@ describe("/s/:slug during New Chat preparation (#668)", () => {
       },
     } as never);
 
-    mount(<RennetRouterApp bridge={bridge} history={memoryHistory("/s/sess-failed")} />);
+    const { user } = mount(
+      <RennetRouterApp bridge={bridge} history={memoryHistory("/s/sess-failed")} />,
+    );
+    // Unclassified, so the headline is plain and the daemon's own words wait behind Details.
+    expect(await screen.findByText("Rennet couldn't prepare this review.")).toBeTruthy();
+    expect(screen.queryByText("Branch feat/failed no longer exists.")).toBeNull();
+    await user.click(screen.getByText("Details"));
     expect(await screen.findByText("Branch feat/failed no longer exists.")).toBeTruthy();
     const block = document.querySelector('[data-testid="preparation-failure"]');
     expect(block?.getAttribute("data-status")).toBe("failed");
