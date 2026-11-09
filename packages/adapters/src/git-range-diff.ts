@@ -137,7 +137,7 @@ export function execaGitFor(locus: Locus): GitExec {
     const result = await execa(file, [...args], {
       ...(cwd === undefined ? {} : { cwd }),
       ...(options?.input === undefined ? {} : { input: options.input }),
-      ...(options?.env === undefined ? {} : { env: callEnv(locus, options.env) }),
+      ...(options?.env === undefined ? {} : { env: gitCallEnv(locus, options.env) }),
       reject: options?.reject ?? true,
       shell: false,
       stripFinalNewline: false,
@@ -152,13 +152,22 @@ export function execaGitFor(locus: Locus): GitExec {
  * environment (`extendEnv` stays on), so the daemon's resolved PATH and everything else
  * survives. `wsl.exe` forwards only the names listed in `WSLENV`, so a WSL locus appends
  * these names to whatever the daemon already forwards.
+ *
+ * A `WSLENV` entry is `NAME` or `NAME/flags` (`/p` translates a path, `/u` forwards only
+ * from Windows, …). A name already forwarded is matched on the part before the slash, so
+ * it is never listed twice, and the daemon's own flags for it are kept.
  */
-function callEnv(locus: Locus, env: Readonly<Record<string, string>>): Record<string, string> {
+export function gitCallEnv(
+  locus: Locus,
+  env: Readonly<Record<string, string>>,
+  inheritedWslenv: string | undefined = process.env.WSLENV,
+): Record<string, string> {
   if (locus.kind !== "wsl") return { ...env };
   const names = Object.keys(env);
   if (names.length === 0) return {};
-  const inherited = (process.env.WSLENV ?? "").split(":").filter((entry) => entry.length > 0);
-  const forwarded = [...inherited, ...names.filter((name) => !inherited.includes(name))];
+  const inherited = (inheritedWslenv ?? "").split(":").filter((entry) => entry.length > 0);
+  const inheritedNames = new Set(inherited.map((entry) => entry.split("/")[0]));
+  const forwarded = [...inherited, ...names.filter((name) => !inheritedNames.has(name))];
   return { ...env, WSLENV: forwarded.join(":") };
 }
 
