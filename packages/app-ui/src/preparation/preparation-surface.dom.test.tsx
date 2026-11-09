@@ -14,6 +14,7 @@ import { useRennetStore } from "../store";
 import { act, mount, screen, waitFor, within } from "../test/dom";
 import { emptySettings, frontDoorHandlers } from "../test/fixtures/front-door";
 import { MemoryBridge } from "../test/memory-bridge";
+import { LARGE_FILE_REMEMBERED } from "./large-file-choice";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE STOPPED AND WAITING PREPARATION, driven through the real app (review-preparation-
@@ -49,9 +50,18 @@ function surface(
     readonly install?: InstallResult;
     /** Holds `tools.install` open until it resolves, so the running state can be seen. */
     readonly installGate?: Promise<void>;
+    /** Holds `session.chooseLargeFileMode` open, so a pending answer can be seen. */
+    readonly chooseGate?: Promise<void>;
+    /** Holds `settings.get` — and so the project's machine — until it resolves or rejects. */
+    readonly settingsGate?: Promise<void>;
+    /** Whether the review is attached, read on every call: flip it to attach mid-question. */
+    readonly attached?: { current: boolean };
+    /** `session.retryPreparation` rejects, as a dropped connection would. */
+    readonly retryFails?: boolean;
     readonly workspaceNotes?: readonly string[];
   } = {},
 ) {
+  const reviewAttached = () => options.attached?.current ?? options.review === true;
   const recorded: Recorded = { installs: [], choices: [], retries: [] };
   const row = (): SidebarSession =>
     ({
@@ -61,7 +71,7 @@ function surface(
       target: "your-pr",
       createdAt: 0,
       claim: { branch: "feat/widget-lfs", prNumber: 7 },
-      ...(options.review === true ? { reviewId: REVIEW.id } : {}),
+      ...(reviewAttached() ? { reviewId: REVIEW.id } : {}),
       ...(preparation === undefined ? {} : { preparation }),
       ...(options.workspaceNotes === undefined
         ? {}
@@ -73,16 +83,24 @@ function surface(
   } as unknown as SettingsView;
   const bridge = new MemoryBridge({
     ...frontDoorHandlers(),
-    "settings.get": () => settings,
+    "settings.get": async () => {
+      await options.settingsGate;
+      return settings;
+    },
     "forge.hosts": () => ({ hosts: [] }),
     "session.list": () => ({ sessions: [row()] }),
     "session.cancelPreparation": () => ({ session: row() }),
     "session.retryPreparation": (input: CommandInput<"session.retryPreparation">) => {
       recorded.retries.push(input);
+      if (options.retryFails === true)
+        throw Object.assign(new Error("connection lost"), {
+          name: "ConnectionError",
+        });
       return { session: row() };
     },
-    "session.chooseLargeFileMode": (input: CommandInput<"session.chooseLargeFileMode">) => {
+    "session.chooseLargeFileMode": async (input: CommandInput<"session.chooseLargeFileMode">) => {
       recorded.choices.push(input);
+      await options.chooseGate;
       return { session: row() };
     },
     "tools.install": async (input: CommandInput<"tools.install">) => {
@@ -97,8 +115,8 @@ function surface(
         },
       };
     },
-    "review.load": () => {
-      if (options.review !== true) throw new Error("Review not found");
+    "review.load": (input: CommandInput<"review.load">) => {
+      if (!reviewAttached() || input.reviewId !== REVIEW.id) throw new Error("Review not found");
       return { review: REVIEW, repositoryPresent: true };
     },
     "review.checkFreshness": () => ({ review: REVIEW }),
@@ -128,6 +146,17 @@ async function choiceDialog(name: string | RegExp = /large files/): Promise<HTML
     );
   }
   return screen.findByRole("dialog", { name });
+}
+
+/** A promise the test resolves (or rejects) by hand. */
+function deferred() {
+  let resolve: () => void = () => undefined;
+  let reject: (reason: unknown) => void = () => undefined;
+  const promise = new Promise<void>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve: () => act(() => resolve()), reject: (r: unknown) => reject(r) };
 }
 
 const block = () =>
@@ -193,6 +222,65 @@ describe("a stopped preparation is one actionable block", () => {
     expect(log.getAttribute("aria-live")).toBe("polite");
     expect(log.closest('[role="alert"]')).toBeNull();
     act(() => pending.release?.());
+  });
+
+  it("waits to install until it knows which machine the project is on", async () => {
+    // The project lives in WSL. Until `settings.get` answers, "this Mac" is a guess — and a
+    // wrong one would install Git LFS where the checkout does not run and report success.
+    const settings = deferred();
+    const { user, recorded } = surface(lfsMissing, { settingsGate: settings.promise });
+    const failure = await block();
+    const install = within(failure).getByRole("button", { name: "Install Git LFS for me" });
+    expect((install as HTMLButtonElement).disabled).toBe(true);
+    await user.click(install);
+    expect(recorded.installs).toEqual([]);
+
+    settings.resolve();
+    await waitFor(() => expect((install as HTMLButtonElement).disabled).toBe(false));
+    await user.click(install);
+    await waitFor(() => expect(recorded.installs).toHaveLength(1));
+    expect(recorded.installs[0]?.locus).toEqual({ kind: "wsl", distro: "Ubuntu" });
+  });
+
+  it("offers to check again when it could not learn which machine the project is on", async () => {
+    const settings = deferred();
+    settings.reject(new Error("settings unavailable"));
+    const { recorded } = surface(lfsMissing, { settingsGate: settings.promise });
+    const failure = await block();
+    await waitFor(() =>
+      expect(
+        within(failure).getByText(/couldn't tell which machine this project is on/),
+      ).toBeTruthy(),
+    );
+    expect(within(failure).getByRole("button", { name: "Check again" })).toBeTruthy();
+    expect(
+      (within(failure).getByRole("button", { name: "Install Git LFS for me" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(recorded.installs).toEqual([]);
+  });
+
+  it("says Skip large files is remembered for the project, as the large-file dialog does", async () => {
+    const { user, recorded } = surface(lfsMissing);
+    const failure = await block();
+    expect(within(failure).getByText(LARGE_FILE_REMEMBERED)).toBeTruthy();
+    await user.click(within(failure).getByRole("button", { name: "Skip large files" }));
+    await waitFor(() => expect(recorded.choices).toHaveLength(1));
+    // Exactly what the sentence says: remembered for the project.
+    expect(recorded.choices[0]?.remember).toBe(true);
+  });
+
+  it("says plainly when Retry did not go through, and lets nothing escape", async () => {
+    const { user, recorded } = surface(
+      { status: "failed", stage: "workspace", reason: "x", kind: "unknown" },
+      { retryFails: true },
+    );
+    const failure = await block();
+    await user.click(within(failure).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(recorded.retries).toHaveLength(1));
+    expect(
+      await within(failure).findByText("Rennet couldn't start this review again. Try again."),
+    ).toBeTruthy();
   });
 
   it("does NOT retry when the install failed, and says so plainly", async () => {
@@ -423,6 +511,107 @@ describe("the large-file choice while preparation waits on it", () => {
 
     await user.click(within(waiting).getByRole("button", { name: "Choose large-file mode" }));
     expect(await choiceDialog()).toBeTruthy();
+  });
+
+  it("does not answer Download when an install lands after Skip for now was submitted", async () => {
+    // Codex: a pending Skip followed by a successful install sent a SECOND choice —
+    // Download, remembered — and persisted it over the reviewer's answer.
+    const install = deferred();
+    const choose = deferred();
+    const { user, recorded } = surface(awaiting(false), {
+      review: true,
+      installGate: install.promise,
+      chooseGate: choose.promise,
+    });
+    const dialog = await choiceDialog();
+    await user.click(within(dialog).getByRole("button", { name: /Download large files/ }));
+    await user.click(await within(dialog).findByRole("button", { name: "Install for me" }));
+    await waitFor(() => expect(recorded.installs).toHaveLength(1));
+    await user.click(within(dialog).getByRole("button", { name: "Skip for now" }));
+    await waitFor(() => expect(recorded.choices).toHaveLength(1));
+
+    install.resolve();
+    await waitFor(() => expect(dialog.textContent).toContain("Git LFS is installed"));
+    choose.resolve();
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(recorded.choices).toHaveLength(1);
+    expect(recorded.choices[0]).toMatchObject({ mode: "skip", remember: false });
+  });
+
+  it("keeps the dialog's place and its running install when the review attaches mid-question", async () => {
+    // The route swaps the preparing workspace for the review workspace the moment the review
+    // attaches; everything under the header remounts. The reviewer's place in the dialog and
+    // the install running under it must survive that.
+    const attached = { current: false };
+    const install = deferred();
+    const { user, recorded } = surface(awaiting(false), {
+      attached,
+      installGate: install.promise,
+    });
+    let dialog = await screen.findByRole("dialog", { name: /large files/ });
+    await user.click(within(dialog).getByRole("button", { name: /Download large files/ }));
+    await user.click(await within(dialog).findByRole("button", { name: "Install for me" }));
+    await waitFor(() => expect(recorded.installs).toHaveLength(1));
+    expect(document.querySelector('[data-kind="lens-board-view"]')).toBeNull();
+
+    attached.current = true;
+    await waitFor(
+      () => expect(document.querySelector('[data-kind="lens-board-view"]')).not.toBeNull(),
+      { timeout: 3_000 },
+    );
+    dialog = await screen.findByRole("dialog", { name: /large files/ });
+    // Still on the Install screen, still installing — not back at the two choices.
+    expect(within(dialog).getByText("Downloading large files needs Git LFS")).toBeTruthy();
+    expect(within(dialog).getByText(/Installing Git LFS/)).toBeTruthy();
+    expect(recorded.installs).toHaveLength(1);
+
+    install.resolve();
+    // …and the install's own continuation still answers Download, exactly once.
+    await waitFor(() => expect(recorded.choices).toHaveLength(1));
+    expect(recorded.choices[0]).toMatchObject({ mode: "download" });
+  });
+
+  it("stays dismissed when the review attaches after Escape", async () => {
+    const attached = { current: false };
+    const { user } = surface(awaiting(true), { attached });
+    await screen.findByRole("dialog", { name: /large files/ });
+    await user.keyboard("{Escape}");
+    await screen.findByTestId("large-file-waiting");
+
+    attached.current = true;
+    await waitFor(
+      () => expect(document.querySelector('[data-kind="lens-board-view"]')).not.toBeNull(),
+      { timeout: 3_000 },
+    );
+    expect(await screen.findByTestId("large-file-waiting")).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: /large files/ })).toBeNull();
+  });
+
+  it("finishes an install and answers Download even after Escape closed the dialog", async () => {
+    const install = deferred();
+    const { user, recorded } = surface(awaiting(false), {
+      review: true,
+      installGate: install.promise,
+    });
+    const dialog = await choiceDialog();
+    await user.click(within(dialog).getByRole("button", { name: /Download large files/ }));
+    await user.click(await within(dialog).findByRole("button", { name: "Install for me" }));
+    await waitFor(() => expect(recorded.installs).toHaveLength(1));
+    await user.keyboard("{Escape}");
+    await screen.findByTestId("large-file-waiting");
+
+    install.resolve();
+    await waitFor(() => expect(recorded.choices).toHaveLength(1));
+    expect(recorded.choices[0]).toMatchObject({ mode: "download" });
+  });
+
+  it("returns focus to the way back after Escape", async () => {
+    const { user } = surface(awaiting(true), { review: true });
+    await choiceDialog();
+    await user.keyboard("{Escape}");
+    const waiting = await screen.findByTestId("large-file-waiting");
+    const chooseAgain = within(waiting).getByRole("button", { name: "Choose large-file mode" });
+    await waitFor(() => expect(document.activeElement).toBe(chooseAgain));
   });
 
   it("traps focus inside the dialog", async () => {

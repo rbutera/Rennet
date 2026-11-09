@@ -9,10 +9,12 @@ import {
   DialogTitle,
 } from "@rennet/ui";
 import { ArrowLeft, Download, FileDown } from "lucide-react";
-import { useId, useState } from "react";
+import { type RefObject, useId, useState } from "react";
 import { Icon } from "../components/icon";
 import { InstallForMe } from "../components/install-for-me";
 import { useMutation } from "../data";
+import { useScopedState } from "../data/scoped-state";
+import { useDropInstallContinuation } from "../data/tool-install";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE LARGE-FILE CHOICE (large-file-checkout spec, D4, task 3.4).
@@ -31,6 +33,14 @@ import { useMutation } from "../data";
 // Install for me and Skip for now, and the checkout continues after either (spec: "Download
 // chosen, git-lfs missing"). Skip for now answers for this review only, so the project's
 // next review asks again — "for now" is exactly that.
+//
+// WHAT OUTLIVES THE DIALOG. The route can swap the workspace under it mid-question (the
+// review attaches while the question is open), so which screen it is on, whether it was
+// answered, and the install running under it are kept per session (`useScopedState`, and
+// the install's own `owner`), not in this component. Closing it — Escape — does not stop an
+// install either: the install keeps running and, when it lands, answers Download as the
+// reviewer asked. Any OTHER answer withdraws that: once Skip is submitted, an install that
+// finishes later must not send a second, contradicting choice.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface LargeFileChoiceProps {
@@ -39,8 +49,29 @@ export interface LargeFileChoiceProps {
   readonly onOpenChange: (open: boolean) => void;
   /** Whether Git LFS answers on the repository's machine. */
   readonly lfsAvailable: boolean;
-  /** Where Install for me installs it. */
-  readonly locus: Locus;
+  /** Where Install for me installs it; undefined while that is not known yet. */
+  readonly locus: Locus | undefined;
+  /** Where focus goes when the dialog closes, when not back to whatever opened it. */
+  readonly finalFocus?: RefObject<HTMLElement | null>;
+}
+
+/** What the dialog remembers for a session across a remount. */
+interface ChoiceScreen {
+  /** On the "Downloading large files needs Git LFS" screen. */
+  readonly needsLfs: boolean;
+  /** An answer has been recorded; the dialog holds still until the row moves on. */
+  readonly answered: boolean;
+}
+
+/** What a remembered answer means, said the same way wherever one is given. */
+export const LARGE_FILE_REMEMBERED =
+  "Rennet remembers this for the project. You can change it in Settings.";
+
+const FIRST_SCREEN: ChoiceScreen = { needsLfs: false, answered: false };
+
+/** The owner an install started from this dialog runs under: the session it is for. */
+export function largeFileInstallOwner(sessionId: string): string {
+  return `large-file:${sessionId}`;
 }
 
 export function LargeFileChoice({
@@ -49,21 +80,30 @@ export function LargeFileChoice({
   onOpenChange,
   lfsAvailable,
   locus,
+  finalFocus,
 }: LargeFileChoiceProps) {
   const choose = useMutation("session.chooseLargeFileMode", { invalidates: ["session.list"] });
-  const [needsLfs, setNeedsLfs] = useState(false);
+  const [screen, setScreen, screenHandle] = useScopedState<ChoiceScreen>(
+    `large-file-choice:${sessionId}`,
+    FIRST_SCREEN,
+  );
+  const { needsLfs, answered } = screen;
   const [failure, setFailure] = useState<string | undefined>();
+  const dropInstallContinuation = useDropInstallContinuation();
+  const owner = largeFileInstallOwner(sessionId);
   // Answered: the dialog stays put, still, until the session row moves on and its owner
   // unmounts it. Closing it here would flash the "waiting for your choice" line for the
   // beat between the answer landing and the refreshed row arriving.
-  const [answered, setAnswered] = useState(false);
   const busy = choose.pending || answered;
 
   const answer = (mode: LargeFileMode, remember = true) => {
+    // This answer is THE answer: an install still running for Download must not send a
+    // second one when it lands.
+    dropInstallContinuation(owner, "git-lfs", locus);
     setFailure(undefined);
-    void choose
+    choose
       .mutate({ sessionId, mode, commandId: newCommandId(), remember })
-      .then(() => setAnswered(true))
+      .then(() => screenHandle.set((previous) => ({ ...previous, answered: true })))
       .catch((reason: unknown) =>
         setFailure(
           reason instanceof Error && reason.message.length > 0
@@ -77,12 +117,14 @@ export function LargeFileChoice({
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        if (!next) setNeedsLfs(false);
+        // Closing keeps the screen it was on: an install running under "needs Git LFS" is
+        // still running, and the way back should land on it.
         onOpenChange(next);
       }}
     >
       <DialogContent
         data-kind="large-file-choice"
+        {...(finalFocus === undefined ? {} : { finalFocus })}
         className="gap-5 p-6"
         // Wider than the kit's 24rem default, so each choice's one line reads on one line.
         // Inline because, in the packaged app, a `sm:max-w-*` utility override of the kit's
@@ -98,7 +140,12 @@ export function LargeFileChoice({
                 and the review continues with full files, or skip large files for now.
               </DialogDescription>
             </DialogHeader>
-            <InstallForMe tool="git-lfs" locus={locus} onInstalled={() => answer("download")} />
+            <InstallForMe
+              tool="git-lfs"
+              locus={locus}
+              owner={owner}
+              onInstalled={() => answer("download")}
+            />
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="outline"
@@ -108,7 +155,12 @@ export function LargeFileChoice({
               >
                 Skip for now
               </Button>
-              <Button variant="ghost" size="sm" disabled={busy} onClick={() => setNeedsLfs(false)}>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={() => setScreen((previous) => ({ ...previous, needsLfs: false }))}
+              >
                 <Icon icon={ArrowLeft} />
                 Back
               </Button>
@@ -130,7 +182,11 @@ export function LargeFileChoice({
                 description="Full files in the checkout. Slower to open."
                 note={lfsAvailable ? undefined : "Needs Git LFS, which isn't installed here."}
                 disabled={busy}
-                onChoose={() => (lfsAvailable ? answer("download") : setNeedsLfs(true))}
+                onChoose={() =>
+                  lfsAvailable
+                    ? answer("download")
+                    : setScreen((previous) => ({ ...previous, needsLfs: true }))
+                }
               />
               <ChoiceCard
                 mode="skip"
@@ -141,9 +197,7 @@ export function LargeFileChoice({
                 onChoose={() => answer("skip")}
               />
             </div>
-            <p className="text-ink-soft text-xs">
-              Rennet remembers this for the project. You can change it in Settings.
-            </p>
+            <p className="text-ink-soft text-xs">{LARGE_FILE_REMEMBERED}</p>
           </>
         )}
         {failure ? (

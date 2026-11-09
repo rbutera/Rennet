@@ -1,13 +1,20 @@
-import { newCommandId, type SessionPreparation, type SidebarSession } from "@rennet/protocol";
+import {
+  type Locus,
+  newCommandId,
+  type SessionPreparation,
+  type SidebarSession,
+} from "@rennet/protocol";
 import { Button } from "@rennet/ui";
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { FailureDetail } from "../components/failure-detail";
 import { InstallForMe, TOOL_NAME } from "../components/install-for-me";
 import { useMutation } from "../data";
+import { useDropInstallContinuation } from "../data/tool-install";
 import { settingsPath } from "../routes/url";
+import { ActionFailureLine, useActionFailure } from "./action-failure";
 import { preparationFailureCopy } from "./failure-copy";
-import { LargeFileChoice } from "./large-file-choice";
+import { LARGE_FILE_REMEMBERED, LargeFileChoice } from "./large-file-choice";
 import { useLfsAvailable, useProjectLocus } from "./session-locus";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -33,6 +40,11 @@ import { useLfsAvailable, useProjectLocus } from "./session-locus";
 
 type Stopped = Extract<SessionPreparation, { status: "failed" | "cancelled" }>;
 
+/** The owner an install started from a failure block runs under: the session it retries. */
+function failureInstallOwner(sessionId: string): string {
+  return `failure:${sessionId}`;
+}
+
 export function PreparationFailure({
   session,
   preparation,
@@ -41,12 +53,22 @@ export function PreparationFailure({
   readonly preparation: Stopped;
 }) {
   const retry = useMutation("session.retryPreparation", { invalidates: ["session.list"] });
-  const locus = useProjectLocus(session.projectId);
-  const retryNow = () => void retry.mutate({ sessionId: session.id, commandId: newCommandId() });
+  const retryFailure = useActionFailure();
+  const { locus, failed: locusFailed, retry: rereadLocus } = useProjectLocus(session.projectId);
+  // Bound to THIS session: an install that started here retries the session it was for,
+  // even if the workspace has since moved on to another one (`useToolInstall`).
+  const sessionId = session.id;
+  const retryNow = () =>
+    retryFailure.run(
+      () => retry.mutate({ sessionId, commandId: newCommandId() }),
+      "Rennet couldn't start this review again. Try again.",
+    );
   const failed = preparation.status === "failed";
   // Absent `kind` reads as unknown and absent `action` as retry (protocol D5).
   const action = failed ? (preparation.action ?? "retry") : "retry";
   const copy = failed ? preparationFailureCopy(preparation) : undefined;
+  const tool = failed ? (preparation.tool ?? "git-lfs") : "git-lfs";
+  const owner = failureInstallOwner(session.id);
 
   return (
     <div className="border-line border-b bg-surface/60">
@@ -71,16 +93,27 @@ export function PreparationFailure({
           </div>
         )}
         {failed && action === "install" ? (
-          <InstallForMe
-            tool={preparation.tool ?? "git-lfs"}
-            locus={locus}
-            label={`Install ${TOOL_NAME[preparation.tool ?? "git-lfs"]} for me`}
-            onInstalled={retryNow}
-          />
+          <>
+            <InstallForMe
+              tool={tool}
+              locus={locus}
+              owner={owner}
+              label={`Install ${TOOL_NAME[tool]} for me`}
+              onInstalled={retryNow}
+            />
+            {locusFailed ? (
+              <p className="flex flex-wrap items-center gap-2 text-ink-soft text-sm">
+                Rennet couldn't tell which machine this project is on.
+                <Button variant="ghost" size="xs" onClick={rereadLocus}>
+                  Check again
+                </Button>
+              </p>
+            ) : null}
+          </>
         ) : null}
         <div className="flex flex-wrap items-center gap-2">
-          {failed && action === "install" && (preparation.tool ?? "git-lfs") === "git-lfs" ? (
-            <SkipLargeFiles sessionId={session.id} />
+          {failed && action === "install" && tool === "git-lfs" ? (
+            <SkipLargeFiles sessionId={session.id} owner={owner} locus={locus} />
           ) : null}
           {failed && action === "choose-large-files" ? (
             <ChooseLargeFiles session={session} />
@@ -96,29 +129,66 @@ export function PreparationFailure({
             {retry.pending ? "Retrying…" : "Retry"}
           </Button>
         </div>
+        <ActionFailureLine message={retryFailure.message} />
         {copy?.detail !== undefined ? <FailureDetail detail={copy.detail} /> : null}
       </section>
     </div>
   );
 }
 
-function SkipLargeFiles({ sessionId }: { readonly sessionId: string }) {
+/**
+ * The other way forward when Git LFS is missing: skip large files. It is the same answer as
+ * the large-file dialog's "Skip large files" and says so in the same words — remembered for
+ * the project, changeable in Settings — so the two never disagree about what was decided.
+ * Submitting it withdraws the retry an Install for me started here would run on landing.
+ */
+function SkipLargeFiles({
+  sessionId,
+  owner,
+  locus,
+}: {
+  readonly sessionId: string;
+  readonly owner: string;
+  readonly locus: Locus | undefined;
+}) {
   const choose = useMutation("session.chooseLargeFileMode", { invalidates: ["session.list"] });
+  const skipFailure = useActionFailure();
+  const dropInstallContinuation = useDropInstallContinuation();
   return (
-    <Button
-      variant="outline"
-      size="sm"
-      disabled={choose.pending}
-      onClick={() => void choose.mutate({ sessionId, mode: "skip", commandId: newCommandId() })}
-    >
-      Skip large files
-    </Button>
+    <div className="flex flex-col gap-1">
+      <div>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={choose.pending}
+          onClick={() => {
+            dropInstallContinuation(owner, "git-lfs", locus);
+            skipFailure.run(
+              () =>
+                choose.mutate({
+                  sessionId,
+                  mode: "skip",
+                  commandId: newCommandId(),
+                  remember: true,
+                }),
+              "Rennet couldn't record that choice. Try again.",
+            );
+          }}
+        >
+          Skip large files
+        </Button>
+      </div>
+      <p data-slot="skip-remembered" className="text-ink-soft text-xs">
+        {LARGE_FILE_REMEMBERED}
+      </p>
+      <ActionFailureLine message={skipFailure.message} />
+    </div>
   );
 }
 
 function ChooseLargeFiles({ session }: { readonly session: SidebarSession }) {
   const [open, setOpen] = useState(false);
-  const locus = useProjectLocus(session.projectId);
+  const { locus } = useProjectLocus(session.projectId);
   const lfsAvailable = useLfsAvailable(locus);
   return (
     <>
