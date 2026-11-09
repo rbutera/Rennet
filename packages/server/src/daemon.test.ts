@@ -4,7 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hydrateProcessPath } from "@rennet/adapters";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type DaemonConfig, type RunningDaemon, resolveDaemonConfig, startDaemon } from "./daemon";
+import {
+  createDaemonStop,
+  type DaemonConfig,
+  type RunningDaemon,
+  resolveDaemonConfig,
+  STOP_WAIT_MS,
+  startDaemon,
+} from "./daemon";
+import { readDaemonFile, writeDaemonFile } from "./daemon-file";
 
 describe("daemon argument parsing", () => {
   it("parses the daemon entry's strict options", () => {
@@ -131,4 +139,62 @@ describe("startDaemon (daemon-process-environment)", () => {
       expect(env.PATH?.split(":")).toContain("/usr/local/bin");
     },
   );
+});
+
+describe("stopping the daemon removes its claim only once the shutdown has settled", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    vi.useRealTimers();
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function claimed(): string {
+    const dataDir = mkdtempSync(join(tmpdir(), "rennet-daemon-stop-"));
+    dirs.push(dataDir);
+    writeDaemonFile(dataDir, {
+      pid: process.pid,
+      wsPort: 4321,
+      protocolVersion: 4,
+      version: "1.2.2",
+      startedAt: "",
+    });
+    return dataDir;
+  }
+
+  it("keeps daemon.json while the installers are still ending, and removes it when they have", async () => {
+    const dataDir = claimed();
+    let finish: () => void = () => undefined;
+    const shutdown = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)));
+    const stop = createDaemonStop({ dataDir, pid: process.pid, shutdown });
+    const stopping = stop();
+    await Promise.resolve();
+    // `rennet stop` reads the claim's disappearance as "stopped": not yet.
+    expect(readDaemonFile(dataDir)?.pid).toBe(process.pid);
+    finish();
+    await stopping;
+    expect(readDaemonFile(dataDir)).toBeNull();
+    // One stop, however often it is asked for.
+    expect(stop()).toBe(stopping);
+    expect(shutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes it at the backstop when a shutdown never settles", async () => {
+    vi.useFakeTimers();
+    const dataDir = claimed();
+    const stop = createDaemonStop({
+      dataDir,
+      pid: process.pid,
+      shutdown: () => new Promise<void>(() => undefined),
+    });
+    let stopped = false;
+    void stop().then(() => {
+      stopped = true;
+    });
+    await vi.advanceTimersByTimeAsync(STOP_WAIT_MS - 1);
+    expect(stopped).toBe(false);
+    expect(readDaemonFile(dataDir)?.pid).toBe(process.pid);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(stopped).toBe(true);
+    expect(readDaemonFile(dataDir)).toBeNull();
+  });
 });

@@ -85,16 +85,48 @@ export function resolveDaemonConfig(
 export interface RunningDaemon {
   readonly info: DaemonInfo;
   /**
-   * Shut the server down and remove the claim. Idempotent. Settles once every installer the
-   * server was running has ended (or `STOP_WAIT_MS` has passed), so a caller that exits the
-   * process after it leaves no Homebrew run behind.
+   * Shut the server down, then remove the claim. Idempotent. Settles once every installer
+   * the server was running has ended (or `STOP_WAIT_MS` has passed), so a caller that exits
+   * the process after it leaves no Homebrew run behind; the claim goes at that same moment.
    */
   readonly stop: () => Promise<void>;
 }
 
 /** How long a stopping daemon waits for its installers to end before it exits anyway. An
  *  aborted installer gets SIGTERM, then SIGKILL two seconds later, so this is the backstop. */
-const STOP_WAIT_MS = 5_000;
+export const STOP_WAIT_MS = 5_000;
+
+/**
+ * The daemon's one `stop`: shut the server down, and remove the `daemon.json` claim only once
+ * that shutdown has SETTLED (or the `waitMs` backstop has passed). The claim's disappearance is
+ * what `rennet stop` and the desktop launcher wait for, so removing it first told them the
+ * daemon was gone while it was still ending its installers — and a launcher that then
+ * replaced the bundle or started a new daemon raced the old one. Idempotent.
+ */
+export function createDaemonStop(input: {
+  readonly dataDir: string;
+  readonly pid: number;
+  /** Late-bound: `null` while the server is still being created. */
+  readonly shutdown: () => Promise<void> | null;
+  readonly waitMs?: number;
+}): () => Promise<void> {
+  let stopping: Promise<void> | null = null;
+  return (): Promise<void> => {
+    if (stopping !== null) return stopping;
+    const settled = input.shutdown() ?? Promise.resolve();
+    stopping = new Promise<void>((resolve) => {
+      const done = (): void => {
+        clearTimeout(backstop);
+        removeDaemonFile(input.dataDir, input.pid);
+        resolve();
+      };
+      const backstop = setTimeout(done, input.waitMs ?? STOP_WAIT_MS);
+      backstop.unref?.();
+      void settled.catch(() => undefined).finally(done);
+    });
+    return stopping;
+  };
+}
 
 /**
  * Start the server, publish the claim, and (unless `installSignalHandlers` is false) shut
@@ -112,23 +144,11 @@ export async function runDaemon(
   // and the listener starts inside `createRennetServer`. The shutdown is therefore late-bound
   // through this holder, which is assigned in the same synchronous run as the claim write.
   let shutdownServer: (() => Promise<void>) | null = null;
-  let stopping: Promise<void> | null = null;
-  const stop = (): Promise<void> => {
-    if (stopping !== null) return stopping;
-    const settled = shutdownServer?.() ?? Promise.resolve();
-    removeDaemonFile(config.dataDir, process.pid);
-    stopping = new Promise<void>((resolve) => {
-      const backstop = setTimeout(resolve, STOP_WAIT_MS);
-      backstop.unref?.();
-      void settled
-        .catch(() => undefined)
-        .finally(() => {
-          clearTimeout(backstop);
-          resolve();
-        });
-    });
-    return stopping;
-  };
+  const stop = createDaemonStop({
+    dataDir: config.dataDir,
+    pid: process.pid,
+    shutdown: () => shutdownServer?.() ?? null,
+  });
   /** Stop, then end the process once the stop has settled. */
   const stopAndExit = (): void => {
     void stop().finally(() => process.exit(0));

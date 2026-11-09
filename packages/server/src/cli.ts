@@ -63,7 +63,7 @@ import {
   reviewCliUnsupportedMessage,
   reviewDocumentPath,
 } from "./cli-review";
-import { defaultDataDir, startDaemon } from "./daemon";
+import { defaultDataDir, STOP_WAIT_MS, startDaemon } from "./daemon";
 import { readDaemonFile, removeDaemonFile } from "./daemon-file";
 import { findHealthyDaemon, requestDaemonShutdown } from "./supervise";
 import { resolveSidecarBundle, type StopSidecarOutcome, stopSidecar } from "./t3/sidecar";
@@ -426,6 +426,9 @@ async function stop(dataDir: string, io: CliIo, deps: CliDeps): Promise<number> 
   return code;
 }
 
+/** How long `rennet stop` waits past the daemon's own stop backstop before giving up. */
+const STOP_GRACE_MS = 3_000;
+
 async function stopDaemon(dataDir: string, io: CliIo, deps: CliDeps): Promise<number> {
   const verdict = await deps.probe(dataDir);
   if (verdict.kind === "absent") {
@@ -461,8 +464,10 @@ async function stopDaemon(dataDir: string, io: CliIo, deps: CliDeps): Promise<nu
       return 1;
     }
   }
-  // The daemon removes daemon.json on clean shutdown; poll for that as the done signal.
-  const deadline = Date.now() + 5_000;
+  // The daemon removes daemon.json once its shutdown has settled; poll for that as the done
+  // signal. A daemon waits up to STOP_WAIT_MS for its installers to end before it gives up on
+  // them, so this waits past that backstop rather than reporting a stop that is still going.
+  const deadline = Date.now() + STOP_WAIT_MS + STOP_GRACE_MS;
   while (Date.now() < deadline) {
     if (readDaemonFile(dataDir)?.pid !== claim.pid) {
       io.out(`stopped (pid ${claim.pid})`);
@@ -472,8 +477,8 @@ async function stopDaemon(dataDir: string, io: CliIo, deps: CliDeps): Promise<nu
   }
   io.err(
     acknowledged
-      ? `pid ${claim.pid} acknowledged the shutdown but daemon.json still names it after 5s`
-      : `sent SIGTERM to pid ${claim.pid} but daemon.json is still present after 5s`,
+      ? `pid ${claim.pid} acknowledged the shutdown but daemon.json still names it after ${(STOP_WAIT_MS + STOP_GRACE_MS) / 1000}s`
+      : `sent SIGTERM to pid ${claim.pid} but daemon.json is still present after ${(STOP_WAIT_MS + STOP_GRACE_MS) / 1000}s`,
   );
   return 1;
 }

@@ -692,7 +692,9 @@ Rennet so the daemon updates, and sends neither.
 `serve`, `status`, and `stop` operate on the daemon. `stop` asks the verified
 daemon to shut itself down over its own HTTP port (`POST /shutdown`, beside
 `/healthz`) and falls back to SIGTERM only when it gets no acknowledgement, then
-waits for the claim to clear. `map` runs without the
+waits for the claim to clear. The daemon removes `daemon.json` only once its
+shutdown has settled, which includes ending any running Install for me (it gives
+up on one after 5 seconds), so `stop` waits up to 8 seconds. `map` runs without the
 daemon, builds the same deterministic Repo Map used by project processing, and
 stores it under the path-keyed local project directory. `--json` exports the map.
 It calls no model and needs no harness.

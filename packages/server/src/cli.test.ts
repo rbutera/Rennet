@@ -494,6 +494,49 @@ describe("rennet CLI argument and daemon-identity handling", () => {
     );
   });
 
+  it("stop waits through the daemon's own 5s installer backstop for the claim to clear", async () => {
+    vi.useFakeTimers();
+    try {
+      const dir = makeDir();
+      const running = claim();
+      writeDaemonFile(dir, running);
+      const captured = captureIo();
+      const code = runSourceCli(
+        ["stop", "--data-dir", dir],
+        captured.io,
+        {},
+        {
+          probe: async () => ({
+            kind: "healthy",
+            claim: running,
+            identity: { ...running, minCompatibleProtocolVersion: PROTOCOL_VERSION },
+          }),
+          kill: vi.fn(),
+          // The daemon heard the request; it removes its claim only once its shutdown has
+          // settled, which for an installer that never ends is its 5s backstop.
+          requestShutdown: async () => {
+            setTimeout(() => removeDaemonFile(dir, running.pid), 5_000);
+            return {
+              pid: running.pid,
+              wsPort: running.wsPort,
+              version: running.version,
+              protocolVersion: running.protocolVersion,
+              claimPath: resolve(dir, "daemon.json"),
+              shuttingDown: true as const,
+            };
+          },
+          stopSidecar: async () => ({ kind: "absent" }),
+        },
+      );
+      await vi.advanceTimersByTimeAsync(5_100);
+      expect(await code).toBe(0);
+      expect(captured.out).toContain(`stopped (pid ${running.pid})`);
+      expect(captured.err).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("stop signals a health-verified claim and only removes that pid's claim", async () => {
     const dir = makeDir();
     const running = claim();
