@@ -1,6 +1,7 @@
 import { Button, cn } from "@rennet/ui";
-import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
+import { createContext, type ReactNode, useContext, useLayoutEffect, useState } from "react";
 import { useCommand, useMutation } from "../data";
+import { ActionFailureLine, useActionFailure } from "./action-failure";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE PREPARATION PRESENCE (review-preparation-reliability D6, task 3.1) — the board area
@@ -83,8 +84,11 @@ export function PreparationPresence({
   const { data } = useCommand("session.list", {}, { enabled: slug.length > 0 });
   const session = data?.sessions.find((candidate) => candidate.id === slug);
   const cancel = useMutation("session.cancelPreparation", { invalidates: ["session.list"] });
+  const cancelFailure = useActionFailure();
   const setShown = useContext(PresenceShown)?.setShown;
-  useEffect(() => {
+  // A LAYOUT effect: the header reads `shown` to decide whether to float its own Cancel, and
+  // a passive effect lands after the first paint — one frame with both Cancels on screen.
+  useLayoutEffect(() => {
     setShown?.(true);
     return () => setShown?.(false);
   }, [setShown]);
@@ -119,17 +123,23 @@ export function PreparationPresence({
         ))}
       </div>
       {session ? (
-        <div className="flex justify-end">
+        <div className="flex flex-col items-end gap-2">
           <Button
             variant="ghost"
             size="sm"
             data-testid="preparation-cancel"
             disabled={cancel.pending}
-            onClick={() => void cancel.mutate({ sessionId: session.id })}
+            onClick={() =>
+              cancelFailure.run(
+                () => cancel.mutate({ sessionId: session.id }),
+                "Rennet couldn't cancel this review. Try again.",
+              )
+            }
             className="app-region-no-drag text-ink-soft"
           >
             Cancel
           </Button>
+          <ActionFailureLine message={cancelFailure.message} />
         </div>
       ) : null}
     </section>
