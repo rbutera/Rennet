@@ -136,10 +136,13 @@ async function backToNewChat(page: Page): Promise<void> {
  */
 async function clickRowAndLand(page: Page, name: RegExp): Promise<void> {
   await page.locator('[data-row="target"]', { hasText: name }).first().click();
-  // ONE selector, not two. The second arm used to catch a preparation that FAILED,
-  // which was a different screen from the board; boards-first means the board view is
-  // on screen in every outcome — a failure is reported in the workspace header over it
-  // — so an alternation would now be an OR whose second branch can never match.
+  // ONE selector. Until capture attaches the review, the workspace is `PreparingWorkspace`:
+  // its board area is the waiting presence (no board view at all), and a run that stops
+  // there shows the failure block in the header over an EMPTY board area. From the moment
+  // the review attaches, the review workspace's board view is on screen whatever its lanes
+  // do — drafting, settled, or failed as this model-free suite expects. Every row here
+  // captures, so landing means that board view; a capture failure is a red test, not an
+  // alternative arm.
   await expect(page.locator('[data-kind="lens-board-view"]').first()).toBeVisible({
     timeout: 180_000,
   });
@@ -333,10 +336,10 @@ test("#587: in a two-repo workspace, the click captures the repo the ROW named",
       .filter({ hasText: "acme/beta" });
     await expect(betaRow).toHaveCount(1);
     await betaRow.click();
-    // ONE selector, not two. The second arm used to catch a preparation that FAILED,
-    // which was a different screen from the board; boards-first means the board view is
-    // on screen in every outcome — a failure is reported in the workspace header over it
-    // — so an alternation would now be an OR whose second branch can never match.
+    // ONE selector, as in `clickRowAndLand`: the board view appears once capture has
+    // attached the review (before that the board area is the waiting presence, and a stop
+    // there is the header's failure block over an empty board area), so it is the sign the
+    // right review was captured — which the daemon read below then checks.
     await expect(page.locator('[data-kind="lens-board-view"]').first()).toBeVisible({
       timeout: 180_000,
     });
