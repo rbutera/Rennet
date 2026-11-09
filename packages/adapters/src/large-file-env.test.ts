@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { execaGit } from "./git-range-diff";
 import {
   absoluteGitDir,
@@ -263,6 +263,8 @@ const realGitLfs = (() => {
 })();
 
 describe.skipIf(realGitLfs === "")("skip mode with Git LFS installed (real git-lfs)", () => {
+  // Each test runs the real git-lfs a few times; under a full parallel suite that is slow.
+  vi.setConfig({ testTimeout: 30_000 });
   const LARGE = "a large widget model, stored by Git LFS\n";
 
   function lfsFixture() {
