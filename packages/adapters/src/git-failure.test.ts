@@ -65,6 +65,15 @@ const CASES: ReadonlyArray<{
     tool: "git-lfs",
   },
   {
+    name: "git-lfs missing in zsh",
+    input: execaShaped(
+      "git worktree add --detach /tmp/wt 433815ccab8d",
+      "Preparing worktree (detached HEAD 433815c)\nzsh:1: command not found: git-lfs\nfatal: the remote end hung up unexpectedly",
+    ),
+    kind: "tool-missing",
+    tool: "git-lfs",
+  },
+  {
     name: "git missing in sh",
     input: "sh: git: command not found",
     kind: "tool-missing",
@@ -159,6 +168,40 @@ const CASES: ReadonlyArray<{
     kind: "ref-gone",
   },
   {
+    name: "an auth failure for a repository named after git-lfs is still auth",
+    input: execaShaped(
+      "git fetch https://github.com/acme/git-lfs-tools.git refs/pull/7/head",
+      "remote: Invalid username or password.\nfatal: Authentication failed for 'https://github.com/acme/git-lfs-tools.git/'",
+    ),
+    kind: "auth",
+  },
+  {
+    name: "a missing branch named after git-lfs is ref-gone",
+    input: execaShaped(
+      "git fetch origin refs/heads/fix/git-lfs",
+      "fatal: couldn't find remote ref refs/heads/fix/git-lfs",
+    ),
+    kind: "ref-gone",
+  },
+  {
+    name: "an invalid reference added at a path named after git-lfs is ref-gone",
+    input: execaShaped(
+      "git worktree add /tmp/wt/acme/upgrade-git-lfs nope-ref",
+      "fatal: invalid reference: nope-ref",
+    ),
+    kind: "ref-gone",
+  },
+  {
+    name: "execa's invalid-cwd ENOENT is not git missing",
+    input: Object.assign(
+      new Error(
+        "Command failed with ENOENT: git status\nThe \"cwd\" option is invalid: /tmp/acme/widget.\nENOENT: no such file or directory, stat '/tmp/acme/widget'\nspawn git ENOENT",
+      ),
+      { code: "ENOENT", stderr: "", stdout: "" },
+    ),
+    kind: "unknown",
+  },
+  {
     name: "a path collision is not any known cause",
     input: execaShaped(
       "git worktree add --detach /tmp/wt 433815ccab8d",
@@ -236,6 +279,34 @@ describe("classifyGitFailure", () => {
     );
     expect(error).toBeInstanceOf(Error);
     expect(classifyGitFailure(error)).toMatchObject({ kind: "tool-missing", tool: "git" });
+  });
+
+  it("reads a real ENOENT from a missing checkout directory as unknown, not git missing", async () => {
+    const parent = mkdtempSync(join(tmpdir(), "rennet-nocwd-"));
+    scratch.push(parent);
+    const error: unknown = await execa("git", ["status"], {
+      cwd: join(parent, "acme", "widget"),
+    }).then(
+      () => null,
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect((error as { code?: unknown }).code).toBe("ENOENT");
+    const classified = classifyGitFailure(error);
+    expect(classified).toMatchObject({ kind: "unknown", action: "retry" });
+    expect(classified.tool).toBeUndefined();
+    expect(classified.detail).toContain('The "cwd" option is invalid');
+  });
+
+  it("keeps the command line in detail though it never decides the kind", () => {
+    const classified = classifyGitFailure(
+      execaShaped(
+        "git worktree add /tmp/wt/acme/upgrade-git-lfs nope-ref",
+        "fatal: invalid reference: nope-ref",
+      ),
+    );
+    expect(classified.kind).toBe("ref-gone");
+    expect(classified.detail).toContain("git worktree add /tmp/wt/acme/upgrade-git-lfs nope-ref");
   });
 
   it("caps a huge detail, keeping the head and git's final verdict, and says what it cut", () => {

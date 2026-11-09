@@ -11,6 +11,14 @@
  * versions, which is why `unknown` is a full answer rather than a dead end: it still
  * carries plain copy, Retry, and the raw detail.
  *
+ * ⚠️ MATCH GIT'S OUTPUT, NEVER THE COMMAND LINE. execa's message opens with the command it
+ * ran, and that command carries paths, refs and URLs the user chose: a worktree at
+ * `…/upgrade-git-lfs`, a branch `fix/git-lfs`, a repository `acme/git-lfs-tools`. So the
+ * patterns read stderr (and stdout) when the failure has any, and fall back to execa's
+ * message only when git said nothing, as a spawn failure does. `detail` keeps everything.
+ * For the same reason no pattern matches a bare `git-lfs` token: only git-lfs's own
+ * diagnostics count.
+ *
  * Order matters and is deliberate: a missing tool is checked first, because its stderr
  * usually ends in a secondary symptom that would otherwise read as something else (the
  * observed `git-lfs: command not found` is followed by `fatal: the remote end hung up
@@ -48,6 +56,7 @@ const DETAIL_HEAD = 1_000;
 
 const GIT_LFS_MISSING: readonly RegExp[] = [
   /git-lfs(?:\.exe)?: (?:command )?not found/i,
+  /command not found: git-lfs(?:\.exe)?(?![\w.-])/i,
   /git-lfs(?:\.exe)?: No such file or directory/i,
   /'git-lfs(?:\.exe)?' is not recognized as an internal or external command/i,
   /git: 'lfs' is not a git command/i,
@@ -65,12 +74,16 @@ const GIT_MISSING: readonly RegExp[] = [
 const LARGE_FILE: readonly RegExp[] = [
   /smudge filter lfs failed/i,
   /external filter '?[^'\n]*lfs[^'\n]*'? failed/i,
-  /\bgit-lfs\b/i,
-  /\bLFS:/,
+  /(?:^|\s)LFS: /m,
   /Error downloading object/i,
   /Smudge error/i,
   /batch response:/i,
+  /Encountered \d+ files? that should have been pointers/i,
 ];
+
+/** execa's own words when the directory a command was to run in does not exist. The spawn
+ *  then also fails with ENOENT, which says nothing about whether git is installed. */
+const INVALID_CWD = /The "cwd" option is invalid/;
 
 const AUTH: readonly RegExp[] = [
   /Authentication failed/i,
@@ -95,6 +108,29 @@ const REF_GONE: readonly RegExp[] = [
   /did not match any file\(s\) known to git/i,
   /\bnot a commit\b/i,
 ];
+
+interface ExecaShaped {
+  readonly stderr?: unknown;
+  readonly stdout?: unknown;
+  readonly shortMessage?: unknown;
+  readonly code?: unknown;
+  readonly cause?: unknown;
+}
+
+/** The text the patterns read: git's own output when it said anything, else execa's short
+ *  message (which is all a spawn failure has), else the thrown string or message. */
+function matchText(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (!(error instanceof Error)) return String(error);
+  const shaped = error as Error & ExecaShaped;
+  const streams = [shaped.stderr, shaped.stdout].filter(
+    (stream): stream is string => typeof stream === "string" && stream.trim().length > 0,
+  );
+  if (streams.length > 0) return streams.join("\n");
+  return typeof shaped.shortMessage === "string" && shaped.shortMessage.length > 0
+    ? shaped.shortMessage
+    : error.message;
+}
 
 /** The text a failure carries: execa's message (command + stderr) plus any stderr it
  *  did not already include, or the plain string/value thrown. */
@@ -126,12 +162,37 @@ function matches(patterns: readonly RegExp[], text: string): boolean {
   return patterns.some((pattern) => pattern.test(text));
 }
 
+/** The file a failed spawn tried to start: Node's own `path` on the error or its cause,
+ *  else the `spawn <file> ENOENT` line execa repeats. */
+function spawnedFile(error: Error & ExecaShaped & { path?: unknown }): string | undefined {
+  if (typeof error.path === "string") return error.path;
+  const cause = error.cause as { path?: unknown } | undefined;
+  if (cause !== undefined && typeof cause.path === "string") return cause.path;
+  return error.message.match(/\bspawn (\S+) ENOENT\b/)?.[1];
+}
+
+/**
+ * Whether spawning git itself failed because there is no git: ENOENT from the spawn of a
+ * file named `git`. Not when the working directory was missing: execa reports that as
+ * ENOENT too, and the git it never got to start may be perfectly installed.
+ */
 function spawnedGitMissing(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  const spawn = error as Error & { code?: unknown; path?: unknown; syscall?: unknown };
-  if (spawn.code !== "ENOENT") return false;
-  const named = typeof spawn.path === "string" ? spawn.path : error.message;
-  return /\bgit(?:\.exe)?\b/i.test(named) && !/git-lfs/i.test(named);
+  const spawn = error as Error & ExecaShaped & { path?: unknown };
+  if (spawn.code !== "ENOENT" || invalidCwd(error)) return false;
+  const file = spawnedFile(spawn);
+  if (file === undefined) return false;
+  return /^git(?:\.exe)?$/i.test(file.split(/[\\/]/).pop() ?? "");
+}
+
+function invalidCwd(error: unknown): boolean {
+  if (typeof error === "string") return INVALID_CWD.test(error);
+  if (!(error instanceof Error)) return false;
+  const shortMessage = (error as Error & ExecaShaped).shortMessage;
+  return (
+    INVALID_CWD.test(error.message) ||
+    (typeof shortMessage === "string" && INVALID_CWD.test(shortMessage))
+  );
 }
 
 /**
@@ -143,8 +204,16 @@ export function classifyGitFailure(
   options: ClassifyGitFailureOptions = {},
 ): ClassifiedGitFailure {
   const subject = options.subject ?? "pull request";
-  const text = rawText(error);
-  const detail = capDetail(text);
+  const detail = capDetail(rawText(error));
+  const unknown: ClassifiedGitFailure = {
+    kind: "unknown",
+    message: `This ${subject} couldn't be checked out.`,
+    action: "retry",
+    detail,
+  };
+  // A checkout directory that is not there: nothing about git, its tools or the remote.
+  if (invalidCwd(error)) return unknown;
+  const text = matchText(error);
 
   if (matches(GIT_LFS_MISSING, text)) {
     return {
@@ -188,10 +257,5 @@ export function classifyGitFailure(
       detail,
     };
   }
-  return {
-    kind: "unknown",
-    message: `This ${subject} couldn't be checked out.`,
-    action: "retry",
-    detail,
-  };
+  return unknown;
 }
