@@ -488,6 +488,59 @@ describe("Install for me", () => {
       expect(view()?.getAttribute("data-phase")).toBe("running");
     });
 
+    it("says it lost track in the status line it was already using, and keeps focus on Check again", async () => {
+      // Losing track arrives with no action from the person. A live region inserted with its
+      // text already inside is one many screen readers never announce, so the sentence lands
+      // in the line that said "Installing Git LFS…", and Check again's answer lands in a line
+      // that was on the page, empty, before it was pressed.
+      const flaky = new FlakyBridge();
+      flaky.forgetsOnRejoin = true;
+      flaky.probe = probe("available");
+      const { user } = mount(
+        <BridgeProvider bridge={flaky}>
+          <InstallForMe tool="git-lfs" locus={{ kind: "host" }} />
+        </BridgeProvider>,
+      );
+      await user.click(screen.getByRole("button", { name: "Install for me" }));
+      await waitFor(() => expect(flaky.installs).toHaveLength(1));
+      const status = view()?.querySelector<HTMLElement>('[data-slot="install-status"]');
+      expect(status?.getAttribute("role")).toBe("status");
+      expect(status?.textContent).toContain("Installing Git LFS");
+
+      act(() => flaky.drop());
+      act(() => flaky.reconnect());
+      await waitFor(() => expect(view()?.getAttribute("data-phase")).toBe("lost"), {
+        timeout: 4_000,
+      });
+      expect(status?.isConnected).toBe(true);
+      expect(status?.textContent).toBe(
+        "Rennet lost track of the Git LFS install. It may have finished, or stopped.",
+      );
+
+      const line = view()?.querySelector<HTMLElement>('[data-slot="lost-check"]');
+      expect(line?.getAttribute("role")).toBe("status");
+      expect(line?.textContent).toBe("");
+
+      let answerProbe: () => void = () => undefined;
+      flaky.hostsGate = new Promise<void>((resolve) => {
+        answerProbe = resolve;
+      });
+      const checkAgain = screen.getByRole("button", { name: "Check again" });
+      await user.click(checkAgain);
+      await waitFor(() => expect(line?.textContent).toBe("Checking for Git LFS…"));
+      // Unavailable while it checks, but still focusable: a `disabled` attribute would blur it
+      // and drop focus to the page under the person's hands.
+      expect(checkAgain.getAttribute("aria-disabled")).toBe("true");
+      expect((checkAgain as HTMLButtonElement).disabled).toBe(false);
+      expect(document.activeElement).toBe(checkAgain);
+
+      act(() => answerProbe());
+      await waitFor(() => expect(line?.textContent).toContain("Git LFS answers on this machine"));
+      expect(line?.isConnected).toBe(true);
+      expect(document.activeElement).toBe(checkAgain);
+      expect(checkAgain.getAttribute("aria-disabled")).not.toBe("true");
+    });
+
     it("says it lost track, not that it stopped, when a late Cancel finds the daemon knows nothing", async () => {
       const flaky = new FlakyBridge();
       flaky.cancelAnswer = { cancelled: false };
@@ -547,6 +600,8 @@ class FlakyBridge implements Pick<RennetBridge, "invoke" | "onToolInstallProgres
   cancelRefusal: Error | undefined;
   /** A rejoin finds a daemon that knows nothing of the id (it restarted). */
   forgetsOnRejoin = false;
+  /** Holds `forge.hosts` (the re-probe) until it resolves, so a check in flight can be seen. */
+  hostsGate: Promise<void> | undefined;
   #online = true;
   readonly #pending = new Set<(reason: unknown) => void>();
   #release: ((result: InstallResult) => void) | undefined;
@@ -568,9 +623,12 @@ class FlakyBridge implements Pick<RennetBridge, "invoke" | "onToolInstallProgres
         }
         this.#release = (result) => done({ result });
       } else if (name === "forge.hosts") {
-        done({
-          hosts: [{ source: "local", asked: true, detected: [], sourceControl: [this.probe] }],
-        });
+        const answer = () =>
+          done({
+            hosts: [{ source: "local", asked: true, detected: [], sourceControl: [this.probe] }],
+          });
+        if (this.hostsGate === undefined) answer();
+        else void this.hostsGate.then(answer);
       } else if (name === "tools.cancelInstall") {
         this.cancels.push((input as CommandInput<"tools.cancelInstall">).commandId);
         if (this.cancelRefusal !== undefined) {

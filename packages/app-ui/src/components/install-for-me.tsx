@@ -66,6 +66,36 @@ export function InstallForMe({
       data-phase={phase}
       className={cn("flex min-w-0 flex-col gap-2", className)}
     >
+      {/* The status line is ONE element across running and lost, so losing track (which
+          arrives with no action from the person) changes the text of a live region already on
+          the page instead of inserting a new one, which many screen readers never announce. */}
+      {state.phase === "running" || state.phase === "lost" ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <p
+            role="status"
+            data-slot="install-status"
+            className="flex items-center gap-2 text-ink text-sm"
+          >
+            {state.phase === "running" ? (
+              <>
+                <Spinner aria-hidden="true" className="size-3.5 text-ink-soft" />
+                {state.cancelling
+                  ? `Stopping the ${name} install…`
+                  : state.reconnecting === true
+                    ? `Installing ${name}… reconnecting`
+                    : `Installing ${name}…`}
+              </>
+            ) : (
+              `Rennet lost track of the ${name} install. It may have finished, or stopped.`
+            )}
+          </p>
+          {state.phase === "running" ? (
+            <Button variant="ghost" size="xs" disabled={state.cancelling} onClick={install.cancel}>
+              Cancel
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       {state.phase === "idle" ? (
         <div>
           <Button
@@ -80,35 +110,23 @@ export function InstallForMe({
         </div>
       ) : state.phase === "running" ? (
         <>
-          <div className="flex flex-wrap items-center gap-3">
-            <span role="status" className="flex items-center gap-2 text-ink text-sm">
-              <Spinner aria-hidden="true" className="size-3.5 text-ink-soft" />
-              {state.cancelling
-                ? `Stopping the ${name} install…`
-                : state.reconnecting === true
-                  ? `Installing ${name}… reconnecting`
-                  : `Installing ${name}…`}
-            </span>
-            <Button variant="ghost" size="xs" disabled={state.cancelling} onClick={install.cancel}>
-              Cancel
-            </Button>
-          </div>
           {state.command === undefined ? null : <CommandLine command={state.command} />}
           <OutputDrawer output={state.output} defaultOpen live />
         </>
       ) : state.phase === "lost" ? (
         <>
-          <p role="status" className="text-ink text-sm">
-            Rennet lost track of the {name} install. It may have finished, or stopped.
-          </p>
           <LostCheckLine name={name} check={state.check} />
           {state.command === undefined ? null : <CommandLine command={state.command} />}
           <OutputDrawer output={state.output} />
           <div className="flex flex-wrap items-center gap-2">
+            {/* Unavailable while it checks, never `disabled`: that would blur the button the
+                person just pressed and drop focus to the page. */}
             <Button
               variant="outline"
               size="sm"
               disabled={state.check.status === "checking"}
+              focusableWhenDisabled
+              className="aria-disabled:opacity-50"
               onClick={install.checkAgain}
             >
               Check again
@@ -134,21 +152,29 @@ export function InstallForMe({
   );
 }
 
-/** What Check again found. Shown only: a binary on PATH says nothing about the setup step. */
+/**
+ * What Check again found. Shown only: a binary on PATH says nothing about the setup step.
+ * The line is a live region on the page, empty, from the moment the install is lost, so the
+ * check's answer is announced as a change rather than as an insertion.
+ */
 function LostCheckLine({ name, check }: { readonly name: string; readonly check: LostCheck }) {
-  if (check.status === "idle") return null;
-  if (check.status === "checking") {
-    return <p className="text-ink-soft text-xs">Checking for {name}…</p>;
-  }
-  const { probe } = check;
+  const probe = check.status === "checked" ? check.probe : undefined;
+  const text =
+    check.status === "idle"
+      ? undefined
+      : check.status === "checking"
+        ? `Checking for ${name}…`
+        : probe === undefined
+          ? `Rennet couldn't check for ${name} here.`
+          : probe.status === "available"
+            ? `${name} answers on this machine${probe.version ? ` (${probe.version})` : ""}.`
+            : `${name} isn't installed on this machine.`;
   return (
-    <p data-slot="lost-check" className="text-ink-soft text-xs">
-      {probe === undefined
-        ? `Rennet couldn't check for ${name} here.`
-        : probe.status === "available"
-          ? `${name} answers on this machine${probe.version ? ` (${probe.version})` : ""}.`
-          : `${name} isn't installed on this machine.`}
-    </p>
+    <>
+      <p role="status" data-slot="lost-check" className="text-ink-soft text-xs empty:sr-only">
+        {text}
+      </p>
+    </>
   );
 }
 
