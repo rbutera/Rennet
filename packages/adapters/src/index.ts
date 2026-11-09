@@ -652,6 +652,17 @@ export {
   summarizeUsage,
   type TurnMetric,
 } from "./turn-metrics";
+export {
+  curatedPathDirectories,
+  defaultUserPathDeps,
+  hydrateProcessPath,
+  LOGIN_SHELL_TIMEOUT_MS,
+  mergePathEntries,
+  readLoginShellPath,
+  resolveUserPath,
+  type UserPathDeps,
+  type UserPathRunResult,
+} from "./user-path";
 export { type DraftOp, WhiteboardClient } from "./whiteboard-client";
 // The workspace inventory (workspace-settings D6).
 export {
