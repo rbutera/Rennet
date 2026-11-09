@@ -28,22 +28,22 @@
 
 ## 2. Wave 2: Server and protocol
 
-- [ ] 2.1 Extend `SessionPreparation`:
+- [x] 2.1 Extend `SessionPreparation`:
   - `failed` gains `kind`, `action`, `tool?`, `detail`.
   - Add stage `"workspace"`.
   - Add the non-terminal `awaiting{kind:"large-file-choice", lfsAvailable}`.
   - Verify: protocol schema tests round-trip every new variant, and old payloads still parse.
-- [ ] 2.2 Register setting `checkout.largeFiles` (repo layer, values download|skip, unset means ask) in the settings registry.
+- [x] 2.2 Register setting `checkout.largeFiles` (repo layer, values download|skip, unset means ask) in the settings registry.
   - Verify: settings resolver tests show unset, repo-set, and a settings view row.
-- [ ] 2.3 In `runSessionPreparation`, before `bindWorkspaceFor`: if the repo uses LFS and the mode is unset, enter `awaiting`; otherwise pass the mode to the bind.
+- [x] 2.3 In `runSessionPreparation`, before `bindWorkspaceFor`: if the repo uses LFS and the mode is unset, enter `awaiting`; otherwise pass the mode to the bind.
   - Wrap the bind so failures become classified `failed{stage:"workspace", …}` via `classifyGitFailure`.
   - Verify with server tests: awaiting is entered and resumed, a classified git-lfs failure, stage workspace.
-- [ ] 2.4 Add dispatch `session.chooseLargeFileMode({sessionId, mode})`: writes the repo setting and resumes preparation.
+- [x] 2.4 Add dispatch `session.chooseLargeFileMode({sessionId, mode})`: writes the repo setting and resumes preparation.
   - Add dispatch `tools.install({tool, locus})`: streams events, re-probes, returns the result.
   - Verify with dispatch tests: resume after the choice, install success and failure events.
-- [ ] 2.5 Make the front-door `openPullRequestRef` worktree attempt (`create-server.ts:2638`) record its classified failure for the review instead of only logging it, and make the bind reuse it, with one retry after a mode change or install.
+- [x] 2.5 Make the front-door `openPullRequestRef` worktree attempt (`create-server.ts:2638`) record its classified failure for the review instead of only logging it, and make the bind reuse it, with one retry after a mode change or install.
   - Verify: a server test where the front door fails with git-lfs missing and the session fails classified, with no raw text as the reason.
-- [ ] 2.6 Expose the `git`/`git-lfs` probes and repo `usesLfs` in the environments/settings projection (`settings/data/live-projection.tsx` source rows feed).
+- [x] 2.6 Expose the `git`/`git-lfs` probes and repo `usesLfs` in the environments/settings projection (`settings/data/live-projection.tsx` source rows feed).
   - Verify: projection tests include the Git and Git LFS rows.
 
 ## 3. Wave 3: App UI
