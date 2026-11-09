@@ -1,6 +1,6 @@
 import { Skeleton } from "@rennet/ui";
-import { type ReactNode, Suspense } from "react";
-import { useCommand } from "../data/query";
+import { type ReactNode, Suspense, useEffect, useRef } from "react";
+import { useCommand, useRefreshCommand } from "../data/query";
 import { useOpenCapturedPath } from "../review/code-destination";
 import { useChatTrail, useRouteChatTarget } from "./chat-data";
 import { ChatHeader } from "./chat-header";
@@ -12,6 +12,10 @@ import { useT3ChatSlot } from "./t3-chat-slot";
  * skeleton, not a sentence: a wait reads as a wait without a label the reviewer has to parse
  * (Rai, 2026-09-14). The sr-only line keeps the state honest for a screen reader.
  */
+/** How often a review still being prepared asks for its thread again. The bind lands with
+ *  the workspace, a few seconds after the large-file answer at most. */
+const THREAD_POLL_MS = 1_500;
+
 function ChatPaneSkeleton({
   label,
   slot = "t3-chat-starting",
@@ -46,6 +50,28 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
     reviewId === undefined ? {} : { reviewId },
     { enabled: reviewId !== undefined },
   );
+  // A REVIEW STILL BEING PREPARED has no thread yet: the review attaches as soon as capture
+  // settles, and its thread binds with the workspace, after the large-file answer. Until
+  // then the daemon answers `unavailable`, and the slot used to print "This review has no
+  // thread, and none is being opened" — Rai's exact complaint. That is a wait, so it reads
+  // as one: the thread skeleton, and the session is asked again until the thread binds.
+  const preparing = target.kind === "review" && target.preparing;
+  const awaitingThread = preparing && data !== undefined && data.thread?.status !== "bound";
+  const refreshSession = useRefreshCommand("chat.t3Session");
+  useEffect(() => {
+    if (!awaitingThread) return;
+    const timer = window.setInterval(refreshSession, THREAD_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [awaitingThread, refreshSession]);
+  // …and the moment the preparation is over, ask once more: the answer cached while it ran
+  // is the waiting one, and whatever the daemon says now is the one to show. Only on that
+  // transition — a review opened after its preparation finished is asked exactly once.
+  const wasPreparing = useRef(preparing);
+  useEffect(() => {
+    const ended = wasPreparing.current && !preparing;
+    wasPreparing.current = preparing;
+    if (ended) refreshSession();
+  }, [preparing, refreshSession]);
   const slot = useT3ChatSlot();
   // WHICH THREAD THE SLOT SHOWS: the session's own, in every state of every lane (#823).
   //
@@ -88,6 +114,8 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
         <ChatUnavailable slot="t3-chat-error" />
       ) : pending || !data ? (
         <ChatPaneSkeleton label="Starting chat" />
+      ) : awaitingThread ? (
+        <ChatPaneSkeleton label="Preparing the conversation" slot="t3-chat-preparing" />
       ) : slot ? (
         <Suspense fallback={<ChatPaneSkeleton label="Loading the thread view" />}>
           <slot.session session={data} onOpenFile={openFileInDiff} />

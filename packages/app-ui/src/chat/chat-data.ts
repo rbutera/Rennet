@@ -69,7 +69,13 @@ function useRouteSlug(): string {
  */
 export type ChatDockTarget =
   | { readonly kind: "resolving" }
-  | { readonly kind: "review"; readonly reviewId: string }
+  /**
+   * A review is attached. `preparing` says its preparation is still under way (capture
+   * finished, the large-file question open, or drafting), so a thread that is not bound
+   * YET is a wait, not an absence: the review is attached before the workspace is bound,
+   * and the thread binds with the workspace.
+   */
+  | { readonly kind: "review"; readonly reviewId: string; readonly preparing: boolean }
   /**
    * No review is attached. `preparing` says one is on its way — capture is running, the
    * large-file question is open, or drafting has begun before the thread exists — so the
@@ -85,12 +91,10 @@ export function useRouteChatTarget(): ChatDockTarget {
   const row = useSessionRow(slug);
   if (resolution.status === "pending") return { kind: "resolving" };
   const reviewId = reviewIdOf(resolution);
-  if (reviewId !== undefined) return { kind: "review", reviewId };
   const phase = preparationPhase(row?.preparation);
-  return {
-    kind: "no-review",
-    preparing: phase === "waiting" || phase === "choosing" || phase === "drafting",
-  };
+  const preparing = phase === "waiting" || phase === "choosing" || phase === "drafting";
+  if (reviewId !== undefined) return { kind: "review", reviewId, preparing };
+  return { kind: "no-review", preparing };
 }
 
 /** The route's session row, off the one shared `session.list` read. */

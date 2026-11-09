@@ -420,6 +420,99 @@ describe("the chat slot is always the T3 thread", () => {
     expect(asks).toEqual([]);
   });
 
+  it("waits on the thread skeleton while an attached review is still being prepared", async () => {
+    // The review attaches when capture settles; its thread binds with the workspace, after
+    // the large-file answer. In between the daemon answers `unavailable`, and the slot used
+    // to print "This review has no thread, and none is being opened" — Rai's complaint, word
+    // for word. While the preparation runs that is a wait; once it binds, the thread shows.
+    let preparing = true;
+    const asks: unknown[] = [];
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers(),
+      "settings.get": () => ({ ...emptySettings(), projects: [projectRow()] }),
+      "session.list": () => ({
+        sessions: [
+          {
+            id: "pr-session",
+            projectId: "p1",
+            title: "feat/widget-lfs",
+            target: "your-pr",
+            createdAt: 1,
+            reviewId: "review-1",
+            claim: { branch: "feat/widget-lfs", prNumber: 42 },
+            ...(preparing
+              ? {
+                  preparation: {
+                    status: "awaiting" as const,
+                    kind: "large-file-choice" as const,
+                    lfsAvailable: true,
+                    reviewId: "review-1",
+                  },
+                }
+              : {}),
+          },
+        ],
+      }),
+      "session.cancelPreparation": () => ({ session: null }),
+      "session.chooseLargeFileMode": () => ({ session: null }),
+      "review.load": () => ({
+        review: {
+          id: "review-1",
+          repositoryRoot: "/repos/acme/checkout",
+          status: "current",
+          activePatchsetId: "ps-1",
+          patchsets: [{ id: "ps-1", source: "local" }],
+        } as unknown as Review,
+        repositoryPresent: true,
+      }),
+      "chat.t3Session": (input) => {
+        asks.push(input);
+        return {
+          origin: "http://127.0.0.1:43117",
+          wsUrl: "ws://127.0.0.1:43117/ws",
+          accessToken: "bearer-never-in-the-guest",
+          environmentId: "env-1",
+          thread: preparing
+            ? { status: "unavailable", reason: "The review is waiting for the large-file choice." }
+            : { status: "bound", threadId: "thread-1", threadUrl: "http://127.0.0.1:43117/t/1" },
+        };
+      },
+    });
+    act(() => {
+      useRennetStore.getState().uiActions.setSidebarOpen(false);
+      useRennetStore.getState().uiActions.setChatOpen(true);
+    });
+    const Session = ({ session }: T3NativeChatProps) => (
+      <div data-slot="t3-native-stub">
+        {session.thread?.status === "bound" ? session.thread.threadId : "UNAVAILABLE"}
+      </div>
+    );
+    const Thread = (props: T3ThreadViewProps) => <div>{props.thread.threadId}</div>;
+    const { getByTestId } = mount(
+      <T3ChatSlotProvider session={Session} thread={Thread}>
+        <RennetRouterApp bridge={bridge} history={memoryHistory("/s/pr-session")} />
+      </T3ChatSlotProvider>,
+    );
+    const dock = getByTestId("chat-dock-slot");
+    await waitFor(() => expect(asks.length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(dock.querySelector('[data-slot="t3-chat-preparing"]')).not.toBeNull(),
+    );
+    // The unavailable answer is never handed to the slot while the review is on its way.
+    expect(dock.querySelector('[data-slot="t3-native-stub"]')).toBeNull();
+    expect(dock.textContent).not.toContain("UNAVAILABLE");
+    expect(dock.querySelector("header")?.textContent).toContain("feat/widget-lfs");
+
+    // The answer lands, the workspace binds, the preparation clears: the thread shows.
+    preparing = false;
+    await waitFor(
+      () =>
+        expect(dock.querySelector('[data-slot="t3-native-stub"]')?.textContent).toBe("thread-1"),
+      { timeout: 5_000 },
+    );
+    expect(dock.querySelector('[data-slot="t3-chat-preparing"]')).toBeNull();
+  });
+
   // The control for the pair above: the SAME assertions on a route that does hold a
   // review must find the opposite, or "no-review everywhere" would satisfy both.
   it("still reaches the sidecar on a session that holds one", async () => {
