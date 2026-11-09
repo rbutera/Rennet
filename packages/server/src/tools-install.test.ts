@@ -266,6 +266,38 @@ describe("tools.install (Install for me)", () => {
     20_000,
   );
 
+  it.skipIf(process.platform === "win32")(
+    "Install for me right after a cancel, while the cancelled run is still dying, starts a fresh install",
+    async () => {
+      // A brew that ignores SIGTERM, so the cancelled run lingers until the SIGKILL grace ends.
+      const { server, events, bin } = await installer(
+        `trap "" TERM; ${SLEEPING_BREW.replace("sleep 2", "sleep 3")}`,
+        "exit 0",
+      );
+      const install = (commandId: string) =>
+        server.dispatch("tools.install", {
+          tool: "git-lfs",
+          locus: { kind: "host" },
+          commandId,
+        }) as Promise<CommandOutput<"tools.install">>;
+      const first = randomUUID();
+      const cancelled = install(first);
+      await heard(events, first, "==> starting");
+      expect(await server.dispatch("tools.cancelInstall", { commandId: first })).toEqual({
+        cancelled: true,
+      });
+      // Within the kill grace: the cancelled run has not ended yet.
+      const again = randomUUID();
+      const { result } = await install(again);
+      expect((await cancelled).result).toMatchObject({ status: "failed", cancelled: true });
+      // The reviewer asked to install, not to hear the cancelled run's ending: a new brew ran.
+      expect(result.status).toBe("installed");
+      expect(runsOf(bin)).toBe(2);
+      await heard(events, again, "$ git lfs install");
+    },
+    30_000,
+  );
+
   it("tools.cancelInstall says false when nothing by that id is running", async () => {
     const { server } = await installer("exit 0", "exit 0");
     expect(await server.dispatch("tools.cancelInstall", { commandId: randomUUID() })).toEqual({

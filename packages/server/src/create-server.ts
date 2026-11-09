@@ -2233,6 +2233,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   }): Promise<CommandOutput<"tools.install">["result"]> {
     const key = toolInstallKey(input.tool, input.locus);
     const running = toolInstallRuns.get(key);
+    // A run that was CANCELLED is only dying (its installer gets SIGKILL after a grace): never
+    // join it, or a reviewer who pressed Install for me again just hears the cancellation.
+    // Wait for it to end, then start a fresh one — joining any fresh run another caller
+    // started meanwhile, since this calls back in.
+    if (running?.controller.signal.aborted === true && !toolInstallsClosed) {
+      return running.result
+        .catch(() => undefined)
+        .then(() => {
+          if (toolInstallRuns.get(key) === running) toolInstallRuns.delete(key);
+          return installSourceControlTool(input);
+        });
+    }
     if (running !== undefined) {
       if (!running.commandIds.has(input.commandId)) {
         running.commandIds.add(input.commandId);
