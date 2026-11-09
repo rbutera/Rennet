@@ -58,14 +58,18 @@ function stubs(brewExit: number): { bin: string; calls: string } {
 /** `path` is the WHOLE inherited PATH the runner sees: `/bin` carries no git, so a step
  *  can only find the stub git through the plan's own prefix, and a missing prefix fails
  *  instead of running a real `git lfs install` against the real global config. */
-async function run(plan: InstallPlan, path?: string) {
+async function run(
+  plan: InstallPlan,
+  path?: string,
+  probed: "available" | "not-installed" = "available",
+) {
   const chunks: { chunk: string; stream: InstallOutputStream }[] = [];
   let probes = 0;
   const result = await runInstallPlan(plan, {
     onOutput: (chunk, stream) => chunks.push({ chunk, stream }),
     reprobe: async () => {
       probes += 1;
-      return { status: "available" as const };
+      return { status: probed };
     },
     ...(path === undefined ? {} : { env: { PATH: path } }),
   });
@@ -171,6 +175,32 @@ describe("runInstallPlan", () => {
     ).toBe(true);
     if (result.status === "installed") expect(result.output).toBe(streamed);
     expect(result.probe).toEqual({ status: "available" });
+  });
+
+  it("every step succeeding is not 'installed' when the re-probe still cannot find the tool", async () => {
+    // Sighted in review: `installed` beside `probe.status: "not-installed"`. The verdict is
+    // the re-probe's, so this says plainly that the tool is still not found.
+    const { bin, calls } = stubs(0);
+    const plan = await resolveInstallPlan("git-lfs", {
+      platform: "darwin",
+      envPath: bin,
+      brewDirectories: [],
+    });
+    const { result, probes } = await run(plan, "/bin", "not-installed");
+
+    expect(readFileSync(calls, "utf8")).toBe("brew install git-lfs\ngit lfs install\n");
+    expect(probes).toBe(1);
+    expect(result).toMatchObject({
+      status: "failed",
+      message: "The install finished, but Rennet still can't find Git LFS on this machine.",
+      failedCommand: "brew install git-lfs && git lfs install",
+      exitCode: null,
+      probe: { status: "not-installed" },
+    });
+    if (result.status === "failed") {
+      expect(result.cancelled).toBeUndefined();
+      expect(result.output).toContain("Git LFS initialized.");
+    }
   });
 
   it("stops at a failing brew, keeps its output as detail, and still re-probes", async () => {

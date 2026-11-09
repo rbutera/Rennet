@@ -344,8 +344,12 @@ function displayStep(step: InstallStep): string {
 /**
  * Run `plan`, streaming output through `options.onOutput`, then re-probe. A manual plan
  * runs nothing and still re-probes, since the person may have installed it by hand.
+ *
+ * The verdict follows the re-probe, not the exit codes: every step can exit 0 and the tool
+ * still not answer (Homebrew linked it somewhere the probe's PATH does not reach, say).
+ * That is a failure, said plainly — "installed" only ever means the tool now answers.
  */
-export async function runInstallPlan<P>(
+export async function runInstallPlan<P extends { readonly status: string }>(
   plan: InstallPlan,
   options: RunInstallOptions<P>,
 ): Promise<InstallRunResult<P>> {
@@ -424,5 +428,17 @@ export async function runInstallPlan<P>(
       };
     }
   }
-  return { status: "installed", plan, output: output.value(), probe: await options.reprobe() };
+  const probe = await options.reprobe();
+  if (probe.status !== "available") {
+    return {
+      status: "failed",
+      plan,
+      message: `The install finished, but Rennet still can't find ${TOOL_LABEL[plan.tool]} on this machine.`,
+      failedCommand: plan.command,
+      exitCode: null,
+      output: output.value(),
+      probe,
+    };
+  }
+  return { status: "installed", plan, output: output.value(), probe };
 }
