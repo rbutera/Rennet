@@ -2665,6 +2665,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    *
    * In memory, on purpose: a front door and the bind that follows it run in one daemon life.
    * After a restart the bind simply attempts the checkout itself, which is the old behaviour.
+   *
+   * ITS LIFE IS THE GAP BETWEEN THE FRONT DOOR AND THE FIRST BIND, and no longer: a later
+   * front door for the same review REPLACES the entry (so a success clears an older
+   * failure), the bind deletes it once it has recorded a binding, a session that is already
+   * bound deletes it on its next use, and archiving the session deletes it. Cancelling drops
+   * its failure, so the reviewer's Retry attempts the checkout for real, and keeps the path
+   * and notes that Retry still needs. An entry no bind ever consumes — a review opened with no
+   * session — expires after `FRONT_DOOR_TTL_MS`, and the map never holds more than
+   * `FRONT_DOOR_CAP` entries.
    */
   interface FrontDoorWorktree {
     readonly path?: string;
@@ -2674,12 +2683,40 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     };
     readonly notes?: readonly string[];
   }
-  const frontDoorWorktrees = new Map<string, FrontDoorWorktree>();
+  const frontDoorWorktrees = new Map<string, FrontDoorWorktree & { readonly at: number }>();
+  const FRONT_DOOR_TTL_MS = 60 * 60 * 1000;
+  const FRONT_DOOR_CAP = 256;
+  /** Record what the front door left for a review, REPLACING anything it left before. */
+  function recordFrontDoor(reviewId: string, entry: FrontDoorWorktree): void {
+    const now = Date.now();
+    frontDoorWorktrees.delete(reviewId);
+    for (const [key, value] of frontDoorWorktrees) {
+      if (now - value.at > FRONT_DOOR_TTL_MS) frontDoorWorktrees.delete(key);
+    }
+    // Insertion order is age order: the oldest go first.
+    while (frontDoorWorktrees.size >= FRONT_DOOR_CAP) {
+      const oldest = frontDoorWorktrees.keys().next().value;
+      if (oldest === undefined) break;
+      frontDoorWorktrees.delete(oldest);
+    }
+    frontDoorWorktrees.set(reviewId, { ...entry, at: now });
+  }
+  /** What the front door left for a review, unless it has expired. */
+  function frontDoorFor(reviewId: string): FrontDoorWorktree | undefined {
+    const entry = frontDoorWorktrees.get(reviewId);
+    if (entry === undefined) return undefined;
+    if (Date.now() - entry.at > FRONT_DOOR_TTL_MS) {
+      frontDoorWorktrees.delete(reviewId);
+      return undefined;
+    }
+    return entry;
+  }
   /** Drop a review's recorded front-door failure, keeping its path and notes. */
   function clearFrontDoorFailure(reviewId: string): void {
     const entry = frontDoorWorktrees.get(reviewId);
     if (entry?.failure === undefined) return;
     frontDoorWorktrees.set(reviewId, {
+      at: entry.at,
       ...(entry.path === undefined ? {} : { path: entry.path }),
       ...(entry.notes === undefined ? {} : { notes: entry.notes }),
     });
@@ -2779,7 +2816,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // the branch, which is a superset of the one a push would have named.
       // The path the pull-request front door computed and did not create (2.5): a deferred
       // or failed front-door checkout is created by the bind at exactly that path.
-      pendingPrWorktreeFor: (reviewId: string) => frontDoorWorktrees.get(reviewId)?.path,
+      pendingPrWorktreeFor: (reviewId: string) => frontDoorFor(reviewId)?.path,
     };
     return workspaceDeps;
   }
@@ -2798,6 +2835,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // A recorded binding is RE-PINNED, never re-decided: a landed round advances the reviewed
     // head, and a pull-request snapshot's workspace is a detached checkout at the old one.
     if (recorded !== undefined) {
+      // Bound already: nothing the front door left can matter to this session any more.
+      frontDoorWorktrees.delete(review.id);
       const repinned = await repinBoundWorkspace(review, recorded, workspaceDeps);
       // A re-pin that REPLACED the checkout created a new one under the project's current
       // mode: register that, and say what the new checkout's notes are.
@@ -2822,7 +2861,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // could not create fails the same way here, classified, instead of being repeated blind —
     // unless the large-file mode changed since (the reviewer's answer is the reason to try
     // again). Consumed on this first use: the reviewer's own Retry attempts the checkout.
-    const frontDoor = frontDoorWorktrees.get(review.id);
+    const frontDoor = frontDoorFor(review.id);
     if (frontDoor?.failure !== undefined) {
       const failure = frontDoor.failure;
       clearFrontDoorFailure(review.id);
@@ -3079,7 +3118,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         (placement.largeFiles ?? "ask") === "ask" &&
         (await repoUsesLfs(root, { ref: pr.headOid, git: gitInLocus }))
       ) {
-        frontDoorWorktrees.set(review.id, { path: worktree });
+        recordFrontDoor(review.id, { path: worktree });
       } else {
         attemptedMode = checkoutLargeFileMode(placement);
         const { created, warning } = await ensurePrWorktree(
@@ -3096,7 +3135,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // Returned only by this, the creating call: kept for the bind to record (see
         // `frontDoorWorktrees`), or they are gone by the time a session binds.
         const kept = [...(warning === undefined ? [] : [warning]), ...notes];
-        if (kept.length > 0) frontDoorWorktrees.set(review.id, { notes: kept });
+        // A success REPLACES whatever an earlier front door left: an older failure for this
+        // review is history now, and a bind must not report it.
+        if (kept.length > 0) recordFrontDoor(review.id, { notes: kept });
+        else frontDoorWorktrees.delete(review.id);
         if (created) {
           // Fire-and-forget; the runner itself records a failed verdict, and an
           // unexpected crash must not become an unhandled rejection.
@@ -3115,7 +3157,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       );
       // …AND IT REACHES THE SESSION (2.5): classified, for the bind to report rather than
       // repeat. The raw text is the failure's detail, never its message.
-      frontDoorWorktrees.set(review.id, {
+      recordFrontDoor(review.id, {
         ...(frontDoorPath === undefined ? {} : { path: frontDoorPath }),
         failure: {
           classified: classifyGitFailure(error, { subject: "pull request" }),
@@ -5877,6 +5919,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   function cancelSessionPreparation(sessionId: string): SessionModel | undefined {
     const session = sessionStore.load(sessionId);
     const preparation = session?.preparation;
+    // A failure the front door left is not what the reviewer's Retry should be told: drop
+    // it, keeping the path and notes that Retry's bind still needs.
+    const cancelledReviewId =
+      (preparation !== undefined && "reviewId" in preparation ? preparation.reviewId : undefined) ??
+      session?.reviewId;
+    if (cancelledReviewId !== undefined) clearFrontDoorFailure(cancelledReviewId);
     // Waiting on the large-file answer: nothing is running, so cancelling is only the record.
     if (session !== undefined && preparation?.status === "awaiting") {
       return sessionStore.setPreparation(sessionId, {
@@ -6512,6 +6560,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         if (archived) {
           cancelSessionPreparation(sessionId);
           await sessionPreparationRuns.get(sessionId)?.catch(() => undefined);
+          // Whatever the front door left for this session's review has no bind to wait for.
+          const archivedReviewId = sessionStore.load(sessionId)?.reviewId;
+          if (archivedReviewId !== undefined) frontDoorWorktrees.delete(archivedReviewId);
         }
         // D5's collection, BEFORE the record is archived: the rule reads the session's
         // recorded work branch and its repository, and both are still on the live record

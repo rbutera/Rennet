@@ -171,6 +171,8 @@ async function serverFor(
     /** A directory holding stub `brew` and `git` for Install for me; Git LFS then answers
      *  once the stub brew has left `installed` there. */
     readonly brewBin?: string;
+    /** Extra test environment for the server. */
+    readonly env?: Record<string, string>;
   } = {},
 ) {
   await createGitHubTokenStore(fixture.dataDir).setGitHubCredential({ token: "gho_acme_widget" });
@@ -178,7 +180,7 @@ async function serverFor(
   const server = await createRennetServer({
     dataDir: fixture.dataDir,
     // Hold drafting once the workspace is bound: these tests are about the stage before it.
-    env: { RENNET_TEST_BOARD_PREPARATION_DELAY_MS: "60000" },
+    env: { RENNET_TEST_BOARD_PREPARATION_DELAY_MS: "60000", ...serverOptions.env },
     httpFetch: gitHub(fixture.baseOid, fixture.headOid),
     // What this machine has installed must not decide the answer.
     sourceControl: {
@@ -406,6 +408,45 @@ describe("the workspace stage of a Git LFS pull request (review-preparation-reli
     fixture.git("config", "filter.lfs.required", "true");
     expect(lfsRequiredUnderDaemonEnv(fixture.dataDir, boundRoot)).toBe("true");
 
+    await server.dispatch("session.cancelPreparation", { sessionId });
+  }, 60_000);
+
+  it("a later front door that succeeds replaces an earlier failure, so no bind reports it", async () => {
+    const fixture = lfsRepository();
+    // The session's preparation holds between its capture (and so its front door) and its
+    // bind, which is the gap a second front door for the same review can land in.
+    const { server, mint, setMode } = await serverFor(fixture, {
+      env: { RENNET_TEST_CAPTURE_SETTLEMENT_DELAY_MS: "60000" },
+    });
+    await setMode("download");
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const commandId = randomUUID();
+    const sessionId = await mint({ commandId });
+    // Front door one: Git LFS is missing, and its failure is recorded for the bind.
+    await vi.waitFor(() => expect(fixture.filterRuns()).toBe(1), { timeout: 20_000 });
+    // Git LFS is installed by hand and the same pull request is opened again — the same
+    // review, by its command id. Front door two checks it out.
+    fixture.installGitLfs();
+    const opened = (await server.dispatch("review.openPr", {
+      commandId,
+      ref: "acme/widget#7",
+      repoPath: fixture.repo,
+    })) as { review: { id: string } };
+    // Opening it warms the review's chat thread, whose bind is the first to read what the
+    // front door left. It must bind the checkout front door two made, not report the
+    // failure front door one left behind it.
+    await vi.waitFor(
+      () =>
+        expect(warnings.mock.calls.flat().join("\n")).toMatch(
+          new RegExp(`review ${opened.review.id} did not get a chat thread`),
+        ),
+      { timeout: 20_000, interval: 25 },
+    );
+    const said = warnings.mock.calls.flat().join("\n");
+    warnings.mockRestore();
+    expect(said).not.toContain("Git LFS isn't installed");
+    // What stopped the thread is the chat itself (no sidecar in this test), past the bind.
+    expect(said).toMatch(/couldn't start chat/);
     await server.dispatch("session.cancelPreparation", { sessionId });
   }, 60_000);
 
