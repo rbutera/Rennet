@@ -411,6 +411,35 @@ Rennet never created.
   See [One workspace per session](../concepts/handoff-and-exits.md#one-workspace-per-session)
   for what that means for the round, the push, and the land action.
 
+#### Large files in review checkouts
+
+`checkout.largeFiles` decides how a review checkout treats Git LFS content in a
+repository whose `.gitattributes` routes files through `filter=lfs`. It lives on
+the **repository rung only**, as `largeFiles` in the project's `config.json`, and
+`settings.setProjectValue` writes it under the key `largeFiles`. There is no
+global rung and no detector: the choice is about one project's large files.
+
+| Value | What a checkout does |
+|---|---|
+| `download` | Runs git as you configured it, so the LFS filter fetches the real files. Needs Git LFS installed. |
+| `skip` | Leaves LFS pointer files in place. Works whether or not Git LFS is installed, and never writes your git config. |
+| unset (`ask`, the builtin) | The next review checkout of a repository that uses Git LFS stops and asks. |
+
+When the question is owed, preparation stops in the `awaiting` state before
+anything is checked out, and `session.chooseLargeFileMode` records the answer on
+the repository rung and resumes it. Writing `ask` is a reset: the entry is
+dropped and the next checkout asks again. A change applies to the next checkout;
+a checkout already made in skip mode keeps its pointer files.
+
+Skip mode also covers every later git command a session's processes run in that
+checkout: the seat, chat and round threads, utility turns, and Rennet's own git.
+The daemon starts with one `include.path` entry in its `GIT_CONFIG_*`
+environment, pointing at `~/.rennet/large-files/skip-checkouts.gitconfig`. A
+skip-mode bind adds an `includeIf "gitdir:…"` section for its checkout's git
+directory there, so the overrides apply in that checkout and nowhere else. This
+covers checkouts on the host only: a WSL distribution's git does not see the
+daemon's environment.
+
 **Workspaces** lists every workspace Rennet knows for the scoped repository — the
 reviewer's own checkout while a session is bound to it, each branch worktree, each
 sibling, each pull-request snapshot — with its path, its ref, the sessions bound to
