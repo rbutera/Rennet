@@ -27,6 +27,7 @@ import type {
   ProjectProcessEvent,
   RennetBridge,
   RoundEvent,
+  ToolInstallProgressEvent,
 } from "@rennet/protocol";
 import { ACT_FEATURE, ATTENTION_FEATURE } from "@rennet/protocol";
 import { ConnectionError } from "./connection-error";
@@ -42,6 +43,11 @@ export interface SupervisedBridge {
   onProjectDetailProgress(
     commandId: string,
     listener: (event: ProjectDetailProgressEvent) => void,
+  ): () => void;
+  /** Subscribe to a `tools.install` run's live output, keyed by its `commandId`. */
+  onToolInstallProgress(
+    commandId: string,
+    listener: (event: ToolInstallProgressEvent) => void,
   ): () => void;
   onAskProjection(reviewId: string, listener: (projection: AskProjection) => void): () => void;
   /** Subscribe to a review's live round progress (C15 3.1); returns an unsubscribe. */
@@ -124,6 +130,7 @@ export interface ConnectionSupervisorOptions {
 type AskProjectionListener = (projection: AskProjection) => void;
 type ProgressListener = (event: ProjectProcessEvent) => void;
 type DetailProgressListener = (event: ProjectDetailProgressEvent) => void;
+type ToolInstallListener = (event: ToolInstallProgressEvent) => void;
 type AttentionListener = (event: AttentionEventFrame) => void;
 type RoundProgressListener = (event: RoundEvent) => void;
 type LensDraftListener = (event: LensDraftEvent) => void;
@@ -167,6 +174,8 @@ export class ConnectionSupervisor implements RennetBridge {
   #progressBridgeUnsub = new Map<string, Map<ProgressListener, () => void>>();
   readonly #detailProgressRegistry = new Map<string, Set<DetailProgressListener>>();
   #detailProgressBridgeUnsub = new Map<string, Map<DetailProgressListener, () => void>>();
+  readonly #toolInstallRegistry = new Map<string, Set<ToolInstallListener>>();
+  #toolInstallBridgeUnsub = new Map<string, Map<ToolInstallListener, () => void>>();
   readonly #attentionRegistry = new Map<string, Set<AttentionListener>>();
   #attentionBridgeUnsub = new Map<string, Map<AttentionListener, () => void>>();
   readonly #roundRegistry = new Map<string, Set<RoundProgressListener>>();
@@ -354,6 +363,22 @@ export class ConnectionSupervisor implements RennetBridge {
   }
 
   /**
+   * Subscribe to a `tools.install` run's live output (source-control-tooling: "shows the
+   * output as it streams"). Registry-backed like the progress channels above, so a reconnect
+   * mid-install re-attaches the listener to the fresh bridge rather than leaving the drawer
+   * silent for the rest of a Homebrew run.
+   */
+  onToolInstallProgress(commandId: string, listener: ToolInstallListener): () => void {
+    return this.#register(
+      this.#toolInstallRegistry,
+      this.#toolInstallBridgeUnsub,
+      commandId,
+      listener,
+      (bridge) => bridge.onToolInstallProgress(commandId, listener),
+    );
+  }
+
+  /**
    * Subscribe to daemon attention events (#383 batch). Registry-backed like `onAskProjection`, so a
    * reconnect re-attaches the listener to the fresh bridge and the connect-time attention replay
    * lands on it — a client's needs-you set stays live across reconnects, not just the first socket.
@@ -400,6 +425,7 @@ export class ConnectionSupervisor implements RennetBridge {
     this.#askProjectionBridgeUnsub = new Map();
     this.#progressBridgeUnsub = new Map();
     this.#detailProgressBridgeUnsub = new Map();
+    this.#toolInstallBridgeUnsub = new Map();
     this.#attentionBridgeUnsub = new Map();
     this.#roundBridgeUnsub = new Map();
     this.#lensDraftBridgeUnsub = new Map();
@@ -430,6 +456,16 @@ export class ConnectionSupervisor implements RennetBridge {
           commandId,
           listener,
           bridge.onProjectDetailProgress(commandId, listener),
+        );
+      }
+    }
+    for (const [commandId, listeners] of this.#toolInstallRegistry) {
+      for (const listener of listeners) {
+        mapSet(
+          this.#toolInstallBridgeUnsub,
+          commandId,
+          listener,
+          bridge.onToolInstallProgress(commandId, listener),
         );
       }
     }

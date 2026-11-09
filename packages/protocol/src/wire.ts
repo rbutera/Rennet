@@ -3043,6 +3043,17 @@ export interface RennetBridge {
     listener: (event: ProjectDetailProgressEvent) => void,
   ): () => void;
   /**
+   * Subscribe to a `tools.install` run's live output, keyed by the `commandId` the caller
+   * passes in that command's input. A sibling of `onProgress` routed over the same
+   * commandId-keyed push channel; only `tool-install-output` events reach the listener.
+   * Optional: a bridge without a push channel omits it, and Install for me degrades to the
+   * command's final result, which carries the whole output.
+   */
+  onToolInstallProgress?(
+    commandId: string,
+    listener: (event: ToolInstallProgressEvent) => void,
+  ): () => void;
+  /**
    * Subscribe to the durable ask projection for a review. The server emits the full
    * projection after every accepted ask-log write, including writes made by a completed
    * round, so an open renderer reconciles without waiting for a reload.

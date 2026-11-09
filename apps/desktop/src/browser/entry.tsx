@@ -73,6 +73,10 @@ function createConnection(target: ConnectionTarget): Connection {
     // entries, because a board that only streams in one host is a board the other
     // host renders at settle without saying why.
     onLensDraft: supervisor.onLensDraft.bind(supervisor),
+    // Install for me's streaming output (source-control-tooling). Bound in BOTH entries
+    // for the same reason: an install drawer that streams in one host only is silent in
+    // the other until the command answers.
+    onToolInstallProgress: supervisor.onToolInstallProgress.bind(supervisor),
     close: () => supervisor.close(),
   };
   return {

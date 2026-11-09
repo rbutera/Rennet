@@ -352,6 +352,53 @@ describe("WsRennetBridge", () => {
     });
   });
 
+  it("routes only tool-install output to the install channel, keyed by commandId", async () => {
+    // Install for me streams Homebrew's output under its `tools.install` commandId on the
+    // SAME progress frame the project channels use. The narrowing to `tool-install-output`
+    // is this accessor's whole job: a project event on the same id must not reach a drawer
+    // that renders `chunk`, and another command's install must not either.
+    const stub = await startStub();
+    stubs.push(stub);
+    const bridge = trackBridge(new WsRennetBridge({ url: stub.url }));
+    await new Promise<void>((resolve) => {
+      const check = () => (stub.helloCount > 0 ? resolve() : setTimeout(check, 5));
+      check();
+    });
+    const chunks: unknown[] = [];
+    bridge.onToolInstallProgress("install-1", (event) => chunks.push(event));
+
+    stub.broadcast({
+      type: "progressEvent",
+      commandId: "install-1",
+      event: { kind: "repo-error", repo: "r", message: "not an install chunk" },
+    });
+    stub.broadcast({
+      type: "progressEvent",
+      commandId: "install-2",
+      event: { kind: "tool-install-output", tool: "git-lfs", stream: "stdout", chunk: "other" },
+    });
+    stub.broadcast({
+      type: "progressEvent",
+      commandId: "install-1",
+      event: {
+        kind: "tool-install-output",
+        tool: "git-lfs",
+        stream: "stdout",
+        chunk: "==> Pouring git-lfs",
+      },
+    });
+    await waitFor(() => chunks.length === 1);
+    // A later frame proves the two refused ones were refused, not merely still in flight.
+    expect(chunks).toEqual([
+      {
+        kind: "tool-install-output",
+        tool: "git-lfs",
+        stream: "stdout",
+        chunk: "==> Pouring git-lfs",
+      },
+    ]);
+  });
+
   it("deduplicates live diagnostics on catch-up while a fresh bridge replays them", async () => {
     const stub = await startStub();
     stubs.push(stub);

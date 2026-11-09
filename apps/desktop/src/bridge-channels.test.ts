@@ -43,14 +43,15 @@ const KEYED_CHANNELS = [
   "onAskProjection",
   "onRoundProgress",
   "onLensDraft",
+  "onToolInstallProgress",
 ] as const;
 
 const sourceOf = (file: string): string => fs.readFileSync(file, "utf8");
 
 describe("every desktop entry forwards every keyed push channel", () => {
-  it("sweeps two real entries and five named channels", () => {
+  it("sweeps two real entries and six named channels", () => {
     expect(ENTRIES).toHaveLength(2);
-    expect(KEYED_CHANNELS).toHaveLength(5);
+    expect(KEYED_CHANNELS).toHaveLength(6);
     for (const { name, file } of ENTRIES) {
       expect(fs.existsSync(file), `${name} entry exists`).toBe(true);
       // A real composition root, not an empty file the sweep would pass over.

@@ -20,6 +20,7 @@ import type {
   RennetBridge,
   RoundEvent,
   SessionFrame,
+  ToolInstallProgressEvent,
 } from "@rennet/protocol";
 import {
   checkProtocolCompatibility,
@@ -370,6 +371,21 @@ export class WsRennetBridge implements RennetBridge {
       commandId,
       listener as (event: ProjectProgressEvent) => void,
     );
+  }
+
+  /**
+   * Subscribe to a `tools.install` run's live output, keyed by the `commandId` the caller
+   * passes to that command. It rides the same commandId-keyed progress frame as the two
+   * channels above, and only `tool-install-output` events reach the listener: the frame's
+   * union is shared, so the narrowing is done here, once, instead of by every caller.
+   */
+  onToolInstallProgress(
+    commandId: string,
+    listener: (event: ToolInstallProgressEvent) => void,
+  ): () => void {
+    return subscribe(this.#progressListeners, commandId, (event: ProjectProgressEvent) => {
+      if ("kind" in event && event.kind === "tool-install-output") listener(event);
+    });
   }
 
   onAskProjection(reviewId: string, listener: (projection: AskProjection) => void): () => void {
