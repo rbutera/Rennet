@@ -257,12 +257,47 @@ describe("worktree adds under a large-file mode", () => {
  * every checkout git makes, worktree adds included, and exits 2 when `git-lfs` is not on the
  * PATH. Git propagates that exit code, so `worktree add` "fails" AFTER the worktree exists.
  */
+const LFS_HOOK_MESSAGE =
+  "This repository is configured for Git LFS but 'git-lfs' was not found on your path. If you no longer wish to use Git LFS, remove this hook by deleting the 'post-checkout' file in the hooks directory (set by 'core.hookspath'; usually '.git/hooks').";
+
 const LFS_POST_CHECKOUT_HOOK = [
   "#!/bin/sh",
-  `command -v git-lfs >/dev/null 2>&1 || { printf >&2 "\\n%s\\n\\n" "This repository is configured for Git LFS but 'git-lfs' was not found on your path. If you no longer wish to use Git LFS, remove this hook by deleting the 'post-checkout' file in the hooks directory (set by 'core.hookspath'; usually '.git/hooks')."; exit 2; }`,
+  `command -v git-lfs >/dev/null 2>&1 || { printf >&2 "\\n%s\\n\\n" "${LFS_HOOK_MESSAGE}"; exit 2; }`,
   'git lfs post-checkout "$@"',
   "",
 ].join("\n");
+
+/** A hook that prints the stock git-lfs message, then whatever `after` adds, then exits. */
+function hookAfterLfsMessage(after: readonly string[], exit: number): string {
+  return [
+    "#!/bin/sh",
+    `printf >&2 "\\n%s\\n\\n" "${LFS_HOOK_MESSAGE}"`,
+    ...after,
+    `exit ${exit}`,
+    "",
+  ].join("\n");
+}
+
+/** Fixture setup that is not under test: git with the LFS filter off, since no git-lfs
+ *  is on the fixture's PATH and the index refresh would start it. */
+function setupGit(git: GitExec, cwd: string, args: readonly string[]): Promise<string> {
+  return git(cwd, [
+    "-c",
+    "filter.lfs.process=",
+    "-c",
+    "filter.lfs.clean=",
+    "-c",
+    "filter.lfs.required=false",
+    ...args,
+  ]);
+}
+
+async function rejection(promise: Promise<unknown>): Promise<unknown> {
+  return promise.then(
+    () => null,
+    (thrown: unknown) => thrown,
+  );
+}
 
 function installHook(root: string, body: string): void {
   const hook = join(root, ".git", "hooks", "post-checkout");
@@ -339,6 +374,88 @@ describe("skip under git-lfs's own post-checkout hook", () => {
       (thrown: unknown) => thrown,
     );
     expect(classifyGitFailure(failure)).toMatchObject({ kind: "tool-missing", tool: "git-lfs" });
+  });
+
+  it("puts a drifted, unclaimed branch worktree back, under the hook", async () => {
+    const { root, worktrees, git } = fixture();
+    const branchPath = join(worktrees, "branch", "feat", "large");
+    await ensureBranchWorktree(git, root, branchPath, "feat/large", { largeFiles: "skip" });
+    // A round's agent switched Rennet's worktree onto a branch of its own, before the hook.
+    await setupGit(git, branchPath, ["checkout", "-q", "-b", "acme/drift"]);
+    installHook(root, LFS_POST_CHECKOUT_HOOK);
+
+    const repaired = await ensureBranchWorktree(git, root, branchPath, "feat/large", {
+      largeFiles: "skip",
+      claimed: () => false,
+    });
+
+    expect(repaired).toEqual({
+      path: branchPath,
+      created: false,
+      repaired: true,
+      warning: LARGE_FILES_HOOK_SKIPPED_WARNING,
+    });
+    expect((await git(branchPath, ["rev-parse", "--abbrev-ref", "HEAD"])).trim()).toBe(
+      "feat/large",
+    );
+  });
+
+  it("does not tolerate the hook's message when the worktree is not at the expected commit", async () => {
+    const { root, headOid, worktrees, git } = fixture();
+    await setupGit(git, root, ["commit", "-q", "--allow-empty", "-m", "acme second"]);
+    const otherOid = (await git(root, ["rev-parse", "HEAD"])).trim();
+    // The stock message and exit code, from a hook that also moved the new worktree's HEAD.
+    installHook(
+      root,
+      hookAfterLfsMessage([`printf "%s\\n" "${otherOid}" > "$(git rev-parse --git-dir)/HEAD"`], 2),
+    );
+
+    const failure = await rejection(
+      ensurePrWorktree(git, root, join(worktrees, "pr-1"), headOid, { largeFiles: "skip" }),
+    );
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as { exitCode?: unknown }).exitCode).toBe(2);
+    // The hook did run and move HEAD: the refusal is the landing check's, not a broken hook's.
+    expect((await git(join(worktrees, "pr-1"), ["rev-parse", "HEAD"])).trim()).toBe(otherOid);
+  });
+
+  it("does not tolerate a hook that adds its own failure to the stock message", async () => {
+    const { root, headOid, worktrees, git } = fixture();
+    installHook(root, hookAfterLfsMessage(['echo "fatal: required checkout setup failed" >&2'], 1));
+
+    const failure = await rejection(
+      ensurePrWorktree(git, root, join(worktrees, "pr-1"), headOid, { largeFiles: "skip" }),
+    );
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(String((failure as { stderr?: unknown }).stderr)).toContain(
+      "fatal: required checkout setup failed",
+    );
+  });
+
+  it("does not tolerate an extra line even when the hook exits 2 like the stock one", async () => {
+    const { root, headOid, worktrees, git } = fixture();
+    installHook(root, hookAfterLfsMessage(['echo "fatal: required checkout setup failed" >&2'], 2));
+
+    const failure = await rejection(
+      ensurePrWorktree(git, root, join(worktrees, "pr-1"), headOid, { largeFiles: "skip" }),
+    );
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as { exitCode?: unknown }).exitCode).toBe(2);
+  });
+
+  it("does not tolerate the stock message alone from a hook that exits other than 2", async () => {
+    const { root, headOid, worktrees, git } = fixture();
+    installHook(root, hookAfterLfsMessage([], 1));
+
+    const failure = await rejection(
+      ensurePrWorktree(git, root, join(worktrees, "pr-1"), headOid, { largeFiles: "skip" }),
+    );
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as { exitCode?: unknown }).exitCode).toBe(1);
   });
 
   it("surfaces any other hook's failure in skip mode", async () => {

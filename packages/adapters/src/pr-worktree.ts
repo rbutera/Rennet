@@ -408,11 +408,43 @@ export const LARGE_FILES_HOOK_SKIPPED_WARNING =
 
 /**
  * The line every hook `git lfs install` writes (post-checkout, post-commit, post-merge,
- * pre-push) prints when `git-lfs` is not on the PATH, before it exits 2. Matched in full:
- * a bare `git-lfs` token can sit in a path, a ref or a URL.
+ * pre-push) prints when `git-lfs` is not on the PATH, before it exits 2. Matched from the
+ * start of the line: a bare `git-lfs` token can sit in a path, a ref or a URL.
  */
 const LFS_HOOK_WITHOUT_GIT_LFS =
-  /This repository is configured for Git LFS but 'git-lfs' was not found on your path/;
+  /^This repository is configured for Git LFS but 'git-lfs' was not found on your path\b/;
+
+/** What git itself prints on stderr around a checkout-writing call that succeeded. */
+const GIT_CHECKOUT_PROGRESS: readonly RegExp[] = [
+  /^Preparing worktree \(.+\)$/,
+  /^HEAD is now at [0-9a-f]+\b/,
+  /^Updating files:/,
+  /^Switched to branch '.+'$/,
+  /^Previous HEAD position was [0-9a-f]+\b/,
+];
+
+/**
+ * Whether `stderr` is the stock git-lfs hook's refusal and nothing else: once git's own
+ * progress lines and blank lines are dropped, at least one line is left and every one left
+ * is the stock diagnostic. A hook that prints that line and then fails for a reason of its
+ * own (a composed hook) leaves its own line behind, and is not this.
+ */
+function onlyLfsHookRefusal(stderr: string): boolean {
+  const left = stderr
+    .split(/\r\n|\r|\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !GIT_CHECKOUT_PROGRESS.some((p) => p.test(line)));
+  return left.length > 0 && left.every((line) => LFS_HOOK_WITHOUT_GIT_LFS.test(line));
+}
+
+/**
+ * The exit code git reports when that hook refused. `worktree add` hands the hook's own code
+ * back, and the stock hook's is 2. `checkout` reports any post-checkout failure as 1, so for
+ * it the stderr and landing checks are the whole proof.
+ */
+function lfsHookRefusalExitCode(arguments_: readonly string[]): number {
+  return arguments_[0] === "checkout" ? 1 : 2;
+}
 
 /** Where a checkout-writing call must have left the worktree for a refused hook to be
  *  harmless: registered at `path`, with HEAD at `head` (a detached add) or on `branch`. */
@@ -427,6 +459,12 @@ function gitErrorText(error: unknown): string {
     return typeof stderr === "string" && stderr.length > 0 ? stderr : error.message;
   }
   return String(error);
+}
+
+/** The exit code a failed call reported, when the runner kept one. */
+function gitExitCode(error: unknown): number | undefined {
+  const code = (error as { exitCode?: unknown } | null)?.exitCode;
+  return typeof code === "number" ? code : undefined;
 }
 
 function sameCommit(recorded: string | undefined, expected: string): boolean {
@@ -463,9 +501,12 @@ async function checkoutLanded(
  * checkout is written, and git hands its exit code back, so `worktree add` exits 2 with the
  * worktree created and its pointer files in place. Turning hooks off (`core.hooksPath`)
  * would silence every other hook the user relies on too. So in skip mode, and only for that
- * hook's own message, the failure is checked against what git actually did: the worktree
+ * hook's own refusal, the failure is checked against what git actually did. All three must
+ * hold: the exit code is the one that hook produces (`lfsHookRefusalExitCode`), stderr is
+ * that hook's message and git's own progress and nothing else, and the worktree is
  * registered at the target, on the expected commit or branch. Then it is the checkout skip
- * asked for, reported with a warning. Any other failure, including any other hook's, throws.
+ * asked for, reported with a warning. Any other failure throws, including any other hook's
+ * and a hook that prints the stock message before failing for its own reason.
  */
 async function gitWithLargeFiles(
   git: GitExec,
@@ -481,7 +522,8 @@ async function gitWithLargeFiles(
     return undefined;
   } catch (error) {
     if (mode !== "skip") throw error;
-    if (!LFS_HOOK_WITHOUT_GIT_LFS.test(gitErrorText(error))) throw error;
+    if (gitExitCode(error) !== lfsHookRefusalExitCode(arguments_)) throw error;
+    if (!onlyLfsHookRefusal(gitErrorText(error))) throw error;
     if (!(await checkoutLanded(git, root, landing))) throw error;
     return LARGE_FILES_HOOK_SKIPPED_WARNING;
   }
