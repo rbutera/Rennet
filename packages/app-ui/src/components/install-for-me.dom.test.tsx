@@ -171,6 +171,35 @@ describe("Install for me", () => {
     );
   });
 
+  it("shows why an installed tool won't run, behind Details, when the re-probe can't run it", async () => {
+    const held = heldInstall();
+    const { user } = mount(
+      <BridgeProvider bridge={held.bridge}>
+        <InstallForMe tool="git-lfs" locus={{ kind: "host" }} />
+      </BridgeProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: "Install for me" }));
+    await waitFor(() => expect(held.calls).toHaveLength(1));
+    const detail = "The first `git-lfs` on the PATH did not answer `git-lfs --version`.";
+    held.settle({
+      status: "failed",
+      command: "brew install git-lfs && git lfs install",
+      message: "Git LFS was installed, but Rennet can't run it yet.",
+      failedCommand: "brew install git-lfs && git lfs install",
+      exitCode: null,
+      output: "Git LFS initialized.\n",
+      probe: { id: "git-lfs", version: null, status: "unreachable", detail },
+    });
+
+    await waitFor(() => expect(view()?.getAttribute("data-phase")).toBe("failed"));
+    expect(screen.getByRole("alert").textContent).toBe(
+      "Git LFS was installed, but Rennet can't run it yet.",
+    );
+    expect(document.querySelector('[data-slot="failure-detail-output"]')).toBeNull();
+    await user.click(screen.getByText("Details"));
+    expect(document.querySelector('[data-slot="failure-detail-output"]')?.textContent).toBe(detail);
+  });
+
   it("shows the manual command and a docs link instead of running anything", async () => {
     const held = heldInstall();
     const { user } = mount(
@@ -474,7 +503,8 @@ describe("Install for me", () => {
       await user.click(screen.getByRole("button", { name: "Check again" }));
       await waitFor(() =>
         expect(document.querySelector('[data-slot="lost-check"]')?.textContent).toBe(
-          "Git LFS answers on this machine (3.6.1).",
+          // Seeing the binary decides nothing, so the line points at the one press that does.
+          "Git LFS is on this machine (3.6.1). Press Install for me to finish setting it up.",
         ),
       );
       expect(view()?.getAttribute("data-phase")).toBe("lost");
@@ -535,10 +565,42 @@ describe("Install for me", () => {
       expect(document.activeElement).toBe(checkAgain);
 
       act(() => answerProbe());
-      await waitFor(() => expect(line?.textContent).toContain("Git LFS answers on this machine"));
+      await waitFor(() => expect(line?.textContent).toContain("Git LFS is on this machine"));
       expect(line?.isConnected).toBe(true);
       expect(document.activeElement).toBe(checkAgain);
       expect(checkAgain.getAttribute("aria-disabled")).not.toBe("true");
+    });
+
+    it("tells a Git LFS that won't run apart from a missing one when Check again finds it", async () => {
+      const flaky = new FlakyBridge();
+      flaky.forgetsOnRejoin = true;
+      const detail = "The first `git-lfs` on the PATH did not answer `git-lfs --version`.";
+      flaky.probe = { id: "git-lfs", version: null, status: "unreachable", detail };
+      const { user } = mount(
+        <BridgeProvider bridge={flaky}>
+          <InstallForMe tool="git-lfs" locus={{ kind: "host" }} />
+        </BridgeProvider>,
+      );
+      await user.click(screen.getByRole("button", { name: "Install for me" }));
+      await waitFor(() => expect(flaky.installs).toHaveLength(1));
+      act(() => flaky.drop());
+      act(() => flaky.reconnect());
+      await waitFor(() => expect(view()?.getAttribute("data-phase")).toBe("lost"), {
+        timeout: 4_000,
+      });
+
+      await user.click(screen.getByRole("button", { name: "Check again" }));
+      await waitFor(() =>
+        expect(document.querySelector('[data-slot="lost-check"]')?.textContent).toBe(
+          "Git LFS is on this machine but Rennet couldn't run it.",
+        ),
+      );
+      // The probe's own words, behind Details until asked for.
+      expect(document.querySelector('[data-slot="failure-detail-output"]')).toBeNull();
+      await user.click(screen.getByText("Details"));
+      expect(document.querySelector('[data-slot="failure-detail-output"]')?.textContent).toBe(
+        detail,
+      );
     });
 
     it("says it lost track, not that it stopped, when a late Cancel finds the daemon knows nothing", async () => {

@@ -3,6 +3,7 @@ import { Button, Collapse, cn, Spinner } from "@rennet/ui";
 import { Check, ChevronRight, Copy, ExternalLink } from "lucide-react";
 import { useId, useState } from "react";
 import { type LostCheck, useToolInstall } from "../data/tool-install";
+import { FailureDetail } from "./failure-detail";
 import { Icon } from "./icon";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -115,7 +116,7 @@ export function InstallForMe({
         </>
       ) : state.phase === "lost" ? (
         <>
-          <LostCheckLine name={name} check={state.check} />
+          <LostCheckLine name={name} label={label} check={state.check} />
           {state.command === undefined ? null : <CommandLine command={state.command} />}
           <OutputDrawer output={state.output} />
           <div className="flex flex-wrap items-center gap-2">
@@ -157,7 +158,16 @@ export function InstallForMe({
  * The line is a live region on the page, empty, from the moment the install is lost, so the
  * check's answer is announced as a change rather than as an insertion.
  */
-function LostCheckLine({ name, check }: { readonly name: string; readonly check: LostCheck }) {
+function LostCheckLine({
+  name,
+  label,
+  check,
+}: {
+  readonly name: string;
+  /** The button's own label, which the line points at when the tool is there. */
+  readonly label: string;
+  readonly check: LostCheck;
+}) {
   const probe = check.status === "checked" ? check.probe : undefined;
   const text =
     check.status === "idle"
@@ -167,13 +177,20 @@ function LostCheckLine({ name, check }: { readonly name: string; readonly check:
         : probe === undefined
           ? `Rennet couldn't check for ${name} here.`
           : probe.status === "available"
-            ? `${name} answers on this machine${probe.version ? ` (${probe.version})` : ""}.`
-            : `${name} isn't installed on this machine.`;
+            ? // Seeing the binary is not the verdict (the setup step may not have run), so
+              // the line points at the one press that settles it.
+              `${name} is on this machine${probe.version ? ` (${probe.version})` : ""}. Press ${label} to finish setting it up.`
+            : probe.status === "unreachable"
+              ? `${name} is on this machine but Rennet couldn't run it.`
+              : `${name} isn't installed on this machine.`;
   return (
     <>
       <p role="status" data-slot="lost-check" className="text-ink-soft text-xs empty:sr-only">
         {text}
       </p>
+      {probe?.status === "unreachable" && probe.detail.length > 0 ? (
+        <FailureDetail detail={probe.detail} />
+      ) : null}
     </>
   );
 }
@@ -224,6 +241,10 @@ function InstallVerdict({
             />
           ) : null}
           <OutputDrawer output={result.output} />
+          {/* A tool that is there but would not run: the probe's own words say why. */}
+          {result.probe.status === "unreachable" && result.probe.detail.length > 0 ? (
+            <FailureDetail detail={result.probe.detail} />
+          ) : null}
           <div>
             <Button variant="outline" size="sm" onClick={onRetry}>
               Try again

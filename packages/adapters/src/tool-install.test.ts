@@ -203,6 +203,31 @@ describe("runInstallPlan", () => {
     }
   });
 
+  it("says the tool was installed but doesn't run yet when the re-probe finds it unreachable", async () => {
+    // `unreachable` is a binary that is there but could not be asked. "Still can't find" would
+    // send the person looking for an install that happened; the probe's own detail says why.
+    const { bin } = stubs(0);
+    const plan = await resolveInstallPlan("git-lfs", {
+      platform: "darwin",
+      envPath: bin,
+      brewDirectories: [],
+    });
+    const detail =
+      "The first `git-lfs` on the PATH, `/opt/homebrew/bin/git-lfs`, did not answer `git-lfs --version`.";
+    const result = await runInstallPlan(plan, {
+      onOutput: () => undefined,
+      reprobe: async () => ({ status: "unreachable", detail }),
+      env: { PATH: "/bin" },
+    });
+
+    expect(result).toMatchObject({
+      status: "failed",
+      message: "Git LFS was installed, but Rennet can't run it yet.",
+      exitCode: null,
+      probe: { status: "unreachable", detail },
+    });
+  });
+
   it("stops at a failing brew, keeps its output as detail, and still re-probes", async () => {
     const { bin, calls } = stubs(1);
     const plan = await resolveInstallPlan("git-lfs", {

@@ -207,7 +207,9 @@ machine or a WSL distribution; a paired remote device shows the fix without the 
 Install for me streams the installer's output, shows the command it is running with a
 copy button (from the first moment of the run, not only once it ends), and re-probes. The
 verdict is the re-probe's: if every step succeeds but the tool still doesn't answer, the
-install reports that plainly as a failure, never as installed. An install belongs to whoever
+install reports that plainly as a failure, never as installed. A tool the re-probe cannot
+find says Rennet still can't find it; one that is there but won't run (Unreachable) says it
+was installed but doesn't run yet, with the probe's reason behind **Details**. An install belongs to whoever
 started it — a session's failure block or large-file question — so it keeps running
 across a remount, a dismissed dialog or a dropped connection to the daemon; until the
 machine it installs on is known, the button waits; where no installer exists it shows the
@@ -223,7 +225,9 @@ had), and a run that finished meanwhile answers with the verdict the daemon keep
 (about ten minutes, for the last 32 commands). A daemon that knows neither — it restarted,
 or the verdict aged out — answers that it doesn't know, and the button says plainly that
 Rennet lost track of the install, with **Check again** (a re-probe that only shows what is
-installed) and **Install for me** (a fresh install you ask for). So a reconnect never runs
+installed: the tool and its version, with a pointer to **Install for me** to finish its
+setup; a tool that is there but Rennet couldn't run, with the reason behind **Details**; or
+nothing installed) and **Install for me** (a fresh install you ask for). So a reconnect never runs
 the installer a second time. Only the daemon's verdict settles the button as installed; a
 probe that sees the binary is not read as installed, since `git lfs install` may still be
 running or have failed. A Cancel pressed while the connection is down is sent once it is

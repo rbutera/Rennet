@@ -433,7 +433,13 @@ export async function runInstallPlan<P extends { readonly status: string }>(
     return {
       status: "failed",
       plan,
-      message: `The install finished, but Rennet still can't find ${TOOL_LABEL[plan.tool]} on this machine.`,
+      // `unreachable` is a binary that is there but could not be asked: it was installed and
+      // does not run yet, and the probe's own detail (carried as `probe`) says why. Only
+      // `not-installed` is a tool Rennet still can't find.
+      message:
+        probe.status === "unreachable"
+          ? `${TOOL_LABEL[plan.tool]} was installed, but Rennet can't run it yet.`
+          : `The install finished, but Rennet still can't find ${TOOL_LABEL[plan.tool]} on this machine.`,
       failedCommand: plan.command,
       exitCode: null,
       output: output.value(),
