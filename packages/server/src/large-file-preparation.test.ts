@@ -765,6 +765,35 @@ describe("skip-mode registration follows the checkout Rennet created", () => {
     60_000,
   );
 
+  it("skip, then the project's choice is reset to ask, then a re-pin: the replacement stays skip mode", async () => {
+    const fixture = lfsRepository();
+    const { server, projectId, mint, waitFor, setMode } = await serverFor(fixture);
+    await setMode("skip");
+    const sessionId = await mint();
+    const drafting = await waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("drafting"),
+    );
+    const store = new SessionStore(join(fixture.dataDir, "sessions"));
+    const boundRoot = store.load(sessionId)?.boundRoot ?? "";
+    expect(registered(fixture.dataDir)).toEqual([gitDirOf(boundRoot)]);
+
+    // Nobody has chosen any more: the next CHECKOUT asks. A re-pin is not a checkout the
+    // reviewer can be asked about, so it keeps the mode the checkout it replaces had.
+    fixture.installGitLfs();
+    await server.dispatch("settings.setProjectValue", {
+      projectId,
+      repoPath: fixture.repo,
+      key: "largeFiles",
+      value: "ask",
+    });
+    await moveOffHeadAndRepin(fixture, server, drafting.reviewId ?? "", boundRoot);
+    expect(readFileSync(join(boundRoot, "assets", "model.bin"), "utf8")).toBe(POINTER);
+    expect(registered(fixture.dataDir)).toEqual([gitDirOf(boundRoot)]);
+    fixture.git("config", "filter.lfs.required", "true");
+    expect(lfsRequiredUnderDaemonEnv(fixture.dataDir, boundRoot)).toBe("false");
+    await server.dispatch("session.cancelPreparation", { sessionId });
+  }, 60_000);
+
   it("a later session that reuses the checkout keeps the mode it was created with", async () => {
     const fixture = lfsRepository();
     const { server, mint, waitFor, setMode } = await serverFor(fixture);

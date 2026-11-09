@@ -2898,6 +2898,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       recordPrWorktree,
       markReplacedCheckout: (checkout: string, mode: LargeFileMode) =>
         markReplacedCheckout(review.repositoryRoot, checkout, mode),
+      checkoutModeOf: async (checkout: string): Promise<LargeFileMode> => {
+        if (locusForRepo(review.repositoryRoot).kind !== "host") return "download";
+        const gitDir = await absoluteGitDir(gitForRepo(review.repositoryRoot), checkout);
+        return largeFileSkipIndex.has(gitDir) ? "skip" : "download";
+      },
       // No `onWorktreeCreated` here: the bind supplies it, and runs a created checkout's
       // setup only once that checkout's large-file mode is registered.
       // No `siblingPush` is passed, and none is accepted any more. It was meant to narrow

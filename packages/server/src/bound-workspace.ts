@@ -158,6 +158,12 @@ export interface BoundWorkspaceDeps {
    * covered from its first command. Absent ⇒ nothing is recorded before the replacement.
    */
   readonly markReplacedCheckout?: (checkout: string, mode: LargeFileMode) => Promise<void>;
+  /**
+   * The large-file mode an EXISTING checkout runs under: `skip` when the skip-mode index
+   * names its git dir, else `download`. What a re-pin keeps when the project has not chosen.
+   * Absent ⇒ `download`.
+   */
+  readonly checkoutModeOf?: (checkout: string) => Promise<LargeFileMode>;
   // No `siblingPush`. There was one, and it could not be reached: a session records
   // `workBranchPush` only after a submission, which needs a `workBranch`, which needs a
   // bind — and this function runs only when the session has no `boundRoot` at all, which
@@ -424,7 +430,7 @@ export async function repinBoundWorkspace(
   review: Review,
   recorded: string,
   deps: Pick<BoundWorkspaceDeps, "gitFor" | "snapshotRecordedAt"> &
-    Partial<Pick<BoundWorkspaceDeps, "placementFor" | "markReplacedCheckout">>,
+    Partial<Pick<BoundWorkspaceDeps, "placementFor" | "markReplacedCheckout" | "checkoutModeOf">>,
 ): Promise<BoundWorkspace> {
   if (review.postTarget === undefined && review.retrospective !== true) {
     return { boundRoot: recorded };
@@ -436,8 +442,17 @@ export async function repinBoundWorkspace(
   // A re-pin that REPLACES the checkout creates a new one, so it runs under the project's
   // large-file mode exactly as the first bind did. Read only here, past every early return:
   // a branch binding or an unpinned review never asks.
+  //
+  // …unless nobody has chosen (`ask`, or a settings read that failed): then the replacement
+  // keeps the mode the checkout it replaces has. The question is a preparation's to ask,
+  // never a re-pin's to answer, and reading `ask` as download would quietly start fetching
+  // every large file in a checkout the reviewer chose to skip them in.
   const placement = await deps.placementFor?.(review.repositoryRoot).catch(() => undefined);
-  const largeFiles = placement === undefined ? "download" : checkoutLargeFileMode(placement);
+  const chosen = placement?.largeFiles;
+  const largeFiles: LargeFileMode =
+    chosen === "download" || chosen === "skip"
+      ? chosen
+      : ((await deps.checkoutModeOf?.(recorded).catch(() => undefined)) ?? "download");
   const mark = deps.markReplacedCheckout;
   const { created, warning } = await ensurePrWorktree(
     deps.gitFor(review.repositoryRoot),
