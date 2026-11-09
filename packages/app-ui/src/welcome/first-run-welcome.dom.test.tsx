@@ -432,8 +432,8 @@ describe("FirstRunWelcome", () => {
     expect(git?.textContent).toContain("2.51.0");
     // The row's heading is the tool's name alone — "Git", as every tool row is found by — and
     // the version reads beside it, not inside the heading's name.
-    expect(screen.getByRole("heading", { name: "Git", exact: true })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Git LFS", exact: true })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Git" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Git LFS" })).toBeTruthy();
     expect(git?.textContent).not.toContain("Required");
     expect(within(git as HTMLElement).queryByRole("button", { name: "Install for me" })).toBeNull();
 
