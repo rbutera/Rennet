@@ -205,6 +205,7 @@ import {
 import { type PromptContextFile, SESSION_BRIEFING_FILE } from "@rennet/prompts";
 import type {
   CodingHarnessSelection,
+  CommandOutput,
   ComposedHandoffBundle,
   ConventionCatalogue,
   CouncilHarnessId,
@@ -1422,8 +1423,12 @@ export interface RennetServer {
   readonly wsPort: number;
   /** The host the WS listener bound (`127.0.0.1` by default, or the configured `daemon.listen.host`, #380). */
   readonly wsHost: string;
-  /** Quiesce live turns, close the watcher, close rehydration, close the store, close the WS listener. Idempotent. */
-  readonly shutdown: () => void;
+  /**
+   * Quiesce live turns, close the watcher, close rehydration, close the store, close the WS
+   * listener, and abort every running `tools.install`. Idempotent. Settles once every aborted
+   * installer has ended; the rest of the shutdown is synchronous or fire-and-forget as before.
+   */
+  readonly shutdown: () => Promise<void>;
   /**
    * The boards runtime for a review project (B4) — one embedded board service per
    * project root, its appends broadcast on the WS push path (raw to loopback,
@@ -2158,8 +2163,38 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return repoUsesLfs(root);
   }
 
-  /** The running `tools.install` runs, by command id, so `tools.cancelInstall` can stop one. */
-  const toolInstalls = new Map<string, AbortController>();
+  /**
+   * The running `tools.install` runs, ONE per tool and locus. A second Install for me for the
+   * same tool on the same machine — a second window, or a double click — JOINS the run that is
+   * already going instead of starting a second Homebrew: it hears the output so far and the
+   * rest as it streams, under its own command id, and gets the same result. Any command id of
+   * a run cancels it, and shutting the server down aborts every run and waits for each to end,
+   * so no installer outlives the daemon that started it.
+   */
+  interface ToolInstallRun {
+    readonly controller: AbortController;
+    readonly commandIds: Set<string>;
+    /** What has streamed so far, for a command that joins late. Capped: the tail is kept. */
+    readonly streamed: { stream: "stdout" | "stderr"; chunk: string }[];
+    streamedBytes: number;
+    readonly result: Promise<CommandOutput<"tools.install">["result"]>;
+  }
+  const toolInstallRuns = new Map<string, ToolInstallRun>();
+  const TOOL_INSTALL_REPLAY_CAP = 64_000;
+  let toolInstallsClosed = false;
+  const toolInstallKey = (tool: SourceControlToolId, locus: Locus): string =>
+    `${tool}@${locus.kind === "wsl" ? `wsl:${locus.distro}` : "host"}`;
+
+  function emitToolInstallOutput(
+    commandId: string,
+    tool: SourceControlToolId,
+    stream: "stdout" | "stderr",
+    chunk: string,
+  ): void {
+    const event = { kind: "tool-install-output", tool, stream, chunk } as const;
+    options.broadcastProgress?.(commandId, event);
+    wsListener?.broadcastProgress(commandId, event);
+  }
 
   /**
    * Install a missing source-control tool on one locus (source-control-tooling spec, 2.4):
@@ -2170,84 +2205,133 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * A successful install clears every recorded front-door checkout failure, so the next bind
    * attempts the checkout instead of reporting the failure the install just fixed.
    */
-  async function installSourceControlTool(input: {
+  function installSourceControlTool(input: {
     readonly tool: SourceControlToolId;
     readonly locus: Locus;
     readonly commandId: string;
-  }) {
-    const controller = new AbortController();
-    toolInstalls.get(input.commandId)?.abort();
-    toolInstalls.set(input.commandId, controller);
-    try {
-      const plan = await resolveInstallPlan(input.tool, {
-        ...options.sourceControl?.installPlanDeps,
-        ...(input.locus.kind === "wsl" ? { platform: "linux" as const } : {}),
-      });
-      const result = await runInstallPlan(plan, {
-        onOutput: (chunk, stream) => {
-          const event = { kind: "tool-install-output", tool: input.tool, stream, chunk } as const;
-          options.broadcastProgress?.(input.commandId, event);
-          wsListener?.broadcastProgress(input.commandId, event);
-        },
-        reprobe: async () => {
-          const tools = await detectSourceControlOnLocus(input.locus);
-          const tool = tools.find((entry) => entry.id === input.tool);
-          if (tool === undefined) {
-            throw new Error(`${input.tool} could not be checked after the install.`);
-          }
-          return sourceControlRow(tool);
-        },
-        signal: controller.signal,
-      });
-      if (result.status === "installed") {
-        for (const reviewId of [...frontDoorWorktrees.keys()]) clearFrontDoorFailure(reviewId);
-        // Git LFS on the host: skip-mode checkouts clean large files on add again.
-        if (
-          input.tool === "git-lfs" &&
-          input.locus.kind === "host" &&
-          result.probe.status === "available"
-        ) {
-          largeFilesNowCleanOnAdd();
+  }): Promise<CommandOutput<"tools.install">["result"]> {
+    const key = toolInstallKey(input.tool, input.locus);
+    const running = toolInstallRuns.get(key);
+    if (running !== undefined) {
+      if (!running.commandIds.has(input.commandId)) {
+        running.commandIds.add(input.commandId);
+        for (const { stream, chunk } of running.streamed) {
+          emitToolInstallOutput(input.commandId, input.tool, stream, chunk);
         }
       }
-      if (result.status === "manual") {
-        if (result.plan.plan !== "manual") throw new Error("a manual result carries a manual plan");
-        return {
-          status: "manual" as const,
-          command: result.plan.command,
-          docsUrl: result.plan.docsUrl,
-          probe: result.probe,
-        };
+      return running.result;
+    }
+    const controller = new AbortController();
+    // A server already shutting down starts nothing: the run is cancelled before its first step.
+    if (toolInstallsClosed) controller.abort("Rennet is shutting down.");
+    const commandIds = new Set([input.commandId]);
+    const streamed: ToolInstallRun["streamed"] = [];
+    const run: ToolInstallRun = {
+      controller,
+      commandIds,
+      streamed,
+      streamedBytes: 0,
+      result: Promise.resolve().then(() =>
+        runSourceControlInstall(input, controller.signal, (stream, chunk) => {
+          streamed.push({ stream, chunk });
+          run.streamedBytes += chunk.length;
+          while (run.streamedBytes > TOOL_INSTALL_REPLAY_CAP && streamed.length > 1) {
+            run.streamedBytes -= streamed.shift()?.chunk.length ?? 0;
+          }
+          for (const commandId of commandIds) {
+            emitToolInstallOutput(commandId, input.tool, stream, chunk);
+          }
+        }),
+      ),
+    };
+    toolInstallRuns.set(key, run);
+    void run.result
+      .finally(() => {
+        if (toolInstallRuns.get(key) === run) toolInstallRuns.delete(key);
+      })
+      .catch(() => undefined);
+    return run.result;
+  }
+
+  async function runSourceControlInstall(
+    input: { readonly tool: SourceControlToolId; readonly locus: Locus },
+    signal: AbortSignal,
+    onOutput: (stream: "stdout" | "stderr", chunk: string) => void,
+  ): Promise<CommandOutput<"tools.install">["result"]> {
+    const plan = await resolveInstallPlan(input.tool, {
+      ...options.sourceControl?.installPlanDeps,
+      ...(input.locus.kind === "wsl" ? { platform: "linux" as const } : {}),
+    });
+    const result = await runInstallPlan(plan, {
+      onOutput: (chunk, stream) => onOutput(stream, chunk),
+      reprobe: async () => {
+        const tools = await detectSourceControlOnLocus(input.locus);
+        const tool = tools.find((entry) => entry.id === input.tool);
+        if (tool === undefined) {
+          throw new Error(`${input.tool} could not be checked after the install.`);
+        }
+        return sourceControlRow(tool);
+      },
+      signal,
+    });
+    if (result.status === "installed") {
+      for (const reviewId of [...frontDoorWorktrees.keys()]) clearFrontDoorFailure(reviewId);
+      // Git LFS on the host: skip-mode checkouts clean large files on add again.
+      if (
+        input.tool === "git-lfs" &&
+        input.locus.kind === "host" &&
+        result.probe.status === "available"
+      ) {
+        largeFilesNowCleanOnAdd();
       }
-      if (result.status === "installed") {
-        return {
-          status: "installed" as const,
-          command: result.plan.command,
-          output: result.output,
-          probe: result.probe,
-        };
-      }
+    }
+    if (result.status === "manual") {
+      if (result.plan.plan !== "manual") throw new Error("a manual result carries a manual plan");
       return {
-        status: "failed" as const,
+        status: "manual" as const,
         command: result.plan.command,
-        message: result.message,
-        failedCommand: result.failedCommand,
-        exitCode: result.exitCode,
-        ...(result.cancelled === true ? { cancelled: true as const } : {}),
+        docsUrl: result.plan.docsUrl,
+        probe: result.probe,
+      };
+    }
+    if (result.status === "installed") {
+      return {
+        status: "installed" as const,
+        command: result.plan.command,
         output: result.output,
         probe: result.probe,
       };
-    } finally {
-      if (toolInstalls.get(input.commandId) === controller) toolInstalls.delete(input.commandId);
     }
+    return {
+      status: "failed" as const,
+      command: result.plan.command,
+      message: result.message,
+      failedCommand: result.failedCommand,
+      exitCode: result.exitCode,
+      ...(result.cancelled === true ? { cancelled: true as const } : {}),
+      output: result.output,
+      probe: result.probe,
+    };
   }
 
-  /** Stop the `tools.install` run `commandId` names; `false` when none is running. */
+  /** Stop the `tools.install` run `commandId` names (any command that started or joined it);
+   *  `false` when none is running. */
   function cancelSourceControlInstall(commandId: string): boolean {
-    const controller = toolInstalls.get(commandId);
-    if (controller === undefined) return false;
-    controller.abort();
-    return true;
+    for (const run of toolInstallRuns.values()) {
+      if (!run.commandIds.has(commandId)) continue;
+      run.controller.abort("Cancelled by reviewer.");
+      return true;
+    }
+    return false;
+  }
+
+  /** Abort every running install and wait for each to end: its process group is gone (or
+   *  SIGKILLed) and its result settled. Later installs are cancelled before they start. */
+  function stopToolInstalls(): Promise<void> {
+    toolInstallsClosed = true;
+    const runs = [...toolInstallRuns.values()];
+    for (const run of runs) run.controller.abort("Rennet is shutting down.");
+    return Promise.allSettled(runs.map((run) => run.result)).then(() => undefined);
   }
 
   /**
@@ -7266,15 +7350,19 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   });
 
   let didShutdown = false;
-  const shutdown = (): void => {
+  let shutdownSettled: Promise<void> = Promise.resolve();
+  const shutdown = (): Promise<void> => {
     // An in-flight device-flow poll must not outlive the server.
     deviceFlow?.controller.abort();
     deviceFlow = null;
     // The old before-quit order (#251 criterion 4): signal in-flight turns, close the
     // watcher, close rehydration, close the store. Idempotent — Electron can fire quit twice.
     // The WS listener closes last, dropping every client socket.
-    if (didShutdown) return;
+    if (didShutdown) return shutdownSettled;
     didShutdown = true;
+    // Installers first: each is aborted now, and the returned promise settles once every one
+    // has ended, so a caller that waits (the daemon does) never leaves Homebrew running.
+    shutdownSettled = stopToolInstalls();
     t3Sidecar.stopSync();
     for (const controller of sessionPreparations.values()) {
       controller.abort("Rennet is shutting down.");
@@ -7299,6 +7387,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // Same: a listener that never started must not stop the shutdown sequence.
       });
     void wsListener?.close();
+    return shutdownSettled;
   };
   return {
     dispatch,

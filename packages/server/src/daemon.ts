@@ -84,9 +84,17 @@ export function resolveDaemonConfig(
 
 export interface RunningDaemon {
   readonly info: DaemonInfo;
-  /** Shut the server down and remove the claim. Idempotent. */
-  readonly stop: () => void;
+  /**
+   * Shut the server down and remove the claim. Idempotent. Settles once every installer the
+   * server was running has ended (or `STOP_WAIT_MS` has passed), so a caller that exits the
+   * process after it leaves no Homebrew run behind.
+   */
+  readonly stop: () => Promise<void>;
 }
+
+/** How long a stopping daemon waits for its installers to end before it exits anyway. An
+ *  aborted installer gets SIGTERM, then SIGKILL two seconds later, so this is the backstop. */
+const STOP_WAIT_MS = 5_000;
 
 /**
  * Start the server, publish the claim, and (unless `installSignalHandlers` is false) shut
@@ -103,13 +111,27 @@ export async function runDaemon(
   // `stop` closes the server, so it has to exist before the listener can serve `/shutdown` —
   // and the listener starts inside `createRennetServer`. The shutdown is therefore late-bound
   // through this holder, which is assigned in the same synchronous run as the claim write.
-  let shutdownServer: (() => void) | null = null;
-  let stopped = false;
-  const stop = (): void => {
-    if (stopped) return;
-    stopped = true;
-    shutdownServer?.();
+  let shutdownServer: (() => Promise<void>) | null = null;
+  let stopping: Promise<void> | null = null;
+  const stop = (): Promise<void> => {
+    if (stopping !== null) return stopping;
+    const settled = shutdownServer?.() ?? Promise.resolve();
     removeDaemonFile(config.dataDir, process.pid);
+    stopping = new Promise<void>((resolve) => {
+      const backstop = setTimeout(resolve, STOP_WAIT_MS);
+      backstop.unref?.();
+      void settled
+        .catch(() => undefined)
+        .finally(() => {
+          clearTimeout(backstop);
+          resolve();
+        });
+    });
+    return stopping;
+  };
+  /** Stop, then end the process once the stop has settled. */
+  const stopAndExit = (): void => {
+    void stop().finally(() => process.exit(0));
   };
   // A shutdown REQUEST ends the process, exactly as SIGTERM does: the launcher is waiting on
   // this pid to exit so the installer can replace the bundle it runs from. A daemon driven
@@ -130,8 +152,8 @@ export async function runDaemon(
     hostBundlePath: config.hostBundlePath,
     t3BundlePath: config.t3BundlePath,
     onShutdownRequest: () => {
-      stop();
-      if (exitOnShutdownRequest) process.exit(0);
+      if (exitOnShutdownRequest) stopAndExit();
+      else void stop();
     },
   });
   shutdownServer = () => server.shutdown();
@@ -147,10 +169,7 @@ export async function runDaemon(
   writeDaemonFile(config.dataDir, info);
 
   if (options.installSignalHandlers !== false) {
-    const onSignal = (): void => {
-      stop();
-      process.exit(0);
-    };
+    const onSignal = (): void => stopAndExit();
     process.once("SIGTERM", onSignal);
     process.once("SIGINT", onSignal);
   }

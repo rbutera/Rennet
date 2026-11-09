@@ -1,10 +1,18 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DetectedSourceControlTool } from "@rennet/adapters";
 import type { CommandOutput, ProjectProgressEvent } from "@rennet/protocol";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRennetServer } from "./create-server";
 
 /**
@@ -15,7 +23,7 @@ import { createRennetServer } from "./create-server";
  */
 
 const dirs: string[] = [];
-const shutdowns: (() => void)[] = [];
+const shutdowns: (() => unknown)[] = [];
 afterEach(() => {
   for (const shutdown of shutdowns.splice(0)) shutdown();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -53,7 +61,35 @@ async function installer(brew: string, git: string) {
     },
   });
   shutdowns.push(server.shutdown);
-  return { server, events };
+  return { server, events, bin, installed };
+}
+
+/** Wait until the stub installer has said `line` under `commandId`. */
+async function heard(
+  events: { commandId: string; event: ProjectProgressEvent }[],
+  commandId: string,
+  line: string,
+): Promise<void> {
+  await vi.waitFor(
+    () =>
+      expect(
+        events
+          .filter((entry) => entry.commandId === commandId)
+          .map((entry) => (entry.event as unknown as { chunk: string }).chunk)
+          .join(""),
+      ).toContain(line),
+    { timeout: 10_000, interval: 10 },
+  );
+}
+
+/** A brew that says it started, counts its runs, sleeps, and only then installs. */
+const SLEEPING_BREW =
+  'echo "==> starting"; echo run >> "$(dirname "$0")/runs"; sleep 2; touch "$(dirname "$0")/installed"';
+
+function runsOf(bin: string): number {
+  return existsSync(join(bin, "runs"))
+    ? readFileSync(join(bin, "runs"), "utf8").split("\n").filter(Boolean).length
+    : 0;
 }
 
 describe("tools.install (Install for me)", () => {
@@ -145,6 +181,90 @@ describe("tools.install (Install for me)", () => {
     });
     expect(events.filter((entry) => entry.commandId === commandId)).toEqual([]);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "shutting the server down stops a running install: nothing more is installed, and it says cancelled",
+    async () => {
+      const { server, events, installed } = await installer(SLEEPING_BREW, "exit 0");
+      const commandId = randomUUID();
+      const pending = server.dispatch("tools.install", {
+        tool: "git-lfs",
+        locus: { kind: "host" },
+        commandId,
+      }) as Promise<CommandOutput<"tools.install">>;
+      await heard(events, commandId, "==> starting");
+      await server.shutdown();
+      const { result } = await pending;
+      expect(result.status).toBe("failed");
+      if (result.status !== "failed") throw new Error("did not fail");
+      expect(result.cancelled).toBe(true);
+      // Past the moment the sleeping installer would have finished: it never did.
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      expect(existsSync(installed)).toBe(false);
+    },
+    20_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "a second Install for me for the same tool joins the running one: one brew, both hear it",
+    async () => {
+      const { server, events, bin } = await installer(SLEEPING_BREW, "exit 0");
+      const first = randomUUID();
+      const second = randomUUID();
+      const install = (commandId: string) =>
+        server.dispatch("tools.install", {
+          tool: "git-lfs",
+          locus: { kind: "host" },
+          commandId,
+        }) as Promise<CommandOutput<"tools.install">>;
+      const one = install(first);
+      await heard(events, first, "==> starting");
+      const two = install(second);
+      const [a, b] = await Promise.all([one, two]);
+      expect(a.result.status).toBe("installed");
+      expect(b.result).toEqual(a.result);
+      expect(runsOf(bin)).toBe(1);
+      // The command that joined late heard what had already streamed, under its own id.
+      await heard(events, second, "==> starting");
+      await heard(events, second, "$ git lfs install");
+    },
+    20_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "tools.cancelInstall stops a RUNNING install, by any command that started or joined it",
+    async () => {
+      const { server, events, installed } = await installer(SLEEPING_BREW, "exit 0");
+      const first = randomUUID();
+      const joined = randomUUID();
+      const pending = server.dispatch("tools.install", {
+        tool: "git-lfs",
+        locus: { kind: "host" },
+        commandId: first,
+      }) as Promise<CommandOutput<"tools.install">>;
+      await heard(events, first, "==> starting");
+      const alsoPending = server.dispatch("tools.install", {
+        tool: "git-lfs",
+        locus: { kind: "host" },
+        commandId: joined,
+      }) as Promise<CommandOutput<"tools.install">>;
+      expect(await server.dispatch("tools.cancelInstall", { commandId: joined })).toEqual({
+        cancelled: true,
+      });
+      const [{ result }, { result: same }] = await Promise.all([pending, alsoPending]);
+      expect(result.status).toBe("failed");
+      if (result.status !== "failed") throw new Error("did not fail");
+      expect(result.cancelled).toBe(true);
+      expect(same).toEqual(result);
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      expect(existsSync(installed)).toBe(false);
+      // Nothing is running any more, so a cancel finds nothing.
+      expect(await server.dispatch("tools.cancelInstall", { commandId: first })).toEqual({
+        cancelled: false,
+      });
+    },
+    20_000,
+  );
 
   it("tools.cancelInstall says false when nothing by that id is running", async () => {
     const { server } = await installer("exit 0", "exit 0");

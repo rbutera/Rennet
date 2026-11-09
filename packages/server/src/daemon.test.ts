@@ -25,7 +25,7 @@ describe("daemon argument parsing", () => {
 const CONFIG: DaemonConfig = { dataDir: "/tmp/rennet-acme", serverVersion: "1.2.2", env: {} };
 const RUNNING: RunningDaemon = {
   info: { pid: 1, wsPort: 1, protocolVersion: 1, version: "1.2.2", startedAt: "" },
-  stop: () => undefined,
+  stop: async () => undefined,
 };
 
 describe("startDaemon: skip mode reaches every daemon child (large-file-checkout)", () => {
