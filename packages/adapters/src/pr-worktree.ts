@@ -359,9 +359,69 @@ export async function worktreeForBranch(
  */
 export type WorktreeClaim = boolean | { readonly sessionId: string };
 
+/**
+ * How a review checkout treats Git LFS content (large-file-checkout spec, design D4).
+ *
+ * `download` is git as the user configured it: the LFS filter runs and fetches the real
+ * files. `skip` leaves LFS pointer files in place and works even when `git-lfs` is not
+ * installed and the user's config marks the filter as required. Absent means `download`,
+ * which is the behaviour every caller had before the option existed.
+ */
+export type LargeFileMode = "download" | "skip";
+
+/** What one checkout-writing git call takes for a large-file mode: `-c` overrides placed
+ *  before the subcommand, and extra environment. Per invocation only, so the user's git
+ *  config is never written. */
+export interface LargeFileGitInvocation {
+  readonly config: readonly string[];
+  readonly env?: Readonly<Record<string, string>>;
+}
+
+/**
+ * The per-call overrides for `mode`.
+ *
+ * Skip blanks both LFS filter commands and clears `required`, so git checks the pointer
+ * text out verbatim instead of starting `git-lfs`; `GIT_LFS_SKIP_SMUDGE=1` covers a
+ * `git-lfs` that is started anyway (a hook, or a filter configured under another name).
+ */
+export function largeFileGitInvocation(mode: LargeFileMode | undefined): LargeFileGitInvocation {
+  if (mode !== "skip") return { config: [] };
+  return {
+    config: [
+      "-c",
+      "filter.lfs.process=",
+      "-c",
+      "filter.lfs.smudge=",
+      "-c",
+      "filter.lfs.required=false",
+    ],
+    env: { GIT_LFS_SKIP_SMUDGE: "1" },
+  };
+}
+
+/** Run one checkout-writing git call under `mode`. Download passes the arguments and
+ *  options through untouched, so a runner sees exactly what it saw before. */
+function gitWithLargeFiles(
+  git: GitExec,
+  root: string,
+  arguments_: string[],
+  mode: LargeFileMode | undefined,
+): Promise<string> {
+  const invocation = largeFileGitInvocation(mode);
+  if (invocation.env === undefined) return git(root, [...invocation.config, ...arguments_]);
+  return git(root, [...invocation.config, ...arguments_], { env: invocation.env });
+}
+
 export interface EnsureBranchWorktreeOptions {
   /** The claim oracle. Absent ⇒ `() => true`, which refuses. */
   readonly claimed?: (record: WorktreeRecord) => WorktreeClaim;
+  /** How the checkout treats Git LFS content. Absent ⇒ `download`. */
+  readonly largeFiles?: LargeFileMode;
+}
+
+export interface EnsureSiblingWorktreeOptions {
+  /** How the checkout treats Git LFS content. Absent ⇒ `download`. */
+  readonly largeFiles?: LargeFileMode;
 }
 
 /** What a worktree has out, as a person would say it. `rev-parse --abbrev-ref HEAD` prints
@@ -472,7 +532,7 @@ export async function ensureBranchWorktree(
     // claims is somebody's live workspace, whatever it has out.
     const claim = options.claimed?.(registered) ?? true;
     if (claim === false) {
-      await git(registered.path, ["checkout", branch]);
+      await gitWithLargeFiles(git, registered.path, ["checkout", branch], options.largeFiles);
       return { path: worktreePath, created: false, repaired: true };
     }
     throw new Error(
@@ -482,7 +542,12 @@ export async function ensureBranchWorktree(
     );
   }
   await mkdir(join(worktreePath, ".."), { recursive: true });
-  await git(cloneRoot, ["worktree", "add", worktreePath, branch]);
+  await gitWithLargeFiles(
+    git,
+    cloneRoot,
+    ["worktree", "add", worktreePath, branch],
+    options.largeFiles,
+  );
   return { path: worktreePath, created: true };
 }
 
@@ -670,7 +735,9 @@ export async function ensureSiblingWorktree(
   cloneRoot: string,
   worktreePath: string,
   branch: string,
+  options: EnsureSiblingWorktreeOptions = {},
 ): Promise<{ path: string; created: boolean; workBranch: string }> {
+  const largeFiles = options.largeFiles;
   const workBranch = siblingBranchFor(branch);
   const siblingRef = `refs/heads/${workBranch}`;
   const branchRef = `refs/heads/${branch}`;
@@ -712,14 +779,29 @@ export async function ensureSiblingWorktree(
   if (await refExists(git, cloneRoot, siblingRef)) {
     if (await siblingIsCollectable(git, cloneRoot, workBranch, branch)) {
       await git(cloneRoot, ["branch", "-D", workBranch]);
-      await git(cloneRoot, ["worktree", "add", "-b", workBranch, worktreePath, branchRef]);
+      await gitWithLargeFiles(
+        git,
+        cloneRoot,
+        ["worktree", "add", "-b", workBranch, worktreePath, branchRef],
+        largeFiles,
+      );
     } else {
-      await git(cloneRoot, ["worktree", "add", worktreePath, workBranch]);
+      await gitWithLargeFiles(
+        git,
+        cloneRoot,
+        ["worktree", "add", worktreePath, workBranch],
+        largeFiles,
+      );
     }
     return { path: worktreePath, created: true, workBranch };
   }
   // 4. Nothing here: fork the sibling from the branch's head.
-  await git(cloneRoot, ["worktree", "add", "-b", workBranch, worktreePath, branchRef]);
+  await gitWithLargeFiles(
+    git,
+    cloneRoot,
+    ["worktree", "add", "-b", workBranch, worktreePath, branchRef],
+    largeFiles,
+  );
   return { path: worktreePath, created: true, workBranch };
 }
 
@@ -786,6 +868,8 @@ export async function ensurePrWorktree(
   options?: {
     /** Rennet's pull-request index records a snapshot at this exact path. */
     readonly recordedSnapshot?: boolean;
+    /** How the checkout treats Git LFS content. Absent ⇒ `download`. */
+    readonly largeFiles?: LargeFileMode;
   },
 ): Promise<{ path: string; created: boolean }> {
   if (existsSync(join(worktreePath, ".git"))) {
@@ -808,7 +892,12 @@ export async function ensurePrWorktree(
     await rm(worktreePath, { recursive: true, force: true });
   }
   await mkdir(join(worktreePath, ".."), { recursive: true });
-  await git(cloneRoot, ["worktree", "add", "--detach", worktreePath, headOid]);
+  await gitWithLargeFiles(
+    git,
+    cloneRoot,
+    ["worktree", "add", "--detach", worktreePath, headOid],
+    options?.largeFiles,
+  );
   return { path: worktreePath, created: true };
 }
 

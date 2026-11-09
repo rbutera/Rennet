@@ -118,6 +118,9 @@ export type GitExec = (
     readonly input?: Buffer | Readable;
     readonly reject?: boolean;
     readonly encoding?: GitStdoutEncoding;
+    /** Extra environment for THIS call, layered over the inherited environment (never
+     *  replacing it). On a WSL locus the names are forwarded through `WSLENV`. */
+    readonly env?: Readonly<Record<string, string>>;
   },
 ) => Promise<string>;
 
@@ -134,6 +137,7 @@ export function execaGitFor(locus: Locus): GitExec {
     const result = await execa(file, [...args], {
       ...(cwd === undefined ? {} : { cwd }),
       ...(options?.input === undefined ? {} : { input: options.input }),
+      ...(options?.env === undefined ? {} : { env: callEnv(locus, options.env) }),
       reject: options?.reject ?? true,
       shell: false,
       stripFinalNewline: false,
@@ -141,6 +145,21 @@ export function execaGitFor(locus: Locus): GitExec {
     });
     return result.stdout;
   };
+}
+
+/**
+ * The per-call environment for one git invocation. execa layers it over the inherited
+ * environment (`extendEnv` stays on), so the daemon's resolved PATH and everything else
+ * survives. `wsl.exe` forwards only the names listed in `WSLENV`, so a WSL locus appends
+ * these names to whatever the daemon already forwards.
+ */
+function callEnv(locus: Locus, env: Readonly<Record<string, string>>): Record<string, string> {
+  if (locus.kind !== "wsl") return { ...env };
+  const names = Object.keys(env);
+  if (names.length === 0) return {};
+  const inherited = (process.env.WSLENV ?? "").split(":").filter((entry) => entry.length > 0);
+  const forwarded = [...inherited, ...names.filter((name) => !inherited.includes(name))];
+  return { ...env, WSLENV: forwarded.join(":") };
 }
 
 /** Build the fixed-locus runner used by one repo-facing composition seam. */
