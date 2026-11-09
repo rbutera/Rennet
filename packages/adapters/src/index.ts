@@ -324,6 +324,17 @@ export {
 } from "./harness-discovery";
 export { readKiroSpec, readKiroSpecSource, selectedKiroFeatureName } from "./kiro-spec-reader";
 export {
+  absoluteGitDir,
+  LARGE_FILE_SKIP_CONFIG,
+  LargeFileSkipIndex,
+  largeFileSkipEnv,
+  largeFileSkipIndexPath,
+  largeFileSkipIndexText,
+  largeFileSkipOverridesText,
+  withGitConfigEnv,
+  withLargeFileSkipIndex,
+} from "./large-file-env";
+export {
   activePatchset,
   type BuildReviewContextManifestDeps,
   buildReviewContextManifest,
