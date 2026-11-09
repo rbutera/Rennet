@@ -208,6 +208,15 @@ export {
 } from "./fs-list-dir";
 export { GitCaptureAdapter } from "./git-capture";
 export {
+  type ClassifiedGitFailure,
+  type ClassifyGitFailureOptions,
+  classifyGitFailure,
+  GIT_FAILURE_DETAIL_CAP,
+  type GitFailureAction,
+  type GitFailureKind,
+  type SourceControlToolId,
+} from "./git-failure";
+export {
   type Counts,
   captureRangePatchset,
   DEFAULT_VISIBLE_BYTE_LIMIT,
