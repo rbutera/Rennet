@@ -22,14 +22,19 @@ import {
 } from "./model";
 
 /**
- * The protocol version this build speaks. Version 3 is the context-map kill:
- * the `project.contextMap`/`contextAsk`/`knowledgeDisposition` commands and the
- * knowledge schemas left the wire, and process-run totals dropped the knowledge
- * counts — breaking for a v2 peer, so both ends of the version window move
- * together and a mixed pair fails at the handshake instead of silently dropping
- * frames. (Version 2 owned the aggregate publish-review contract.)
+ * The protocol version this build speaks. Version 4 is review preparation's reliability
+ * work: the `awaiting` preparation state, the `workspace` preparation stage and the
+ * `tool-install-output` progress event, each of which extends a closed union a version-3
+ * decoder rejects. A version-3 peer still connects — the minimum stays at 3 — and the daemon
+ * presents those three in version-3 terms to a connection that negotiated 3
+ * (`preparation-compat.ts`).
+ *
+ * Version 3 was the context-map kill: the `project.contextMap`/`contextAsk`/
+ * `knowledgeDisposition` commands and the knowledge schemas left the wire, which no
+ * translation could serve to a v2 peer, so both ends of the window moved together then.
+ * (Version 2 owned the aggregate publish-review contract.)
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 /** The oldest protocol version this build can still talk to. */
 export const MIN_COMPATIBLE_PROTOCOL_VERSION = 3;
 
