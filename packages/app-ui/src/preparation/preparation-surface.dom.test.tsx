@@ -254,6 +254,23 @@ describe("a stopped preparation is one actionable block", () => {
     await waitFor(() => expect(recorded.installs).toHaveLength(2));
   });
 
+  it("offers the install again when a Retry fails again before any refresh shows it running", async () => {
+    // Codex: the header forgets the block's install only once it SEES the review going again.
+    // A Retry that stops on the same missing tool before the next read goes failed → failed,
+    // and the stale "Git LFS is installed" stayed, with no button.
+    const { user, recorded } = surface(lfsMissing);
+    const failure = await block();
+    await user.click(within(failure).getByRole("button", { name: "Install Git LFS for me" }));
+    await waitFor(() => expect(failure.textContent).toContain("Git LFS is installed"));
+    await user.click(within(failure).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(recorded.retries).toHaveLength(1));
+
+    const again = await block();
+    await waitFor(() => expect(again.textContent).not.toContain("Git LFS is installed"));
+    await user.click(within(again).getByRole("button", { name: "Install Git LFS for me" }));
+    await waitFor(() => expect(recorded.installs).toHaveLength(2));
+  });
+
   it("announces the failure sentence alone, with the install's output as its own polite log", async () => {
     const pending: { release?: () => void } = {};
     const { user } = surface(lfsMissing, {
@@ -741,6 +758,27 @@ describe("the large-file choice while preparation waits on it", () => {
     const download = within(dialog).getByRole("button", { name: /Download large files/ });
     await waitFor(() => expect(document.activeElement).toBe(download));
     // Focus is not an answer: nothing was recorded for the reviewer.
+    expect(recorded.choices).toEqual([]);
+  });
+
+  it("leaves focus on Close when an install lands while the reviewer is on it", async () => {
+    // Codex: Close survives the screen swap, so it keeps focus. Moving focus to Download made
+    // the reviewer's next Enter a Download instead of a dismissal.
+    const install = deferred();
+    const { user, recorded } = surface(awaiting(false), {
+      review: true,
+      installGate: install.promise,
+    });
+    const dialog = await choiceDialog();
+    await user.click(within(dialog).getByRole("button", { name: /Download large files/ }));
+    await user.click(await within(dialog).findByRole("button", { name: "Install for me" }));
+    await waitFor(() => expect(recorded.installs).toHaveLength(1));
+    const close = within(dialog).getByRole("button", { name: "Close" });
+    close.focus();
+
+    install.resolve();
+    await waitFor(() => expect(dialog.textContent).toContain("Git LFS is installed"));
+    expect(document.activeElement).toBe(close);
     expect(recorded.choices).toEqual([]);
   });
 

@@ -6,7 +6,7 @@ import { FailureDetail } from "../components/failure-detail";
 import { InstallForMe, TOOL_NAME } from "../components/install-for-me";
 import { useMutation } from "../data";
 import { useScopedState } from "../data/scoped-state";
-import { useInstalledByOwner } from "../data/tool-install";
+import { useForgetSettledInstalls, useInstalledByOwner } from "../data/tool-install";
 import { settingsPath } from "../routes/url";
 import { ActionFailureLine, useActionFailure } from "./action-failure";
 import { preparationFailureCopy } from "./failure-copy";
@@ -70,10 +70,15 @@ export function PreparationFailure({
   );
   const { locus, failed: locusFailed, retry: rereadLocus } = useProjectLocus(session.projectId);
   const sessionId = session.id;
+  const forgetInstall = useForgetSettledInstalls(failureInstallOwner(sessionId));
   const retryNow = () => {
     retryFailureHandle.set(undefined);
     retry
       .mutate({ sessionId, commandId: newCommandId() })
+      // The daemon took the Retry: what Install for me came to answered the stop before it.
+      // Forgotten here, not only when the header sees the review going again, because a
+      // retry can fail again before any refresh shows it running (failed → failed).
+      .then(() => forgetInstall())
       .catch(() => retryFailureHandle.set(RETRY_FAILED));
   };
   const failed = preparation.status === "failed";
