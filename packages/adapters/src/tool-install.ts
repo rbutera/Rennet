@@ -180,10 +180,35 @@ export type InstallRunResult<P> =
 /** How much installer output the result keeps. The tail, because the verdict is last. */
 export const INSTALL_OUTPUT_CAP = 64_000;
 
-function capOutput(text: string): string {
-  if (text.length <= INSTALL_OUTPUT_CAP) return text;
-  const omitted = text.length - INSTALL_OUTPUT_CAP;
-  return `… ${omitted} characters of earlier output omitted …\n${text.slice(-INSTALL_OUTPUT_CAP)}`;
+/**
+ * The installer's output, kept to its tail, counting honestly what it let go of. The
+ * running buffer is trimmed whenever it doubles the cap, so the omitted count is a
+ * running total, not a guess made from what is left.
+ */
+class OutputTail {
+  private text = "";
+  private discarded = 0;
+
+  append(chunk: string): void {
+    this.text += chunk;
+    if (this.text.length > INSTALL_OUTPUT_CAP * 2) this.drop(this.text.length - INSTALL_OUTPUT_CAP);
+  }
+
+  /** The kept tail, behind a marker naming every character dropped along the way. */
+  value(): string {
+    if (this.text.length > INSTALL_OUTPUT_CAP) this.drop(this.text.length - INSTALL_OUTPUT_CAP);
+    if (this.discarded === 0) return this.text;
+    return `… ${this.discarded} characters of earlier output omitted …\n${this.text}`;
+  }
+
+  private drop(count: number): void {
+    let cut = count;
+    // Never split a surrogate pair: its second half alone is not a character.
+    const next = this.text.charCodeAt(cut);
+    if (next >= 0xdc00 && next <= 0xdfff) cut += 1;
+    this.discarded += cut;
+    this.text = this.text.slice(cut);
+  }
 }
 
 function displayStep(step: InstallStep): string {
@@ -206,18 +231,15 @@ export async function runInstallPlan<P>(
     ...options.env,
     PATH: [plan.pathPrefix, inheritedPath].filter((part) => part.length > 0).join(hostDelimiter),
   };
-  let output = "";
-  const record = (stream: InstallOutputStream) => (chunk: Buffer | string) => {
-    const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-    output += text;
-    if (output.length > INSTALL_OUTPUT_CAP * 2) output = output.slice(-INSTALL_OUTPUT_CAP);
+  const output = new OutputTail();
+  const record = (stream: InstallOutputStream) => (text: string) => {
+    output.append(text);
     options.onOutput?.(text, stream);
   };
 
   for (const step of plan.steps) {
     const line = `$ ${displayStep(step)}\n`;
-    output += line;
-    options.onOutput?.(line, "stdout");
+    record("stdout")(line);
     let exitCode: number | null = null;
     let failed = false;
     try {
@@ -229,6 +251,10 @@ export async function runInstallPlan<P>(
         buffer: false,
         ...(options.signal === undefined ? {} : { cancelSignal: options.signal }),
       });
+      // Decode as text in the stream, so a multi-byte character split across two chunks
+      // arrives whole instead of as two replacement characters.
+      child.stdout?.setEncoding("utf8");
+      child.stderr?.setEncoding("utf8");
       child.stdout?.on("data", record("stdout"));
       child.stderr?.on("data", record("stderr"));
       const result = await child;
@@ -247,10 +273,10 @@ export async function runInstallPlan<P>(
         message: `${TOOL_LABEL[plan.tool]} couldn't be installed.`,
         failedCommand: displayStep(step),
         exitCode,
-        output: capOutput(output),
+        output: output.value(),
         probe: await options.reprobe(),
       };
     }
   }
-  return { status: "installed", plan, output: capOutput(output), probe: await options.reprobe() };
+  return { status: "installed", plan, output: output.value(), probe: await options.reprobe() };
 }

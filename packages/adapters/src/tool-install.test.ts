@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  INSTALL_OUTPUT_CAP,
   type InstallOutputStream,
   type InstallPlan,
   resolveInstallPlan,
@@ -219,5 +220,29 @@ describe("runInstallPlan", () => {
     expect(chunks).toEqual([]);
     expect(probes).toBe(1);
     expect(existsSync(join(empty, "calls.log"))).toBe(false);
+  });
+
+  it("counts every discarded character in the omitted marker and never splits a character", async () => {
+    const bin = dir("rennet-stub-brew-loud-");
+    // 3 bytes per line ("é\n"), 2 characters: well over twice the cap, in chunks whose
+    // byte boundaries fall inside the two-byte "é".
+    const lines = INSTALL_OUTPUT_CAP * 1.5;
+    script(bin, "brew", `yes 'é' | head -n ${lines}`);
+    const plan = await resolveInstallPlan("git", {
+      platform: "darwin",
+      envPath: bin,
+      brewDirectories: [],
+    });
+    const { result, chunks } = await run(plan, "/bin:/usr/bin");
+    expect(result.status).toBe("installed");
+    const streamed = chunks.map((entry) => entry.chunk).join("");
+    expect(streamed).not.toContain("\uFFFD");
+    expect(streamed.length).toBe("$ brew install git\n".length + lines * 2);
+    expect(streamed.length).toBeGreaterThan(INSTALL_OUTPUT_CAP * 2);
+    if (result.status !== "installed") return;
+    const omitted = streamed.length - INSTALL_OUTPUT_CAP;
+    expect(result.output).toBe(
+      `… ${omitted} characters of earlier output omitted …\n${streamed.slice(-INSTALL_OUTPUT_CAP)}`,
+    );
   });
 });
