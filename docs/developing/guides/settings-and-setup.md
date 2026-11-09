@@ -440,7 +440,11 @@ session's checkouts and writes nothing to the project.
 A mode belongs to the checkout it was created under. A change applies to the
 next checkout Rennet creates, including a pull-request snapshot a re-pin
 replaces; a checkout that is reused, by the same session or a later one, keeps
-the mode it was made with and its pointer files.
+the mode it was made with and its pointer files. A re-pin while the project's
+choice is `ask` is not a checkout anyone can be asked about, so the replacement
+keeps the mode of the checkout it replaces. The replacement's mode is written to
+the skip-mode index before git checks it out, because git hands it the same git
+directory the old checkout had.
 
 Skip mode also covers every later git command a session's processes run in that
 checkout: the seat, chat and round threads, utility turns, and Rennet's own git.
