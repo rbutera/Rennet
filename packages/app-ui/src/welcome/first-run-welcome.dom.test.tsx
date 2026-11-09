@@ -430,6 +430,10 @@ describe("FirstRunWelcome", () => {
     // Git itself reads off the probe too — its proven version, not a fixed "Required" pill.
     const git = document.querySelector<HTMLElement>('article[data-tool="git"]');
     expect(git?.textContent).toContain("2.51.0");
+    // The row's heading is the tool's name alone — "Git", as every tool row is found by — and
+    // the version reads beside it, not inside the heading's name.
+    expect(screen.getByRole("heading", { name: "Git", exact: true })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Git LFS", exact: true })).toBeTruthy();
     expect(git?.textContent).not.toContain("Required");
     expect(within(git as HTMLElement).queryByRole("button", { name: "Install for me" })).toBeNull();
 
@@ -437,7 +441,7 @@ describe("FirstRunWelcome", () => {
     await waitFor(() => expect(installs).toHaveLength(1));
     expect(installs[0]).toMatchObject({ tool: "git-lfs", locus: { kind: "host" } });
     // The re-read probe turns the row available, with the version it now proves.
-    await waitFor(() => expect(lfsRow()?.querySelector("h3")?.textContent).toContain("3.6.1"));
+    await waitFor(() => expect(lfsRow()?.querySelector("code")?.textContent).toBe("3.6.1"));
     expect(lfsRow()?.textContent).toContain("Available");
   });
 

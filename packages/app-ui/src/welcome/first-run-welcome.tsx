@@ -441,12 +441,12 @@ function ToolRow({
     >
       <span className={TOOL_MARK}>{harness ? <AgentMark id={id} /> : <ToolMark id={id} />}</span>
       <div>
-        <h3 className="m-0 text-sm font-semibold">
-          {name}
-          {version ? (
-            <code className="ml-2.5 text-2xs font-normal text-ink-faint">{version}</code>
-          ) : null}
-        </h3>
+        {/* The heading is the tool's NAME alone, so a row is found by what it is ("Git"),
+            not by whichever version this machine has; the version reads beside it. */}
+        <div className="flex items-baseline gap-2.5">
+          <h3 className="m-0 text-sm font-semibold">{name}</h3>
+          {version ? <code className="text-2xs font-normal text-ink-faint">{version}</code> : null}
+        </div>
         <p className="mt-[5px] text-xs text-ink-faint">{detail}</p>
         {action ? <div className="mt-3">{action}</div> : null}
       </div>
