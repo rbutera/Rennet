@@ -56,7 +56,14 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
   // thread, and none is being opened" — Rai's exact complaint. That is a wait, so it reads
   // as one: the thread skeleton, and the session is asked again until the thread binds.
   const preparing = target.kind === "review" && target.preparing;
-  const awaitingThread = preparing && data !== undefined && data.thread?.status !== "bound";
+  const stopped = target.kind === "review" && target.stopped;
+  const unbound = data !== undefined && data.thread?.status !== "bound";
+  // Only a preparation still under way polls. A failed or cancelled one has nothing on its
+  // way, and every ask for its thread is the daemon trying the checkout again.
+  const awaitingThread = preparing && !stopped && unbound;
+  // STOPPED, THREAD NEVER BOUND: the title alone. The failure block owns the message; the
+  // T3 mount would otherwise be handed the `unavailable` answer and print its own sentence.
+  const stoppedUnbound = stopped && unbound;
   const refreshSession = useRefreshCommand("chat.t3Session");
   useEffect(() => {
     if (!awaitingThread) return;
@@ -65,13 +72,15 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
   }, [awaitingThread, refreshSession]);
   // …and the moment the preparation is over, ask once more: the answer cached while it ran
   // is the waiting one, and whatever the daemon says now is the one to show. Only on that
-  // transition — a review opened after its preparation finished is asked exactly once.
+  // transition — a review opened after its preparation finished is asked exactly once — and
+  // only when it SETTLED: a run that stopped bound nothing, and asking would only send the
+  // daemon back to the checkout that just failed.
   const wasPreparing = useRef(preparing);
   useEffect(() => {
     const ended = wasPreparing.current && !preparing;
     wasPreparing.current = preparing;
-    if (ended) refreshSession();
-  }, [preparing, refreshSession]);
+    if (ended && !stopped) refreshSession();
+  }, [preparing, stopped, refreshSession]);
   const slot = useT3ChatSlot();
   // WHICH THREAD THE SLOT SHOWS: the session's own, in every state of every lane (#823).
   //
@@ -116,7 +125,7 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
         <ChatPaneSkeleton label="Starting chat" />
       ) : awaitingThread ? (
         <ChatPaneSkeleton label="Preparing the conversation" slot="t3-chat-preparing" />
-      ) : slot ? (
+      ) : stoppedUnbound ? null : slot ? (
         <Suspense fallback={<ChatPaneSkeleton label="Loading the thread view" />}>
           <slot.session session={data} onOpenFile={openFileInDiff} />
         </Suspense>

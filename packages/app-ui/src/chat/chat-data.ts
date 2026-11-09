@@ -1,7 +1,7 @@
 import type { SidebarSession } from "@rennet/protocol";
 import { useRoute } from "wouter";
 import { useCommand } from "../data";
-import { preparationPhase } from "../preparation/preparation-phase";
+import { preparationPhase, preparationStopped } from "../preparation/preparation-phase";
 import { reviewIdOf, useSlugResolution } from "../routes/slug";
 import { ROUTES } from "../routes/url";
 
@@ -74,8 +74,19 @@ export type ChatDockTarget =
    * finished, the large-file question open, or drafting), so a thread that is not bound
    * YET is a wait, not an absence: the review is attached before the workspace is bound,
    * and the thread binds with the workspace.
+   *
+   * `stopped` says the preparation failed or was cancelled. A thread that never bound is
+   * then neither a wait nor something the pane should explain: the failure block over the
+   * workspace owns the message, so the dock shows the title alone. Handing the `unavailable`
+   * answer to the T3 mount printed "This review has no thread, and none is being opened" —
+   * Rai's complaint, word for word.
    */
-  | { readonly kind: "review"; readonly reviewId: string; readonly preparing: boolean }
+  | {
+      readonly kind: "review";
+      readonly reviewId: string;
+      readonly preparing: boolean;
+      readonly stopped: boolean;
+    }
   /**
    * No review is attached. `preparing` says one is on its way — capture is running, the
    * large-file question is open, or drafting has begun before the thread exists — so the
@@ -93,7 +104,9 @@ export function useRouteChatTarget(): ChatDockTarget {
   const reviewId = reviewIdOf(resolution);
   const phase = preparationPhase(row?.preparation);
   const preparing = phase === "waiting" || phase === "choosing" || phase === "drafting";
-  if (reviewId !== undefined) return { kind: "review", reviewId, preparing };
+  if (reviewId !== undefined) {
+    return { kind: "review", reviewId, preparing, stopped: preparationStopped(phase) };
+  }
   return { kind: "no-review", preparing };
 }
 

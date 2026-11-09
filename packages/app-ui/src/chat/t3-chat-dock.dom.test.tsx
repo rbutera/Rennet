@@ -192,6 +192,99 @@ function mountUnattached(preparation: SidebarSession["preparation"]) {
   return { ...view, asks };
 }
 
+/**
+ * A pull request whose review is ATTACHED and whose preparation is in `preparation`, with a
+ * slot that prints what the T3 mount was handed — so an `unavailable` answer reaching the
+ * mount shows up as "UNAVAILABLE", the stand-in for T3's own "This review has no thread"
+ * sentence. `setPreparation` moves the row; the workspace header's poll carries it in.
+ */
+function mountAttached(
+  initial: SidebarSession["preparation"],
+  options: { readonly bound?: boolean } = {},
+) {
+  let preparation = initial;
+  const asks: unknown[] = [];
+  const bridge = new MemoryBridge({
+    ...frontDoorHandlers(),
+    "settings.get": () => ({ ...emptySettings(), projects: [projectRow()] }),
+    "forge.hosts": () => ({ hosts: [] }),
+    "session.list": () => ({
+      sessions: [
+        {
+          id: "pr-session",
+          projectId: "p1",
+          title: "feat/widget-lfs",
+          target: "your-pr",
+          createdAt: 1,
+          reviewId: "review-1",
+          claim: { branch: "feat/widget-lfs", prNumber: 42 },
+          ...(preparation === undefined ? {} : { preparation }),
+        } as SidebarSession,
+      ],
+    }),
+    "session.cancelPreparation": () => ({ session: null }),
+    "session.retryPreparation": () => ({ session: null }),
+    "session.chooseLargeFileMode": () => ({ session: null }),
+    "review.load": () => ({
+      review: {
+        id: "review-1",
+        repositoryRoot: "/repos/acme/checkout",
+        status: "current",
+        activePatchsetId: "ps-1",
+        patchsets: [{ id: "ps-1", source: "local" }],
+      } as unknown as Review,
+      repositoryPresent: true,
+    }),
+    "board.read": () => ({ board: null }),
+    "chat.t3Session": (input) => {
+      asks.push(input);
+      return {
+        origin: "http://127.0.0.1:43117",
+        wsUrl: "ws://127.0.0.1:43117/ws",
+        accessToken: "bearer-never-in-the-guest",
+        environmentId: "env-1",
+        thread:
+          options.bound === true
+            ? { status: "bound", threadId: "thread-1", threadUrl: "http://127.0.0.1:43117/t/1" }
+            : { status: "unavailable", reason: "The review's checkout did not complete." },
+      };
+    },
+  });
+  act(() => {
+    useRennetStore.getState().uiActions.setSidebarOpen(false);
+    useRennetStore.getState().uiActions.setChatOpen(true);
+  });
+  const Session = ({ session }: T3NativeChatProps) => (
+    <div data-slot="t3-native-stub">
+      {session.thread?.status === "bound" ? session.thread.threadId : "UNAVAILABLE"}
+    </div>
+  );
+  const Thread = (props: T3ThreadViewProps) => <div>{props.thread.threadId}</div>;
+  const view = mount(
+    <T3ChatSlotProvider session={Session} thread={Thread}>
+      <RennetRouterApp bridge={bridge} history={memoryHistory("/s/pr-session")} />
+    </T3ChatSlotProvider>,
+  );
+  return {
+    ...view,
+    asks,
+    setPreparation(next: SidebarSession["preparation"]) {
+      preparation = next;
+    },
+  };
+}
+
+/** The dock says whose conversation this is, and nothing else. */
+function expectTitleAlone(dock: HTMLElement) {
+  expect(dock.querySelector("header")?.textContent).toContain("feat/widget-lfs");
+  expect(dock.querySelector('[data-slot="t3-native-stub"]')).toBeNull();
+  expect(dock.querySelector('[data-slot="t3-chat-preparing"]')).toBeNull();
+  expect(dock.querySelector('[data-slot="t3-chat-starting"]')).toBeNull();
+  const text = dock.textContent ?? "";
+  expect(text).not.toContain("UNAVAILABLE");
+  for (const copy of INTERNAL_COPY) expect(text).not.toContain(copy);
+}
+
 /** The copy the dock used to print on this route, which named Rennet's internals. */
 const INTERNAL_COPY = ["New review", "No review is attached"] as const;
 
@@ -511,6 +604,68 @@ describe("the chat slot is always the T3 thread", () => {
       { timeout: 5_000 },
     );
     expect(dock.querySelector('[data-slot="t3-chat-preparing"]')).toBeNull();
+  });
+
+  it("shows the title alone when an attached review's checkout failed for want of Git LFS", async () => {
+    const attached = mountAttached({
+      status: "failed",
+      stage: "workspace",
+      reason: "Git LFS is needed to check out this pull request.",
+      kind: "tool-missing",
+      action: "install",
+      tool: "git-lfs",
+      detail: "git-lfs filter-process: git-lfs: command not found",
+      reviewId: "review-1",
+    });
+    const dock = attached.getByTestId("chat-dock-slot");
+    await waitFor(() => expect(attached.asks.length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="preparation-failure"]')).not.toBeNull(),
+    );
+    expectTitleAlone(dock);
+    // Nothing is on its way, so nothing polls: every ask would send the daemon back to the
+    // checkout that just failed.
+    const settledAsks = attached.asks.length;
+    await new Promise((resolve) => setTimeout(resolve, 1_800));
+    expect(attached.asks.length).toBe(settledAsks);
+    expectTitleAlone(dock);
+  });
+
+  it("shows the title alone, and stops asking, once a review is cancelled at the large-file question", async () => {
+    const attached = mountAttached({
+      status: "awaiting",
+      kind: "large-file-choice",
+      lfsAvailable: false,
+      reviewId: "review-1",
+    });
+    const dock = attached.getByTestId("chat-dock-slot");
+    await waitFor(() =>
+      expect(dock.querySelector('[data-slot="t3-chat-preparing"]')).not.toBeNull(),
+    );
+    attached.setPreparation({ status: "cancelled", stage: "workspace", reviewId: "review-1" });
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-testid="preparation-failure"][data-status="cancelled"]'),
+      ).not.toBeNull(),
+    );
+    await waitFor(() => expect(dock.querySelector('[data-slot="t3-chat-preparing"]')).toBeNull());
+    const settledAsks = attached.asks.length;
+    await new Promise((resolve) => setTimeout(resolve, 1_800));
+    // Not even the one "the preparation is over" ask: a cancelled run bound nothing.
+    expect(attached.asks.length).toBe(settledAsks);
+    expectTitleAlone(dock);
+  });
+
+  it("still shows the thread when a stopped preparation had already bound it", async () => {
+    // The control for the two above: `stopped` hides an UNBOUND answer, never a real thread.
+    const attached = mountAttached(
+      { status: "failed", stage: "boards", reason: "Drafting stopped.", reviewId: "review-1" },
+      { bound: true },
+    );
+    const dock = attached.getByTestId("chat-dock-slot");
+    await waitFor(() =>
+      expect(dock.querySelector('[data-slot="t3-native-stub"]')?.textContent).toBe("thread-1"),
+    );
   });
 
   // The control for the pair above: the SAME assertions on a route that does hold a
