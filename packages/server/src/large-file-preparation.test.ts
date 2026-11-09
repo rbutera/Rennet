@@ -58,7 +58,13 @@ afterEach(() => {
 
 type Session = SidebarSession;
 
-function lfsRepository(options: { readonly rootOn?: "main" | "feature" } = {}) {
+function lfsRepository(
+  options: {
+    readonly rootOn?: "main" | "feature";
+    /** `false`: the repository declares no LFS filter at all. */
+    readonly lfs?: boolean;
+  } = {},
+) {
   const dataDir = realpathSync(mkdtempSync(join(tmpdir(), "rennet-lfs-prep-data-")));
   const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-lfs-prep-repo-")));
   dirs.push(dataDir, repo);
@@ -76,7 +82,9 @@ function lfsRepository(options: { readonly rootOn?: "main" | "feature" } = {}) {
   git("commit", "-q", "-m", "base");
   const baseOid = git("rev-parse", "HEAD");
   git("checkout", "-q", "-b", "feature");
-  writeFileSync(join(repo, ".gitattributes"), "*.bin filter=lfs diff=lfs merge=lfs -text\n");
+  if (options.lfs !== false) {
+    writeFileSync(join(repo, ".gitattributes"), "*.bin filter=lfs diff=lfs merge=lfs -text\n");
+  }
   mkdirSync(join(repo, "assets"));
   writeFileSync(join(repo, "assets", "model.bin"), POINTER);
   git("add", "-A");
@@ -173,6 +181,8 @@ async function serverFor(
     readonly brewBin?: string;
     /** Extra test environment for the server. */
     readonly env?: Record<string, string>;
+    /** A project this data directory already has (a restarted daemon): not added again. */
+    readonly projectId?: string;
   } = {},
 ) {
   await createGitHubTokenStore(fixture.dataDir).setGitHubCredential({ token: "gho_acme_widget" });
@@ -194,17 +204,20 @@ async function serverFor(
     },
   });
   shutdowns.push(server.shutdown);
-  const added = (await server.dispatch("projects.add", {
-    commandId: randomUUID(),
-    discovery: {
-      path: fixture.repo,
-      kind: "repo",
-      repos: [{ name: "widget", path: fixture.repo, branches: 2 }],
-      primaryBranch: "main",
-    },
-    includedRepos: ["widget"],
-    primaryBranch: "main",
-  })) as { project: { id: string } };
+  const added =
+    serverOptions.projectId !== undefined
+      ? { project: { id: serverOptions.projectId } }
+      : ((await server.dispatch("projects.add", {
+          commandId: randomUUID(),
+          discovery: {
+            path: fixture.repo,
+            kind: "repo",
+            repos: [{ name: "widget", path: fixture.repo, branches: 2 }],
+            primaryBranch: "main",
+          },
+          includedRepos: ["widget"],
+          primaryBranch: "main",
+        })) as { project: { id: string } });
   const listed = async (sessionId: string): Promise<Session | undefined> => {
     const { sessions } = (await server.dispatch("session.list", {})) as { sessions: Session[] };
     return sessions.find((session) => session.id === sessionId);
@@ -844,6 +857,124 @@ describe("a session's own large-file mode", () => {
     expect(readFileSync(join(boundRoot, "assets", "model.bin"), "utf8")).toBe(POINTER);
     expect(store.load(sessionId)?.largeFiles).toBe("skip");
     expect(await projectChoice(server)).toEqual({ value: "ask", layer: "builtin" });
+    await server.dispatch("session.cancelPreparation", { sessionId });
+  }, 60_000);
+});
+
+/** The large-file-checkout spec's own scenarios, end to end through the daemon (finding 11). */
+describe("large-file-checkout scenarios", () => {
+  it("a repository without LFS never asks: the checkout proceeds", async () => {
+    const fixture = lfsRepository({ lfs: false });
+    const { server, mint, waitFor } = await serverFor(fixture);
+    const statuses = new Set<string>();
+    const sessionId = await mint();
+    const store = new SessionStore(join(fixture.dataDir, "sessions"));
+    await vi.waitFor(
+      async () => {
+        const session = await waitFor(sessionId, () => undefined);
+        if (session.preparation !== undefined) statuses.add(session.preparation.status);
+        expect(store.load(sessionId)?.boundRoot).toBeDefined();
+      },
+      { timeout: 20_000, interval: 10 },
+    );
+    const drafting = await waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("drafting"),
+    );
+    expect(drafting.preparation?.status).toBe("drafting");
+    expect(statuses.has("awaiting")).toBe(false);
+    expect(store.load(sessionId)?.boundRoot).not.toBe(fixture.repo);
+    await server.dispatch("session.cancelPreparation", { sessionId });
+  }, 60_000);
+
+  it("a daemon restart while the question is open keeps it open, and the answer resumes it", async () => {
+    const fixture = lfsRepository();
+    const first = await serverFor(fixture);
+    const sessionId = await first.mint();
+    const asked = await first.waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("awaiting"),
+    );
+    await first.server.shutdown();
+
+    // A new daemon over the same data: the question survives, as asked.
+    const second = await serverFor(fixture, { projectId: first.projectId });
+    const after = await second.waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("awaiting"),
+    );
+    expect(after.preparation).toEqual(asked.preparation);
+    await second.server.dispatch("session.chooseLargeFileMode", { sessionId, mode: "skip" });
+    const store = new SessionStore(join(fixture.dataDir, "sessions"));
+    await vi.waitFor(() => expect(store.load(sessionId)?.boundRoot).toBeDefined(), {
+      timeout: 20_000,
+      interval: 25,
+    });
+    const boundRoot = store.load(sessionId)?.boundRoot ?? "";
+    expect(readFileSync(join(boundRoot, "assets", "model.bin"), "utf8")).toBe(POINTER);
+    await second.waitFor(sessionId, (session) =>
+      expect(session?.preparation).toMatchObject({ status: "drafting", reviewId: asked.reviewId }),
+    );
+    await second.server.dispatch("session.cancelPreparation", { sessionId });
+  }, 60_000);
+
+  it("an answer while preparation is running is recorded and does not restart it", async () => {
+    const fixture = lfsRepository();
+    // Download works here (a filter that runs), and preparation is held after its capture.
+    fixture.installGitLfs();
+    const { server, mint, waitFor, setMode } = await serverFor(fixture, {
+      env: { RENNET_TEST_CAPTURE_SETTLEMENT_DELAY_MS: "60000" },
+    });
+    await setMode("download");
+    const sessionId = await mint();
+    const running = await waitFor(sessionId, (session) =>
+      expect(session?.preparation).toEqual({ status: "capturing", step: "capturing-change" }),
+    );
+    const answered = (await server.dispatch("session.chooseLargeFileMode", {
+      sessionId,
+      mode: "skip",
+    })) as { session: Session | null };
+    // Not resumed: a restart would begin again from resolving the repository.
+    expect(answered.session?.preparation).toEqual(running.preparation);
+    const view = (await server.dispatch("settings.get", {})) as {
+      projects: { prefs?: { largeFiles?: { value: string } } }[];
+    };
+    expect(view.projects[0]?.prefs?.largeFiles?.value).toBe("skip");
+    const still = await waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("capturing"),
+    );
+    expect(still.preparation).toEqual({ status: "capturing", step: "capturing-change" });
+    await server.dispatch("session.cancelPreparation", { sessionId });
+  }, 60_000);
+
+  it("choosing a mode is the recovery a large-file failure offers, and it binds", async () => {
+    const fixture = lfsRepository();
+    // Git LFS answers, but cannot produce the file: a required filter whose process is set
+    // blank fails the smudge, which git reports as `smudge filter lfs failed`.
+    fixture.git("config", "filter.lfs.process", "");
+    fixture.git("config", "filter.lfs.smudge", "cat");
+    const { server, mint, waitFor, setMode } = await serverFor(fixture);
+    await setMode("download");
+    const sessionId = await mint();
+    const failed = await waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("failed"),
+    );
+    expect(failed.preparation).toMatchObject({
+      status: "failed",
+      stage: "workspace",
+      kind: "large-file",
+      action: "choose-large-files",
+    });
+
+    await server.dispatch("session.chooseLargeFileMode", { sessionId, mode: "skip" });
+    const store = new SessionStore(join(fixture.dataDir, "sessions"));
+    await vi.waitFor(() => expect(store.load(sessionId)?.boundRoot).toBeDefined(), {
+      timeout: 20_000,
+      interval: 25,
+    });
+    const boundRoot = store.load(sessionId)?.boundRoot ?? "";
+    expect(readFileSync(join(boundRoot, "assets", "model.bin"), "utf8")).toBe(POINTER);
+    expect(registered(fixture.dataDir)).toEqual([gitDirOf(boundRoot)]);
+    await waitFor(sessionId, (session) =>
+      expect(session?.preparation).toMatchObject({ status: "drafting", reviewId: failed.reviewId }),
+    );
     await server.dispatch("session.cancelPreparation", { sessionId });
   }, 60_000);
 });
