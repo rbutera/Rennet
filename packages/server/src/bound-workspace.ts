@@ -16,6 +16,7 @@ import {
   ensureBranchWorktree,
   ensurePrWorktree,
   ensureSiblingWorktree,
+  type LargeFileMode,
   prWorktreePath,
   siblingBranchFor,
   type WorktreeClaim,
@@ -24,7 +25,7 @@ import {
   type WorktreeRepoFacts,
   worktreeForBranch,
 } from "@rennet/adapters";
-import { type Locus, toWindowsView, type WorkspaceMode } from "@rennet/core";
+import { type LargeFilesChoice, type Locus, toWindowsView, type WorkspaceMode } from "@rennet/core";
 import type { Review } from "@rennet/protocol";
 
 /** `git(cwd, args)` — the locus-aware exec the daemon builds per repository. */
@@ -42,6 +43,20 @@ type GitExec = (cwd: string, args: string[], options?: { reject?: boolean }) => 
 export interface ResolvedWorktreePlacement extends WorktreePlacement {
   /** `share` (the builtin) or `own`. */
   readonly workspace: WorkspaceMode;
+  /**
+   * `checkout.largeFiles`: how a checkout this bind CREATES treats Git LFS content. `ask`
+   * (the builtin, also what absent means) is a question only a preparation can put to the
+   * reviewer; by the time a bind runs it has been answered or was never asked, so a bind
+   * reads it as `download`, which is what every checkout did before the setting existed.
+   */
+  readonly largeFiles?: LargeFilesChoice;
+}
+
+/** The mode a checkout this bind creates runs under: `skip` only when the project said so. */
+export function checkoutLargeFileMode(placement: {
+  readonly largeFiles?: LargeFilesChoice;
+}): LargeFileMode {
+  return placement.largeFiles === "skip" ? "skip" : "download";
 }
 
 /**
@@ -55,6 +70,15 @@ export interface ResolvedWorktreePlacement extends WorktreePlacement {
 export interface BoundWorkspace {
   readonly boundRoot: string;
   readonly workBranch?: string;
+  /**
+   * A quiet fact about the checkout this bind CREATED, for the reviewer to see beside the
+   * review: today only `LARGE_FILES_HOOK_SKIPPED_WARNING`, when a skip-mode checkout landed
+   * but the repository's Git LFS hook could not run. Absent when nothing was created or
+   * there is nothing to say.
+   */
+  readonly warning?: string;
+  /** The large-file mode the checkout was created (or re-pinned) under, when one was. */
+  readonly largeFiles?: LargeFileMode;
 }
 
 export interface BoundWorkspaceDeps {
@@ -100,6 +124,13 @@ export interface BoundWorkspaceDeps {
   readonly registrationClaimed: (record: WorktreeRecord) => WorktreeClaim;
   /** The worktree already indexed for this review's pull request, when there is one. */
   readonly prWorktreeFor: (reviewId: string) => string | undefined;
+  /**
+   * The path the pull-request front door computed for this review but did NOT create —
+   * because it failed there, or because the large-file question had not been answered yet
+   * and the checkout was deferred to the bind. The bind creates it at exactly that path, so
+   * a deferred checkout lands where the front door would have put it. Absent ⇒ no such path.
+   */
+  readonly pendingPrWorktreeFor?: (reviewId: string) => string | undefined;
   /**
    * Whether Rennet's pull-request index records a snapshot AT THIS PATH — for any review,
    * not only this one.
@@ -223,15 +254,7 @@ export async function decideBoundWorkspace(
   // deliberately has none. A branch review is neither — and a PR's head branch may not exist
   // locally at all (a fork), so there is nothing to check out.
   if (review.postTarget !== undefined || review.retrospective === true) {
-    return {
-      boundRoot: await ensurePrSnapshotWorkspace(
-        review,
-        patchset.repository.headOid,
-        git,
-        placement,
-        deps,
-      ),
-    };
+    return ensurePrSnapshotWorkspace(review, patchset.repository.headOid, git, placement, deps);
   }
   const branch = patchset.repository.headRef;
   // A detached HEAD has no branch ref, so there is no branch to bind a worktree to.
@@ -286,6 +309,7 @@ export async function decideBoundWorkspace(
         review.repositoryRoot,
         siblingWorktree,
         branch,
+        { largeFiles: checkoutLargeFileMode(placement) },
       );
       if (sibling.created) deps.onWorktreeCreated?.(sibling.path);
       // GIT'S SPELLING NEVER BECOMES `boundRoot`. `ensureSiblingWorktree` returns the
@@ -299,7 +323,12 @@ export async function decideBoundWorkspace(
       const boundRoot = sameDirectory(sibling.path, siblingWorktree)
         ? siblingWorktree
         : inRepoSpelling(sibling.path, review.repositoryRoot, locus);
-      return { boundRoot, workBranch: sibling.workBranch };
+      return {
+        boundRoot,
+        workBranch: sibling.workBranch,
+        ...(sibling.created ? { largeFiles: checkoutLargeFileMode(placement) } : {}),
+        ...(sibling.warning === undefined ? {} : { warning: sibling.warning }),
+      };
     }
     // PREFER A SPELLING RENNET ALREADY OWNS. `git worktree list` prints a realpath, and on WSL
     // the UNC form it maps back to is `\\\\wsl.localhost\\…` while a project may be opened as
@@ -324,11 +353,18 @@ export async function decideBoundWorkspace(
   // happens — is Rennet's to put back when NO live session is bound there, and somebody's
   // live workspace when one is. Without it `ensureBranchWorktree` refuses, which is the
   // conservative default and was the permanent lockout.
-  const { created } = await ensureBranchWorktree(git, review.repositoryRoot, worktree, branch, {
+  const branchWorktree = await ensureBranchWorktree(git, review.repositoryRoot, worktree, branch, {
     claimed: deps.registrationClaimed,
+    largeFiles: checkoutLargeFileMode(placement),
   });
-  if (created) deps.onWorktreeCreated?.(worktree);
-  return { boundRoot: worktree };
+  if (branchWorktree.created) deps.onWorktreeCreated?.(worktree);
+  return {
+    boundRoot: worktree,
+    ...(branchWorktree.created || branchWorktree.repaired === true
+      ? { largeFiles: checkoutLargeFileMode(placement) }
+      : {}),
+    ...(branchWorktree.warning === undefined ? {} : { warning: branchWorktree.warning }),
+  };
 }
 
 /**
@@ -375,13 +411,18 @@ async function branchFacts(
 export async function repinBoundWorkspace(
   review: Review,
   recorded: string,
-  deps: Pick<BoundWorkspaceDeps, "gitFor" | "snapshotRecordedAt">,
+  deps: Pick<BoundWorkspaceDeps, "gitFor" | "snapshotRecordedAt"> &
+    Partial<Pick<BoundWorkspaceDeps, "placementFor">>,
 ): Promise<string> {
   if (review.postTarget === undefined && review.retrospective !== true) return recorded;
   const patchset = review.patchsets.find((entry) => entry.id === review.activePatchsetId);
   if (patchset === undefined) return recorded;
   // The repository is where the worktree hangs off; `recorded` is the worktree itself.
   if (recorded === review.repositoryRoot) return recorded;
+  // A re-pin that REPLACES the checkout creates a new one, so it runs under the project's
+  // large-file mode exactly as the first bind did. Read only here, past every early return:
+  // a branch binding or an unpinned review never asks.
+  const placement = await deps.placementFor?.(review.repositoryRoot).catch(() => undefined);
   await ensurePrWorktree(
     deps.gitFor(review.repositoryRoot),
     review.repositoryRoot,
@@ -393,7 +434,10 @@ export async function repinBoundWorkspace(
     // definition: a session bound to a path the pull-request index no longer names is a
     // session whose snapshot Rennet has already let go of, and re-pinning it forcibly is
     // the deletion `ensurePrWorktree` refuses everywhere else.
-    { recordedSnapshot: deps.snapshotRecordedAt(recorded) },
+    {
+      recordedSnapshot: deps.snapshotRecordedAt(recorded),
+      ...(placement === undefined ? {} : { largeFiles: checkoutLargeFileMode(placement) }),
+    },
   );
   return recorded;
 }
@@ -417,10 +461,13 @@ async function ensurePrSnapshotWorkspace(
   git: GitExec,
   placement: ResolvedWorktreePlacement,
   deps: BoundWorkspaceDeps,
-): Promise<string> {
+): Promise<BoundWorkspace> {
   const indexed = deps.prWorktreeFor(review.id);
   const target =
     indexed ??
+    // The path the front door computed and did not create (it failed, or deferred to the
+    // large-file question): the same path, so a deferred checkout lands where it would have.
+    deps.pendingPrWorktreeFor?.(review.id) ??
     (review.postTarget === undefined
       ? undefined
       : // The PR's own forge identity IS this repository's resolved remote for the review
@@ -437,15 +484,79 @@ async function ensurePrSnapshotWorkspace(
           },
           review.postTarget.number,
         ));
-  if (target === undefined) return review.repositoryRoot;
-  const { created } = await ensurePrWorktree(git, review.repositoryRoot, target, headOid, {
+  if (target === undefined) return { boundRoot: review.repositoryRoot };
+  const largeFiles = checkoutLargeFileMode(placement);
+  const { created, warning } = await ensurePrWorktree(git, review.repositoryRoot, target, headOid, {
     // Rennet's index names this exact PATH — for this review or an earlier one of the same
     // pull request, which is the successor case the replacement exists for. That is the
     // only evidence Rennet placed the snapshot there; a computed path with no index entry
     // has none, and whatever occupies it is somebody else's.
     recordedSnapshot: deps.snapshotRecordedAt(target),
+    largeFiles,
   });
   if (indexed === undefined) deps.recordPrWorktree(review.id, target);
   if (created) deps.onWorktreeCreated?.(target);
-  return target;
+  return {
+    boundRoot: target,
+    ...(created ? { largeFiles } : {}),
+    ...(warning === undefined ? {} : { warning }),
+  };
+}
+
+/**
+ * Whether binding this review would CREATE a checkout — the only time the large-file
+ * question means anything (large-file-checkout spec: "before checking out"). Asked before
+ * the bind, with the same arms `decideBoundWorkspace` takes and nothing written:
+ *
+ *   • nothing pinned, or a detached head → the repository itself: no checkout;
+ *   • a pull-request snapshot → a checkout, unless one is already at its path;
+ *   • a branch some worktree already has out → none under `share`, and none when that
+ *     worktree is Rennet's own branch worktree; a sibling checkout under `own` otherwise;
+ *   • a branch nothing has out → a checkout.
+ *
+ * A read that fails answers `true`: asking a question that turns out unnecessary costs a
+ * click, while skipping one the reviewer was owed checks out under a mode they never chose.
+ */
+export async function bindWouldCreateCheckout(
+  review: Review,
+  deps: Pick<
+    BoundWorkspaceDeps,
+    "gitFor" | "placementFor" | "repoKeyForRoot" | "worktreeFacts" | "prWorktreeFor"
+  > &
+    Partial<Pick<BoundWorkspaceDeps, "pendingPrWorktreeFor">>,
+): Promise<boolean> {
+  const patchset = review.patchsets.find((entry) => entry.id === review.activePatchsetId);
+  if (patchset === undefined) return false;
+  try {
+    if (review.postTarget !== undefined || review.retrospective === true) {
+      const path = deps.prWorktreeFor(review.id) ?? deps.pendingPrWorktreeFor?.(review.id);
+      if (path === undefined) return review.postTarget !== undefined;
+      const head = (
+        await deps.gitFor(review.repositoryRoot)(path, ["rev-parse", "HEAD"], { reject: false })
+      ).trim();
+      return head !== patchset.repository.headOid;
+    }
+    const branch = patchset.repository.headRef;
+    if (branch === undefined || branch.length === 0) return false;
+    const git = deps.gitFor(review.repositoryRoot);
+    const existing = await worktreeForBranch(git, review.repositoryRoot, branch);
+    if (existing === undefined) return true;
+    const placement = await deps.placementFor(review.repositoryRoot);
+    if (placement.workspace !== "own") return false;
+    const worktree = branchWorktreePath(
+      placement.root,
+      placement.pattern,
+      {
+        repoKey: deps.repoKeyForRoot(review.repositoryRoot),
+        repoRoot: review.repositoryRoot,
+        ...(await deps.worktreeFacts(review.repositoryRoot).catch(() => ({}))),
+      },
+      branch,
+    );
+    const rennetPlacedIt =
+      !sameDirectory(existing, review.repositoryRoot) && sameDirectory(existing, worktree);
+    return !rennetPlacedIt;
+  } catch {
+    return true;
+  }
 }
