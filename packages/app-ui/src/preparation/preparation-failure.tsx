@@ -1,9 +1,4 @@
-import {
-  type Locus,
-  newCommandId,
-  type SessionPreparation,
-  type SidebarSession,
-} from "@rennet/protocol";
+import { newCommandId, type SessionPreparation, type SidebarSession } from "@rennet/protocol";
 import { Button } from "@rennet/ui";
 import { useState } from "react";
 import { useLocation } from "wouter";
@@ -11,11 +6,10 @@ import { FailureDetail } from "../components/failure-detail";
 import { InstallForMe, TOOL_NAME } from "../components/install-for-me";
 import { useMutation } from "../data";
 import { useScopedState } from "../data/scoped-state";
-import { useDropInstallContinuation } from "../data/tool-install";
+import { useInstalledByOwner } from "../data/tool-install";
 import { settingsPath } from "../routes/url";
 import { ActionFailureLine, useActionFailure } from "./action-failure";
 import { preparationFailureCopy } from "./failure-copy";
-import { asksForInstall, failureInstallOwner, useWhileStillAsking } from "./install-continuations";
 import { LARGE_FILE_REMEMBERED, LargeFileChoice } from "./large-file-choice";
 import { useLfsAvailable, useProjectLocus } from "./session-locus";
 
@@ -39,9 +33,10 @@ import { useLfsAvailable, useProjectLocus } from "./session-locus";
 // A cancelled run is calm: it says so and offers Retry. Nothing here names a stage or a
 // step; the stage is the daemon's bookkeeping, not something the reviewer acts on.
 //
-// Install for me retries when it lands, even if the block has unmounted meanwhile — but only
-// while the session is still failed for want of that install (`install-continuations.ts`):
-// a Retry and a Cancel since then mean nobody is waiting on it. A Retry that did not go
+// Install for me sends nothing when it lands. Its verdict ("Git LFS is installed") shows in
+// the block and Retry becomes the primary action, so the next step is one obvious click by
+// the reviewer. Retrying on the reviewer's behalf raced Cancel and their own Retry. The
+// install is kept per session, so it survives the block unmounting. A Retry that did not go
 // through says so from the per-session slot, so a block remounted by the route still shows it.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -53,6 +48,11 @@ export function retryFailureKey(sessionId: string): string {
 }
 
 const RETRY_FAILED = "Rennet couldn't start this review again. Try again.";
+
+/** The owner an install started from a session's failure block runs under. */
+export function failureInstallOwner(sessionId: string): string {
+  return `failure:${sessionId}`;
+}
 
 export function PreparationFailure({
   session,
@@ -66,10 +66,7 @@ export function PreparationFailure({
     retryFailureKey(session.id),
     undefined,
   );
-  const whileStillAsking = useWhileStillAsking();
   const { locus, failed: locusFailed, retry: rereadLocus } = useProjectLocus(session.projectId);
-  // Bound to THIS session: an install that started here retries the session it was for,
-  // even if the workspace has since moved on to another one (`useToolInstall`).
   const sessionId = session.id;
   const retryNow = () => {
     retryFailureHandle.set(undefined);
@@ -83,6 +80,9 @@ export function PreparationFailure({
   const copy = failed ? preparationFailureCopy(preparation) : undefined;
   const tool = failed ? (preparation.tool ?? "git-lfs") : "git-lfs";
   const owner = failureInstallOwner(session.id);
+  // The tool is installed now, by the daemon's own verdict: Retry is the way forward.
+  const installed = useInstalledByOwner({ tool, locus, owner });
+  const retryPrimary = action === "retry" || (action === "install" && installed);
 
   return (
     <div className="border-line border-b bg-surface/60">
@@ -113,7 +113,6 @@ export function PreparationFailure({
               locus={locus}
               owner={owner}
               label={`Install ${TOOL_NAME[tool]} for me`}
-              onInstalled={() => whileStillAsking(sessionId, asksForInstall, retryNow)}
             />
             {locusFailed ? (
               <p className="flex flex-wrap items-center gap-2 text-ink-soft text-sm">
@@ -127,16 +126,17 @@ export function PreparationFailure({
         ) : null}
         <div className="flex flex-wrap items-center gap-2">
           {failed && action === "install" && tool === "git-lfs" ? (
-            <SkipLargeFiles sessionId={session.id} owner={owner} locus={locus} />
+            <SkipLargeFiles sessionId={session.id} />
           ) : null}
           {failed && action === "choose-large-files" ? (
             <ChooseLargeFiles session={session} />
           ) : null}
           {failed && action === "sign-in" ? <SignIn /> : null}
           <Button
-            variant={action === "retry" ? "accent" : "outline"}
+            variant={retryPrimary ? "accent" : "outline"}
             size="sm"
             data-testid="workspace-retry"
+            data-emphasis={retryPrimary ? "primary" : "secondary"}
             disabled={retry.pending}
             onClick={retryNow}
           >
@@ -154,20 +154,10 @@ export function PreparationFailure({
  * The other way forward when Git LFS is missing: skip large files. It is the same answer as
  * the large-file dialog's "Skip large files" and says so in the same words — remembered for
  * the project, changeable in Settings — so the two never disagree about what was decided.
- * Submitting it withdraws the retry an Install for me started here would run on landing.
  */
-function SkipLargeFiles({
-  sessionId,
-  owner,
-  locus,
-}: {
-  readonly sessionId: string;
-  readonly owner: string;
-  readonly locus: Locus | undefined;
-}) {
+function SkipLargeFiles({ sessionId }: { readonly sessionId: string }) {
   const choose = useMutation("session.chooseLargeFileMode", { invalidates: ["session.list"] });
   const skipFailure = useActionFailure();
-  const dropInstallContinuation = useDropInstallContinuation();
   return (
     <div className="flex flex-col gap-1">
       <div>
@@ -176,7 +166,6 @@ function SkipLargeFiles({
           size="sm"
           disabled={choose.pending}
           onClick={() => {
-            dropInstallContinuation(owner, "git-lfs", locus);
             skipFailure.run(
               () =>
                 choose.mutate({

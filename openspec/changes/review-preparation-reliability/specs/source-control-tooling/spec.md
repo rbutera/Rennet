@@ -33,3 +33,27 @@ A missing `git` or `git-lfs` SHALL offer **Install for me** wherever Rennet repo
 #### Scenario: Install fails
 - **WHEN** the installer exits non-zero
 - **THEN** Rennet shows a plain-language failure with the installer's output available as detail, and the tool stays reported as not installed
+
+#### Scenario: Steps succeed but the tool still is not found
+- **WHEN** every install step exits zero and the re-probe still reports the tool missing
+- **THEN** Rennet reports a plain-language failure, not installed
+
+### Requirement: An install acts for nobody when it lands
+
+When an install finishes, Rennet SHALL show its result and SHALL NOT send any action on the user's behalf (no large-file answer, no retry). The surface SHALL make the user's next step available and obvious.
+
+#### Scenario: Install lands after the user cancelled
+- **WHEN** the user starts Install for me, dismisses the dialog, cancels the preparation, and the install then finishes
+- **THEN** no large-file answer and no retry is sent
+
+### Requirement: A reconnect never runs an installer again
+
+After a dropped connection the client SHALL ask about its install again under the same command id as a rejoin. A rejoin SHALL join a run still going or return its retained verdict, and SHALL NOT start an installer. When the daemon knows neither, it SHALL answer that the outcome is unknown, and the client SHALL say plainly that Rennet lost track of the install and offer Check again (display only) and Install for me (a fresh request). Only a rejoin request SHALL receive the unknown outcome.
+
+#### Scenario: Daemon restarted during the install
+- **WHEN** the connection drops mid-install and the daemon that answers afterwards has no record of the command
+- **THEN** the installer does not run again, and the button says Rennet lost track of the install with Check again and Install for me
+
+#### Scenario: Re-joined output
+- **WHEN** the client re-joins a running install after more than 64,000 characters of output
+- **THEN** the snapshot it receives is exactly the last 64,000 characters, never shorter than what the client already shows

@@ -487,14 +487,12 @@ function SourceControlToolRow({
   probe,
   asked,
   locus,
-  onInstalled,
 }: {
   index: number;
   tool: "git" | "git-lfs";
   probe: DetectedSourceControlTool | undefined;
   asked: boolean;
   locus: Locus | undefined;
-  onInstalled(): void;
 }) {
   const name = tool === "git" ? "Git" : "Git LFS";
   if (probe === undefined) {
@@ -526,7 +524,9 @@ function SourceControlToolRow({
       detail={probe.detail}
       action={
         probe.status !== "available" && locus !== undefined ? (
-          <InstallForMe tool={tool} locus={locus} onInstalled={onInstalled} />
+          // The install's own verdict re-reads the probes (`useToolInstall`), so this row
+          // updates when it lands without anything wired here.
+          <InstallForMe tool={tool} locus={locus} />
         ) : undefined
       }
     />
@@ -553,14 +553,11 @@ function forgeStatusLabel(status: ReturnType<typeof forgeDisplayStatus>): string
 function ToolsStage({
   harnesses,
   forges,
-  onRefresh,
   onBack,
   onContinue,
 }: {
   harnesses?: HarnessHostDetection;
   forges?: ForgeHostDetection;
-  /** Re-read the probes, after Install for me changed what is installed. */
-  onRefresh(): void;
   onBack(): void;
   onContinue(): void;
 }) {
@@ -586,7 +583,6 @@ function ToolsStage({
           probe={sourceControl?.find((tool) => tool.id === "git")}
           asked={forges?.asked === true}
           locus={locus}
-          onInstalled={onRefresh}
         />
         <SourceControlToolRow
           index={1}
@@ -594,7 +590,6 @@ function ToolsStage({
           probe={sourceControl?.find((tool) => tool.id === "git-lfs")}
           asked={forges?.asked === true}
           locus={locus}
-          onInstalled={onRefresh}
         />
         {gh ? (
           <ToolRow
@@ -1053,7 +1048,6 @@ export function FirstRunWelcome({ settings }: { settings: SettingsView }) {
           <ToolsStage
             harnesses={harnesses}
             forges={forges}
-            onRefresh={refreshForges}
             onBack={() => setStep(0)}
             onContinue={() => setStep(2)}
           />

@@ -36,6 +36,10 @@ When preparation fails, the waiting presence SHALL be replaced by one failure bl
 - **WHEN** preparation fails because `git-lfs` is not installed
 - **THEN** the block reads that Git LFS is needed to check out this pull request, offers Install for me and Skip large files, and Retry; the git stderr is visible only after opening details
 
+#### Scenario: Git LFS installed from the block
+- **WHEN** Install for me in the failure block finishes with Git LFS installed
+- **THEN** the block shows that Git LFS is installed and makes Retry its primary action; nothing is retried until the user activates Retry, and an install that lands after the user cancelled sends nothing
+
 #### Scenario: unknown failure
 - **WHEN** preparation fails for an unclassified reason
 - **THEN** the block shows a plain-language summary, Retry, and the raw reason under details

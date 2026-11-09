@@ -1,9 +1,12 @@
 import {
   type CommandOutput,
+  type DetectedSourceControlTool,
   type Locus,
   newCommandId,
   type RennetBridge,
   type SourceControlToolId,
+  type ToolInstallOutput,
+  type ToolInstallResult,
 } from "@rennet/protocol";
 import { useCallback, useId, useMemo, useSyncExternalStore } from "react";
 import { useBridgeContext } from "./bridge";
@@ -29,26 +32,31 @@ import { type ScopedHandle, scopedHandle } from "./scoped-state";
 //     mid-question; the Install for me under the large-file dialog remounts, and must find
 //     its running install, output and Cancel where it left them.
 //   • A different owner. The workspace is not keyed by session, so one component can show
-//     session A and then session B. A's install finishing must retry A, so the completion
-//     is the continuation bound when the install STARTED — never the latest prop — and B
-//     reads B's own (idle) install.
+//     session A and then session B. A's install stays A's, and B reads B's own (idle) one.
 //   • A dropped connection. The socket going rejects the dispatch, but the installer is
 //     still running on the daemon. The subscription stays (the supervisor re-attaches it on
 //     reconnect), the run stays `running` with its Cancel, and once the connection is back
-//     the hook asks the daemon again under the SAME commandId. The daemon treats that as the
-//     same request: a run still going is re-joined (its output so far arrives as one
-//     snapshot that replaces the drawer's), and a run that finished meanwhile answers with
-//     its retained verdict. Only the daemon's verdict settles the button — a probe that sees
-//     the binary says nothing about whether `git lfs install` ran, so it is never read as
-//     "installed". A Cancel pressed while the connection was down is not lost: it is sent
-//     once the connection is back, and the install is never asked for again.
+//     the hook asks the daemon again under the SAME commandId with `rejoin: true`. A run
+//     still going is re-joined (its output so far arrives as one snapshot that replaces the
+//     drawer's), and a run that finished meanwhile answers with its retained verdict. A
+//     daemon that knows neither (it restarted, or the verdict aged out) answers `unknown`
+//     and starts NOTHING: a reconnect never runs an installer. The button then says plainly
+//     that Rennet lost track of the install and offers Check again (a re-probe, shown, never
+//     read as the verdict) and Install for me (a fresh command, a fresh press). Only the
+//     daemon's verdict settles the button as installed — a probe that sees the binary says
+//     nothing about whether `git lfs install` ran. A Cancel pressed while the connection was
+//     down is not lost: it is sent once the connection is back, and the install is never
+//     asked for again.
+//
+// AN INSTALL ACTS FOR NOBODY. When it lands the button shows the verdict and the surface
+// around it makes the next step obvious (Download, Retry); nothing is sent on the
+// reviewer's behalf. Automatic follow-ups raced Cancel and Retry for three review rounds.
 //
 // It lives in the data seam because it dispatches. Surfaces render its state through
 // `components/install-for-me.tsx` and never touch the bridge.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type InstallResult = CommandOutput<"tools.install">["result"];
-export type InstalledResult = Extract<InstallResult, { status: "installed" }>;
+type InstallResult = ToolInstallResult;
 
 /** What an Install for me button is showing. `result` arms carry the command's own answer. */
 export type ToolInstallState =
@@ -63,8 +71,25 @@ export type ToolInstallState =
       readonly reconnecting?: boolean;
     }
   | { readonly phase: "done"; readonly result: InstallResult }
+  /**
+   * The connection dropped and, once it was back, the daemon knew nothing of the command: it
+   * may have finished, been stopped, or died with a daemon restart. Nothing is claimed.
+   * `check` is what Check again found — shown, never taken as the verdict.
+   */
+  | {
+      readonly phase: "lost";
+      readonly output: string;
+      readonly command?: string;
+      readonly check: LostCheck;
+    }
   /** The dispatch itself failed (an older daemon, a refused input): nothing is known to have run. */
   | { readonly phase: "unavailable"; readonly message: string };
+
+/** What Check again found for a lost install. */
+export type LostCheck =
+  | { readonly status: "idle" }
+  | { readonly status: "checking" }
+  | { readonly status: "checked"; readonly probe: DetectedSourceControlTool | undefined };
 
 /** The live drawer keeps the newest output only. A Homebrew run can print a lot, and the
  *  command's result carries the whole (daemon-capped) output once it settles. */
@@ -84,18 +109,16 @@ export interface ToolInstall {
   readonly start: () => void;
   /** Stop the running install. Its result still arrives, marked cancelled. */
   readonly cancel: () => void;
+  /** For a lost install: re-probe the tool and show what is there. Decides nothing. */
+  readonly checkAgain: () => void;
 }
 
 /** The bookkeeping of one owner's run. Not rendered, so kept apart from the state slot. */
 interface RunRecord {
   commandId: string | null;
-  /** What to do when THIS run installs the tool. Bound at start; cleared once it has run. */
-  continuation: ((result: InstalledResult) => void) | undefined;
   unsubscribe: (() => void) | undefined;
   /** The run in flight, so Cancel can settle it from what the daemon answers. */
   run: Run | undefined;
-  /** A reconnect loop is already working for the run in flight. */
-  reconciling: boolean;
 }
 
 const runs = new WeakMap<CommandCache, Map<string, RunRecord>>();
@@ -108,13 +131,7 @@ function runRecord(cache: CommandCache, key: string): RunRecord {
   }
   let record = byKey.get(key);
   if (record === undefined) {
-    record = {
-      commandId: null,
-      continuation: undefined,
-      unsubscribe: undefined,
-      run: undefined,
-      reconciling: false,
-    };
+    record = { commandId: null, unsubscribe: undefined, run: undefined };
     byKey.set(key, record);
   }
   return record;
@@ -147,43 +164,64 @@ interface Run {
   readonly tool: SourceControlToolId;
   readonly locus: Locus;
   readonly commandId: string;
+  /** A reconnect loop is already working for THIS run. On the run, not the owner's record,
+   *  so one run's loop ending can never clear another's. */
+  reconciling: boolean;
 }
 
 function stillCurrent(run: Run): boolean {
   return run.record.commandId === run.commandId;
 }
 
-function settle(run: Run, result: InstallResult): void {
+/** End the run: the record forgets it, so a later answer for it changes nothing. */
+function finish(run: Run, next: ToolInstallState): void {
   if (!stillCurrent(run)) return;
   run.record.unsubscribe?.();
   run.record.unsubscribe = undefined;
   run.record.commandId = null;
   run.record.run = undefined;
-  const continuation = run.record.continuation;
-  run.record.continuation = undefined;
-  run.slot.set({ phase: "done", result });
-  if (result.status === "installed") continuation?.(result);
+  run.slot.set(next);
+}
+
+function settle(run: Run, result: InstallResult): void {
+  finish(run, { phase: "done", result });
 }
 
 function giveUp(run: Run, message: string): void {
-  if (!stillCurrent(run)) return;
-  run.record.unsubscribe?.();
-  run.record.unsubscribe = undefined;
-  run.record.commandId = null;
-  run.record.run = undefined;
-  run.record.continuation = undefined;
-  run.slot.set({ phase: "unavailable", message });
+  finish(run, { phase: "unavailable", message });
 }
 
-/** Ask the daemon for this run's verdict, riding out a dropped connection. */
-function dispatch(run: Run): void {
+/** The daemon knows nothing of the command: say so, keeping what the drawer showed. */
+function loseTrack(run: Run): void {
+  const current = run.slot.get();
+  finish(run, {
+    phase: "lost",
+    output: current.phase === "running" ? current.output : "",
+    ...(current.phase === "running" && current.command !== undefined
+      ? { command: current.command }
+      : {}),
+    check: { status: "idle" },
+  });
+}
+
+/**
+ * Ask the daemon for this run's verdict, riding out a dropped connection. The first ask
+ * starts the install; every ask after a reconnect is a `rejoin`, which never starts one.
+ */
+function dispatch(run: Run, rejoin: boolean): void {
   void run.bridge
-    .invoke("tools.install", { tool: run.tool, locus: run.locus, commandId: run.commandId })
+    .invoke("tools.install", {
+      tool: run.tool,
+      locus: run.locus,
+      commandId: run.commandId,
+      ...(rejoin ? { rejoin: true as const } : {}),
+    })
     .then(
-      ({ result }) => {
-        // A re-probe ran either way, so every row reading the tool's state is stale.
+      (answer: ToolInstallOutput) => {
+        // A re-probe may have run, so every row reading the tool's state is stale.
         for (const name of STALED_BY_INSTALL) run.cache.invalidate(name);
-        settle(run, result);
+        if ("outcome" in answer) loseTrack(run);
+        else settle(run, answer.result);
       },
       (reason: unknown) => {
         if (isConnectionLoss(reason)) {
@@ -208,6 +246,13 @@ function isCancelling(run: Run): boolean {
   return state.phase === "running" && state.cancelling;
 }
 
+/** The daemon refused a Cancel: the install is still running, so offer Cancel again. */
+function reofferCancel(run: Run): void {
+  run.slot.set((previous) =>
+    previous.phase === "running" ? { ...previous, cancelling: false } : previous,
+  );
+}
+
 /**
  * The connection dropped mid-install. The installer is still running on the daemon, so the
  * run stays `running` (output, Cancel and all) and the subscription stays registered — the
@@ -215,22 +260,31 @@ function isCancelling(run: Run): boolean {
  * again this keeps trying; then:
  *
  *   • Cancel was pressed meanwhile: the cancel is sent now, and the run settles from what
- *     the daemon answers. The install is NOT asked for again — after a daemon restart the
- *     daemon would not know the commandId and would start a fresh install nobody wants.
- *   • Otherwise the SAME commandId goes back to the daemon, which re-joins the run still
- *     going or answers with the verdict of the one that finished. That verdict settles it.
+ *     the daemon answers. The install is NOT asked for again. A cancel the daemon refuses
+ *     (not a dropped connection) re-offers Cancel, exactly as the direct Cancel does, and
+ *     the run is re-joined below.
+ *   • Otherwise the SAME commandId goes back to the daemon as a `rejoin`: it re-joins the run
+ *     still going, answers with the verdict of the one that finished, or says it knows
+ *     nothing (`unknown`) — and never starts an installer.
  */
 async function reconcile(run: Run): Promise<void> {
-  if (run.record.reconciling) return;
-  run.record.reconciling = true;
+  if (run.reconciling) return;
+  run.reconciling = true;
   markReconnecting(run, true);
   try {
     while (stillCurrent(run)) {
       try {
         if (isCancelling(run)) {
-          const answer = await run.bridge.invoke("tools.cancelInstall", {
-            commandId: run.commandId,
-          });
+          let answer: CommandOutput<"tools.cancelInstall">;
+          try {
+            answer = await run.bridge.invoke("tools.cancelInstall", {
+              commandId: run.commandId,
+            });
+          } catch (reason) {
+            if (isConnectionLoss(reason)) throw reason;
+            reofferCancel(run);
+            continue;
+          }
           markReconnecting(run, false);
           await settleCancelled(run, answer);
           return;
@@ -243,8 +297,8 @@ async function reconcile(run: Run): Promise<void> {
         markReconnecting(run, false);
         // Cancel pressed while that read was out: send the cancel, not the install.
         if (isCancelling(run)) continue;
-        run.record.reconciling = false;
-        dispatch(run);
+        run.reconciling = false;
+        dispatch(run, true);
         return;
       } catch (reason) {
         if (!isConnectionLoss(reason)) {
@@ -256,7 +310,7 @@ async function reconcile(run: Run): Promise<void> {
       }
     }
   } finally {
-    run.record.reconciling = false;
+    run.reconciling = false;
   }
 }
 
@@ -268,8 +322,9 @@ async function reconcile(run: Run): Promise<void> {
  *   • The daemon stopped it (`cancelled: true`): its own verdict will say "stopped". If a
  *     `tools.install` is still waiting it delivers that verdict; if not (the connection
  *     dropped), this settles as stopped here.
- *   • The daemon knows nothing of it (`cancelled: false`, no verdict — it restarted): nothing
- *     is running, so the install is over, stopped.
+ *   • The daemon knows nothing of it (`cancelled: false`, no verdict — it restarted, or the
+ *     verdict aged out): it may have finished or died, so nothing is claimed. The run is
+ *     lost, said plainly, exactly as a rejoin answered `unknown`.
  *
  * A locally settled stop re-reads the tool's state only to show it; it never decides.
  */
@@ -283,15 +338,12 @@ async function settleCancelled(
     settle(run, answer.result);
     return;
   }
-  const probe = await run.bridge
-    .invoke("forge.hosts", {})
-    .then(({ hosts }) => {
-      const host = hosts.find((entry) => entry.source === sourceOfLocus(run.locus));
-      return host?.asked === true
-        ? host.sourceControl?.find((tool) => tool.id === run.tool)
-        : undefined;
-    })
-    .catch(() => undefined);
+  if (!answer.cancelled) {
+    for (const name of STALED_BY_INSTALL) run.cache.invalidate(name);
+    loseTrack(run);
+    return;
+  }
+  const probe = await probeTool(run.bridge, run.tool, run.locus);
   if (!stillCurrent(run)) return;
   for (const name of STALED_BY_INSTALL) run.cache.invalidate(name);
   const current = run.slot.get();
@@ -313,6 +365,23 @@ export function sourceOfLocus(locus: Locus): string {
   return locus.kind === "host" ? "local" : `wsl:${locus.distro}`;
 }
 
+/** The tool's state on `locus` as the daemon probes it now; undefined when it can't say. */
+function probeTool(
+  bridge: RennetBridge,
+  tool: SourceControlToolId,
+  locus: Locus,
+): Promise<DetectedSourceControlTool | undefined> {
+  return bridge
+    .invoke("forge.hosts", {})
+    .then(({ hosts }) => {
+      const host = hosts.find((entry) => entry.source === sourceOfLocus(locus));
+      return host?.asked === true
+        ? host.sourceControl?.find((entry) => entry.id === tool)
+        : undefined;
+    })
+    .catch(() => undefined);
+}
+
 export function useToolInstall(options: {
   readonly tool: SourceControlToolId;
   /** Where to install. Undefined while it is not known: `start` then does nothing. */
@@ -323,16 +392,10 @@ export function useToolInstall(options: {
    * this component instance alone.
    */
   readonly owner?: string;
-  /**
-   * Called once with the result when the re-probe says the tool is now available. The
-   * callback in effect when the install STARTED is the one that runs, even if this
-   * component has since rendered another or unmounted.
-   */
-  readonly onInstalled?: (result: InstalledResult) => void;
 }): ToolInstall {
   const { bridge, cache } = useBridgeContext();
   const instance = useId();
-  const { tool, locus, onInstalled } = options;
+  const { tool, locus } = options;
   const owner = options.owner ?? `instance:${instance}`;
   const key = `tool-install:${owner}:${tool}:${locus === undefined ? "?" : locusKey(locus)}`;
   const slot = useMemo(() => scopedHandle<ToolInstallState>(cache, key, IDLE), [cache, key]);
@@ -344,10 +407,8 @@ export function useToolInstall(options: {
     if (record.commandId !== null) return;
     const commandId = newCommandId();
     record.commandId = commandId;
-    record.continuation = onInstalled;
-    const run: Run = { bridge, cache, slot, record, tool, locus, commandId };
+    const run: Run = { bridge, cache, slot, record, tool, locus, commandId, reconciling: false };
     record.run = run;
-    record.reconciling = false;
     slot.set({ phase: "running", output: "", cancelling: false });
     record.unsubscribe = bridge.onToolInstallProgress?.(commandId, (event) => {
       if (!stillCurrent(run)) return;
@@ -366,8 +427,8 @@ export function useToolInstall(options: {
           : previous,
       );
     });
-    dispatch(run);
-  }, [bridge, cache, key, locus, onInstalled, slot, tool]);
+    dispatch(run, false);
+  }, [bridge, cache, key, locus, slot, tool]);
 
   const cancel = useCallback(() => {
     const record = runRecord(cache, key);
@@ -391,52 +452,29 @@ export function useToolInstall(options: {
           return;
         }
         // The daemon refused it: the install is still running, so offer Cancel again.
-        slot.set((previous) =>
-          previous.phase === "running" ? { ...previous, cancelling: false } : previous,
-        );
+        reofferCancel(run);
       },
     );
   }, [bridge, cache, key, slot]);
 
-  return { state, start, cancel };
+  const checkAgain = useCallback(() => {
+    if (locus === undefined || slot.get().phase !== "lost") return;
+    const showCheck = (check: LostCheck) =>
+      slot.set((previous) => (previous.phase === "lost" ? { ...previous, check } : previous));
+    showCheck({ status: "checking" });
+    for (const name of STALED_BY_INSTALL) cache.invalidate(name);
+    void probeTool(bridge, tool, locus).then((probe) => showCheck({ status: "checked", probe }));
+  }, [bridge, cache, locus, slot, tool]);
+
+  return { state, start, cancel, checkAgain };
 }
 
-/**
- * Forget the completion EVERY install an owner is running would run — any tool, any machine —
- * without stopping the installs. For a session whose preparation was cancelled: an install
- * still running for it must not answer a question nobody is asking any more.
- */
-export function useDropOwnerInstallContinuations(): (owner: string) => void {
-  const { cache } = useBridgeContext();
-  return useCallback(
-    (owner) => {
-      const prefix = `tool-install:${owner}:`;
-      for (const [key, record] of runs.get(cache) ?? []) {
-        if (key.startsWith(prefix)) record.continuation = undefined;
-      }
-    },
-    [cache],
-  );
-}
-
-/**
- * Forget the completion an owner's running install would run, without stopping the install.
- * For a surface that has moved on — the reviewer answered the question the install was for
- * another way — so the install finishing does not answer it a second time.
- */
-export function useDropInstallContinuation(): (
-  owner: string,
-  tool: SourceControlToolId,
-  locus: Locus | undefined,
-) => void {
-  const { cache } = useBridgeContext();
-  return useCallback(
-    (owner, tool, locus) => {
-      runRecord(
-        cache,
-        `tool-install:${owner}:${tool}:${locus === undefined ? "?" : locusKey(locus)}`,
-      ).continuation = undefined;
-    },
-    [cache],
-  );
+/** Whether THIS owner's install of `tool` on `locus` ended with the daemon's "installed". */
+export function useInstalledByOwner(options: {
+  readonly tool: SourceControlToolId;
+  readonly locus: Locus | undefined;
+  readonly owner: string;
+}): boolean {
+  const { state } = useToolInstall(options);
+  return state.phase === "done" && state.result.status === "installed";
 }

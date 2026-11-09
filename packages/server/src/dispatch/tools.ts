@@ -11,11 +11,13 @@ export function toolsHandlers(rt: DispatchRuntime) {
     "tools.install": async (rawInput) => {
       const name = "tools.install" as const;
       // Streams the installer's output as `tool-install-output` progress events under the
-      // input's command id while it runs, then answers with the re-probed tool. Absent dep ⇒
-      // this composition has no installer at all, which FAILS loudly rather than pretending.
+      // input's command id while it runs, then answers with the re-probed tool. A `rejoin`
+      // never starts an installer: an id the daemon knows nothing of answers `unknown`.
+      // Absent dep ⇒ this composition has no installer at all, which FAILS loudly rather
+      // than pretending.
       const input = parseCommandInput(name, rawInput);
       if (!deps.tools) throw new Error("tools.install: no installer is wired");
-      return parseCommandOutput(name, { result: await deps.tools.install(input) });
+      return parseCommandOutput(name, await deps.tools.install(input));
     },
     "tools.cancelInstall": async (rawInput) => {
       const name = "tools.cancelInstall" as const;

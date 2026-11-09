@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef } from "react";
 import { useCommand, useMutation, useRefreshCommand } from "../data";
 import { useScopedHandle, useScopedState } from "../data/scoped-state";
 import { ActionFailureLine, useActionFailure } from "../preparation/action-failure";
-import { useWithdrawInstallContinuations } from "../preparation/install-continuations";
 import { LargeFileChoice, largeFileFailureKey } from "../preparation/large-file-choice";
 import { PreparationFailure, retryFailureKey } from "../preparation/preparation-failure";
 import { preparationPhase, preparationStopped } from "../preparation/preparation-phase";
@@ -59,7 +58,6 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
   const refreshSessions = useRefreshCommand("session.list");
   const cancel = useMutation("session.cancelPreparation", { invalidates: ["session.list"] });
   const cancelFailure = useActionFailure();
-  const withdrawInstallContinuations = useWithdrawInstallContinuations();
   const phase = preparationPhase(preparation);
   const presenceShown = usePresenceShown();
   // The large-file dialog's remembered state belongs to ONE question. When the session is
@@ -97,8 +95,6 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
         aria-label="Cancel board generation"
         disabled={cancel.pending}
         onClick={() => {
-          // Cancelled means no install still running for this review answers for it later.
-          withdrawInstallContinuations(session.id);
           cancelFailure.run(
             () => cancel.mutate({ sessionId: session.id }),
             "Rennet couldn't cancel this review. Try again.",

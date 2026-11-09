@@ -599,11 +599,13 @@ export interface DispatchDeps {
    * Absent ⇒ this composition cannot install anything, and the command says so.
    */
   readonly tools?: {
+    /** The verdict, or — only for `rejoin`, which never starts an installer — `unknown`. */
     install(input: {
       tool: SourceControlToolId;
       locus: Locus;
       commandId: string;
-    }): Promise<CommandOutput<"tools.install">["result"]>;
+      rejoin?: true | undefined;
+    }): Promise<CommandOutput<"tools.install">>;
     cancelInstall(commandId: string): CommandOutput<"tools.cancelInstall">;
   };
   /**

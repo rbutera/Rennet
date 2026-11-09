@@ -205,24 +205,33 @@ same environment its own git work uses: each reads **Available** with its proven
 **Not Installed**, or **Unreachable**, and a missing one offers **Install for me** (this
 machine or a WSL distribution; a paired remote device shows the fix without the button).
 Install for me streams the installer's output, shows the command it is running with a
-copy button (from the first moment of the run, not only once it ends), and re-probes. An
-install belongs to whoever started it — a session's failure block or large-file question
-— so it keeps running, and finishes the job it was started for, across a remount, a
-dismissed dialog or a dropped connection to the daemon; until the machine it installs on
-is known, the button waits; where no installer exists it shows the command and a link
-instead. Cancelling the review withdraws that job: an install that lands after a Cancel
-neither answers the large-file question nor retries, and one that lands after the review
-moved on (a Retry, a cancel in another window) checks the session first and does nothing.
-After a dropped connection the button asks the daemon again under the same command id,
-and the daemon treats it as the same request: a run still going is re-joined, with its
-output so far sent as one snapshot that replaces the drawer's, and a run that finished
-meanwhile answers with the verdict the daemon keeps for it (about ten minutes, for the
-last few dozen commands), so the installer never runs twice for one press. Only that
-verdict settles the button; a probe that sees the binary is not read as installed, since
-`git lfs install` may still be running or have failed. A Cancel pressed while the
-connection is down is sent once it is back, and the install is not asked for again; a
-cancel that reaches a command that already finished stops nothing and reports what
-happened. The first-run tools stage reads the same probe. Below them, Source Control
+copy button (from the first moment of the run, not only once it ends), and re-probes. The
+verdict is the re-probe's: if every step succeeds but the tool still doesn't answer, the
+install reports that plainly as a failure, never as installed. An install belongs to whoever
+started it — a session's failure block or large-file question — so it keeps running
+across a remount, a dismissed dialog or a dropped connection to the daemon; until the
+machine it installs on is known, the button waits; where no installer exists it shows the
+command and a link instead. When it lands it sends nothing on your behalf: the large-file
+question returns to its two choices with Download available, and the failure block makes
+Retry its primary action. You click the next step.
+
+After a dropped connection the button asks the daemon again under the same command id as a
+*rejoin*, which never starts an installer: a run still going is re-joined, with its output
+so far sent as one snapshot that replaces the drawer's (the daemon keeps exactly the last
+64,000 characters, the same as the drawer, so the snapshot never shows less than you
+had), and a run that finished meanwhile answers with the verdict the daemon keeps for it
+(about ten minutes, for the last 32 commands). A daemon that knows neither — it restarted,
+or the verdict aged out — answers that it doesn't know, and the button says plainly that
+Rennet lost track of the install, with **Check again** (a re-probe that only shows what is
+installed) and **Install for me** (a fresh install you ask for). So a reconnect never runs
+the installer a second time. Only the daemon's verdict settles the button as installed; a
+probe that sees the binary is not read as installed, since `git lfs install` may still be
+running or have failed. A Cancel pressed while the connection is down is sent once it is
+back, and the install is not asked for again; a cancel that reaches a command that already
+finished stops nothing and reports what happened, and one the daemon knows nothing of
+reads as lost track rather than claiming the install stopped.
+
+The first-run tools stage reads the same probe. Below Git and Git LFS, Source Control
 reports GitHub / `gh` and GitLab.com / `glab` CLI readiness on each host. Detection runs per host exactly as agent detection does: the daemon
 runs the probes on each machine the only way it can, so a WSL distribution shows
 its own CLI versions and authentication state, while a host the daemon cannot

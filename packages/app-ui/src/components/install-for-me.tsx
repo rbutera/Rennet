@@ -1,8 +1,8 @@
-import type { CommandOutput, Locus, SourceControlToolId } from "@rennet/protocol";
+import type { Locus, SourceControlToolId, ToolInstallResult } from "@rennet/protocol";
 import { Button, Collapse, cn, Spinner } from "@rennet/ui";
 import { Check, ChevronRight, Copy, ExternalLink } from "lucide-react";
 import { useId, useState } from "react";
-import { useToolInstall } from "../data/tool-install";
+import { type LostCheck, useToolInstall } from "../data/tool-install";
 import { Icon } from "./icon";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -20,9 +20,13 @@ import { Icon } from "./icon";
 //     the daemon runs nothing and answers `manual`: the command and a link replace the button.
 //   • Until the machine to install on is known the button waits, disabled: an install that
 //     guessed "this Mac" for a WSL project would install on the wrong machine.
+//   • When Rennet lost track of an install (the connection dropped and the daemon no longer
+//     knows it), it says so, and offers Check again — which only shows what is installed —
+//     and Install for me, a fresh install the person asks for.
 //
-// `onInstalled` is the parent's hook to Retry a preparation or re-read a row. `owner` keeps
-// the install with whoever it is for (a session) across remounts — see `useToolInstall`.
+// It sends nothing on anyone's behalf when it lands: the surface around it offers the next
+// step (Download, Retry). `owner` keeps the install with whoever it is for (a session)
+// across remounts — see `useToolInstall`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const TOOL_NAME: Readonly<Record<SourceControlToolId, string>> = {
@@ -30,7 +34,7 @@ export const TOOL_NAME: Readonly<Record<SourceControlToolId, string>> = {
   "git-lfs": "Git LFS",
 };
 
-type InstallResult = CommandOutput<"tools.install">["result"];
+type InstallResult = ToolInstallResult;
 
 export interface InstallForMeProps {
   readonly tool: SourceControlToolId;
@@ -38,7 +42,6 @@ export interface InstallForMeProps {
   readonly locus: Locus | undefined;
   /** Whose install this is (a session id). Absent, it belongs to this component alone. */
   readonly owner?: string;
-  readonly onInstalled?: (result: Extract<InstallResult, { status: "installed" }>) => void;
   /** The button's own label, when a surface needs to say more than "Install for me". */
   readonly label?: string;
   readonly className?: string;
@@ -48,16 +51,10 @@ export function InstallForMe({
   tool,
   locus,
   owner,
-  onInstalled,
   label = "Install for me",
   className,
 }: InstallForMeProps) {
-  const install = useToolInstall({
-    tool,
-    locus,
-    ...(owner === undefined ? {} : { owner }),
-    ...(onInstalled ? { onInstalled } : {}),
-  });
+  const install = useToolInstall({ tool, locus, ...(owner === undefined ? {} : { owner }) });
   const { state } = install;
   const name = TOOL_NAME[tool];
   const phase = state.phase === "done" ? state.result.status : state.phase;
@@ -99,6 +96,28 @@ export function InstallForMe({
           {state.command === undefined ? null : <CommandLine command={state.command} />}
           <OutputDrawer output={state.output} defaultOpen live />
         </>
+      ) : state.phase === "lost" ? (
+        <>
+          <p role="status" className="text-ink text-sm">
+            Rennet lost track of the {name} install. It may have finished, or stopped.
+          </p>
+          <LostCheckLine name={name} check={state.check} />
+          {state.command === undefined ? null : <CommandLine command={state.command} />}
+          <OutputDrawer output={state.output} />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={state.check.status === "checking"}
+              onClick={install.checkAgain}
+            >
+              Check again
+            </Button>
+            <Button variant="accent" size="sm" onClick={install.start}>
+              {label}
+            </Button>
+          </div>
+        </>
       ) : state.phase === "unavailable" ? (
         <>
           <p className="text-danger text-sm">{state.message}</p>
@@ -112,6 +131,24 @@ export function InstallForMe({
         <InstallVerdict name={name} result={state.result} onRetry={install.start} />
       )}
     </div>
+  );
+}
+
+/** What Check again found. Shown only: a binary on PATH says nothing about the setup step. */
+function LostCheckLine({ name, check }: { readonly name: string; readonly check: LostCheck }) {
+  if (check.status === "idle") return null;
+  if (check.status === "checking") {
+    return <p className="text-ink-soft text-xs">Checking for {name}…</p>;
+  }
+  const { probe } = check;
+  return (
+    <p data-slot="lost-check" className="text-ink-soft text-xs">
+      {probe === undefined
+        ? `Rennet couldn't check for ${name} here.`
+        : probe.status === "available"
+          ? `${name} answers on this machine${probe.version ? ` (${probe.version})` : ""}.`
+          : `${name} isn't installed on this machine.`}
+    </p>
   );
 }
 

@@ -170,6 +170,21 @@ const toolInstallResultSchema = z.discriminatedUnion("status", [
     probe: detectedSourceControlToolSchema,
   }),
 ]);
+export type ToolInstallResult = z.infer<typeof toolInstallResultSchema>;
+
+/**
+ * What `tools.install` answers: the verdict, or — ONLY to a request sent with `rejoin: true` —
+ * `{ outcome: "unknown" }`, meaning the daemon has no run and no retained verdict for that
+ * command id (it restarted, or the verdict aged out). A rejoin never starts an installer, so
+ * "unknown" is the honest answer: nothing is known to have run, and nothing was started.
+ * A request without `rejoin` never receives it, so a client that predates `rejoin` parses
+ * every answer it can get with the `{ result }` shape alone.
+ */
+const toolInstallOutputSchema = z.union([
+  z.object({ result: toolInstallResultSchema }),
+  z.object({ outcome: z.literal("unknown") }),
+]);
+export type ToolInstallOutput = z.infer<typeof toolInstallOutputSchema>;
 
 const definitions = {
   "app.bootstrap": {
@@ -553,13 +568,20 @@ const definitions = {
   // output as a `tool-install-output` progress event under `commandId`, then re-probes the
   // tool; anywhere else it runs nothing and answers `manual` with the command and a link. The
   // result carries the tool's real state after the run, not the installer's opinion of it.
+  //
+  // `rejoin: true` asks about a command id the client already sent, after its connection
+  // dropped: the daemon joins the run still going under that id, or answers with the verdict
+  // it retained, and when it knows neither it answers `{ outcome: "unknown" }` and STARTS
+  // NOTHING. A reconnect must never run an installer a second time. Optional and additive: a
+  // request without it behaves exactly as before.
   "tools.install": {
     input: z.object({
       tool: SourceControlToolIdSchema,
       locus: locusSchema,
       commandId: commandIdSchema,
+      rejoin: z.literal(true).optional(),
     }),
-    output: z.object({ result: toolInstallResultSchema }),
+    output: toolInstallOutputSchema,
   },
   // Stop a running `tools.install` by its `commandId`: the running step and everything it
   // started are terminated and no later step runs. `cancelled: false` when nothing by that id

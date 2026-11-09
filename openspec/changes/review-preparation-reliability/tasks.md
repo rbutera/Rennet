@@ -76,6 +76,12 @@
   - Deviation: the large-files control is not under Environments. It lives under Settings → Projects → Worktrees, as the "Large Files in Review Checkouts" row on each repository that uses Git LFS (or already has a recorded choice), because `checkout.largeFiles` is a repository-rung setting and that is where the other per-repository checkout settings sit. The Git and Git LFS rows are under Environments as planned.
 - [x] 3.6 First-run welcome tools stage: show Git and Git LFS rows from the same probes with Install for me.
   - Verify: the welcome dom test covers git-lfs absent with an install action.
+- [x] 3.8 Deviation (after review round 3): Install for me sends nothing when it lands.
+  - The automatic follow-ups (answering Download from the large-file dialog, retrying from the failure block) are removed, with their Cancel-side withdrawal and session re-read. Their races survived three review rounds; the brief asked only that the install stream its result and let the reviewer Retry.
+  - The dialog returns to its choices with Download available and "Git LFS is installed"; the failure block shows the verdict with Retry as the primary action.
+  - Reconnect asks with `tools.install` `rejoin: true`, which never starts an installer; a daemon that knows nothing of the id answers `unknown` and the button says Rennet lost track, with Check again and Install for me.
+  - The replay keeps exactly the client's 64,000-character tail; `session.chooseLargeFileMode` never resumes a cancelled preparation; an install whose steps succeed but whose re-probe fails is a failure.
+  - Verify: tests assert no action is sent when an install lands (including Install, Escape, Cancel, install lands), the next step works when clicked, a rejoin of an unknown id runs the installer 0 times, and a reconnect answered `unknown` shows the lost-track state and dispatches no non-rejoin install.
 - [x] 3.7 Copy pass against DESIGN.md (sentence case, no machinery nouns); update `packages/app-ui/DESIGN.md`'s preparation section to describe the animated presence and the failure block.
   - Verify: grep shows no remaining "No board for this generation yet." or "No review is attached" in the preparation paths.
 

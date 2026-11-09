@@ -7,6 +7,7 @@ import type {
   DetectedSourceControlTool,
   RennetBridge,
   ToolInstallProgressEvent,
+  ToolInstallResult,
 } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
@@ -20,7 +21,7 @@ import { InstallForMe } from "./install-for-me";
 // that answered at once would pass every "while it runs" assertion vacuously.
 
 type InstallInput = CommandInput<"tools.install">;
-type InstallResult = CommandOutput<"tools.install">["result"];
+type InstallResult = ToolInstallResult;
 
 const probe = (status: DetectedSourceControlTool["status"]): DetectedSourceControlTool => ({
   id: "git-lfs",
@@ -61,14 +62,9 @@ const view = () => document.querySelector('[data-kind="install-for-me"]');
 describe("Install for me", () => {
   it("streams the installer's output while it runs, then reports the re-probe", async () => {
     const held = heldInstall();
-    const installed: unknown[] = [];
     const { user } = mount(
       <BridgeProvider bridge={held.bridge}>
-        <InstallForMe
-          tool="git-lfs"
-          locus={{ kind: "host" }}
-          onInstalled={(result) => installed.push(result)}
-        />
+        <InstallForMe tool="git-lfs" locus={{ kind: "host" }} />
       </BridgeProvider>,
     );
 
@@ -113,7 +109,8 @@ describe("Install for me", () => {
     expect(document.querySelector('[data-slot="install-command"]')?.textContent).toBe(
       "brew install git-lfs && git lfs install",
     );
-    expect(installed).toHaveLength(1);
+    // The first press is a fresh request, never a rejoin.
+    expect(call.rejoin).toBeUndefined();
   });
 
   it("cancels the running install by its own commandId", async () => {
@@ -146,14 +143,9 @@ describe("Install for me", () => {
 
   it("says a failure plainly and keeps the installer's output behind the drawer", async () => {
     const held = heldInstall();
-    const installed: unknown[] = [];
     const { user } = mount(
       <BridgeProvider bridge={held.bridge}>
-        <InstallForMe
-          tool="git-lfs"
-          locus={{ kind: "host" }}
-          onInstalled={(result) => installed.push(result)}
-        />
+        <InstallForMe tool="git-lfs" locus={{ kind: "host" }} />
       </BridgeProvider>,
     );
     await user.click(screen.getByRole("button", { name: "Install for me" }));
@@ -177,8 +169,6 @@ describe("Install for me", () => {
     expect(document.querySelector('[data-slot="install-output"]')?.textContent).toContain(
       "No such keg",
     );
-    // A failed install never reports itself installed to the parent.
-    expect(installed).toEqual([]);
   });
 
   it("shows the manual command and a docs link instead of running anything", async () => {
@@ -236,19 +226,13 @@ describe("Install for me", () => {
     );
   });
 
-  it("finishes for the owner that started it, even after the button moved to another owner", async () => {
+  it("keeps an install with the owner that started it, even after the button moved to another owner", async () => {
     // The workspace is not keyed by session: one Install for me can show session A, then B.
-    // A's install landing must run A's continuation — never B's — and B starts idle.
+    // A's install stays A's — its verdict is A's to show — and B starts idle.
     const held = heldInstall();
-    const ran: string[] = [];
     const button = (owner: string) => (
       <BridgeProvider bridge={held.bridge}>
-        <InstallForMe
-          tool="git-lfs"
-          locus={{ kind: "host" }}
-          owner={owner}
-          onInstalled={() => ran.push(owner)}
-        />
+        <InstallForMe tool="git-lfs" locus={{ kind: "host" }} owner={owner} />
       </BridgeProvider>
     );
     const { user, rerender } = mount(button("session-a"));
@@ -264,7 +248,7 @@ describe("Install for me", () => {
       output: "",
       probe: probe("available"),
     });
-    await waitFor(() => expect(ran).toEqual(["session-a"]));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
     // B never ran an install, so it still offers one.
     expect(view()?.getAttribute("data-phase")).toBe("idle");
 
@@ -273,44 +257,13 @@ describe("Install for me", () => {
     expect(view()?.getAttribute("data-phase")).toBe("installed");
   });
 
-  it("runs the continuation bound when the install started, not a later one", async () => {
-    const held = heldInstall();
-    const ran: string[] = [];
-    const button = (label: string) => (
-      <BridgeProvider bridge={held.bridge}>
-        <InstallForMe
-          tool="git-lfs"
-          locus={{ kind: "host" }}
-          owner="session-a"
-          onInstalled={() => ran.push(label)}
-        />
-      </BridgeProvider>
-    );
-    const { user, rerender } = mount(button("first"));
-    await user.click(screen.getByRole("button", { name: "Install for me" }));
-    await waitFor(() => expect(held.calls).toHaveLength(1));
-    rerender(button("second"));
-    held.settle({
-      status: "installed",
-      command: "brew install git-lfs && git lfs install",
-      output: "",
-      probe: probe("available"),
-    });
-    await waitFor(() => expect(ran).toEqual(["first"]));
-  });
-
   describe("across a dropped connection", () => {
     it("keeps the install running, keeps its output, and settles from the daemon's verdict on reconnect", async () => {
       const flaky = new FlakyBridge();
       flaky.probe = probe("available");
-      const installed: unknown[] = [];
       const { user } = mount(
         <BridgeProvider bridge={flaky}>
-          <InstallForMe
-            tool="git-lfs"
-            locus={{ kind: "host" }}
-            onInstalled={(result) => installed.push(result)}
-          />
+          <InstallForMe tool="git-lfs" locus={{ kind: "host" }} />
         </BridgeProvider>,
       );
       await user.click(screen.getByRole("button", { name: "Install for me" }));
@@ -330,10 +283,11 @@ describe("Install for me", () => {
       expect(log?.textContent).toContain("Summary");
 
       act(() => flaky.reconnect());
-      // The SAME request goes back to the daemon: it answers with that run's verdict (a run
-      // that finished meanwhile answers from the verdict it kept).
+      // The SAME request goes back to the daemon as a rejoin: it answers with that run's
+      // verdict (a run that finished meanwhile answers from the verdict it kept).
       await waitFor(() => expect(flaky.installs).toHaveLength(2), { timeout: 4_000 });
       expect(flaky.installs[1]?.commandId).toBe(commandId);
+      expect(flaky.installs[1]?.rejoin).toBe(true);
       await waitFor(() =>
         expect(screen.getByRole("status").textContent).not.toContain("reconnecting"),
       );
@@ -346,7 +300,6 @@ describe("Install for me", () => {
         }),
       );
       await waitFor(() => expect(view()?.getAttribute("data-phase")).toBe("installed"));
-      expect(installed).toHaveLength(1);
     });
 
     it("never reads a probe that finds the binary as installed: an init that failed is a failure", async () => {
@@ -354,14 +307,9 @@ describe("Install for me", () => {
       // install` may still be running — or fail. Seeing the binary is not the verdict.
       const flaky = new FlakyBridge();
       flaky.probe = probe("available");
-      const installed: unknown[] = [];
       const { user } = mount(
         <BridgeProvider bridge={flaky}>
-          <InstallForMe
-            tool="git-lfs"
-            locus={{ kind: "host" }}
-            onInstalled={(result) => installed.push(result)}
-          />
+          <InstallForMe tool="git-lfs" locus={{ kind: "host" }} />
         </BridgeProvider>,
       );
       await user.click(screen.getByRole("button", { name: "Install for me" }));
@@ -371,7 +319,6 @@ describe("Install for me", () => {
       await waitFor(() => expect(flaky.installs).toHaveLength(2), { timeout: 4_000 });
       // Still running, Cancel and all: nothing was concluded from the probe.
       expect(view()?.getAttribute("data-phase")).toBe("running");
-      expect(installed).toEqual([]);
 
       act(() =>
         flaky.settle({
@@ -386,7 +333,6 @@ describe("Install for me", () => {
       );
       await waitFor(() => expect(view()?.getAttribute("data-phase")).toBe("failed"));
       expect(view()?.textContent).toContain("Git LFS couldn't be set up.");
-      expect(installed).toEqual([]);
     });
 
     it("sends a Cancel pressed while disconnected once the connection is back, and never asks to install again", async () => {
@@ -495,6 +441,93 @@ describe("Install for me", () => {
       await waitFor(() => expect(view()?.getAttribute("data-phase")).toBe("failed"));
       expect(view()?.textContent).toContain("Homebrew couldn't install Git LFS.");
     });
+
+    it("says it lost track when the daemon knows nothing of the install on reconnect, and installs nothing", async () => {
+      // The daemon restarted (or the verdict aged out) while the connection was down. The
+      // rejoin answers unknown; the install must NOT be asked for again under any id.
+      const flaky = new FlakyBridge();
+      flaky.forgetsOnRejoin = true;
+      flaky.probe = probe("available");
+      const { user } = mount(
+        <BridgeProvider bridge={flaky}>
+          <InstallForMe tool="git-lfs" locus={{ kind: "host" }} />
+        </BridgeProvider>,
+      );
+      await user.click(screen.getByRole("button", { name: "Install for me" }));
+      await waitFor(() => expect(flaky.installs).toHaveLength(1));
+      const commandId = flaky.installs[0]?.commandId ?? "";
+      act(() => flaky.emit(commandId, "==> Pouring git-lfs\n"));
+      act(() => flaky.drop());
+      act(() => flaky.reconnect());
+
+      await waitFor(() => expect(view()?.getAttribute("data-phase")).toBe("lost"), {
+        timeout: 4_000,
+      });
+      expect(view()?.textContent).toContain("Rennet lost track of the Git LFS install.");
+      // The one ask after the reconnect was a rejoin of the same id; nothing else went out.
+      expect(flaky.installs).toHaveLength(2);
+      expect(flaky.installs[1]).toMatchObject({ commandId, rejoin: true });
+      await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+      expect(flaky.installs.filter((call) => call.rejoin !== true)).toHaveLength(1);
+
+      // Check again shows what is there, and decides nothing: still lost, still no install.
+      await user.click(screen.getByRole("button", { name: "Check again" }));
+      await waitFor(() =>
+        expect(document.querySelector('[data-slot="lost-check"]')?.textContent).toBe(
+          "Git LFS answers on this machine (3.6.1).",
+        ),
+      );
+      expect(view()?.getAttribute("data-phase")).toBe("lost");
+      expect(flaky.installs).toHaveLength(2);
+
+      // Install for me is a fresh press: a NEW command id, not a rejoin.
+      await user.click(screen.getByRole("button", { name: "Install for me" }));
+      await waitFor(() => expect(flaky.installs).toHaveLength(3));
+      expect(flaky.installs[2]?.commandId).not.toBe(commandId);
+      expect(flaky.installs[2]?.rejoin).toBeUndefined();
+      expect(view()?.getAttribute("data-phase")).toBe("running");
+    });
+
+    it("says it lost track, not that it stopped, when a late Cancel finds the daemon knows nothing", async () => {
+      const flaky = new FlakyBridge();
+      flaky.cancelAnswer = { cancelled: false };
+      const { user } = mount(
+        <BridgeProvider bridge={flaky}>
+          <InstallForMe tool="git-lfs" locus={{ kind: "host" }} />
+        </BridgeProvider>,
+      );
+      await user.click(screen.getByRole("button", { name: "Install for me" }));
+      await waitFor(() => expect(flaky.installs).toHaveLength(1));
+      act(() => flaky.drop());
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+      act(() => flaky.reconnect());
+      await waitFor(() => expect(view()?.getAttribute("data-phase")).toBe("lost"), {
+        timeout: 4_000,
+      });
+      expect(view()?.textContent).not.toContain("was stopped");
+      expect(flaky.installs).toHaveLength(1);
+    });
+
+    it("re-offers Cancel when the daemon refuses the reconnect's cancel, as a direct Cancel does", async () => {
+      const flaky = new FlakyBridge();
+      flaky.cancelRefusal = new Error("acme refused");
+      const { user } = mount(
+        <BridgeProvider bridge={flaky}>
+          <InstallForMe tool="git-lfs" locus={{ kind: "host" }} />
+        </BridgeProvider>,
+      );
+      await user.click(screen.getByRole("button", { name: "Install for me" }));
+      await waitFor(() => expect(flaky.installs).toHaveLength(1));
+      act(() => flaky.drop());
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+      act(() => flaky.reconnect());
+      // Still running — not "unavailable" — with Cancel offered again, and the run re-joined.
+      await waitFor(() => expect(flaky.installs).toHaveLength(2), { timeout: 4_000 });
+      expect(flaky.installs[1]?.rejoin).toBe(true);
+      expect(view()?.getAttribute("data-phase")).toBe("running");
+      const cancel = screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement;
+      expect(cancel.disabled).toBe(false);
+    });
   });
 });
 
@@ -510,6 +543,10 @@ class FlakyBridge implements Pick<RennetBridge, "invoke" | "onToolInstallProgres
   probe: DetectedSourceControlTool = probe("not-installed");
   /** What `tools.cancelInstall` answers: by default, the daemon stopped a running install. */
   cancelAnswer: CommandOutput<"tools.cancelInstall"> = { cancelled: true };
+  /** `tools.cancelInstall` is refused outright (not a dropped connection). */
+  cancelRefusal: Error | undefined;
+  /** A rejoin finds a daemon that knows nothing of the id (it restarted). */
+  forgetsOnRejoin = false;
   #online = true;
   readonly #pending = new Set<(reason: unknown) => void>();
   #release: ((result: InstallResult) => void) | undefined;
@@ -525,6 +562,10 @@ class FlakyBridge implements Pick<RennetBridge, "invoke" | "onToolInstallProgres
       };
       if (name === "tools.install") {
         this.installs.push(input as InstallInput);
+        if (this.forgetsOnRejoin && (input as InstallInput).rejoin === true) {
+          done({ outcome: "unknown" });
+          return;
+        }
         this.#release = (result) => done({ result });
       } else if (name === "forge.hosts") {
         done({
@@ -532,6 +573,11 @@ class FlakyBridge implements Pick<RennetBridge, "invoke" | "onToolInstallProgres
         });
       } else if (name === "tools.cancelInstall") {
         this.cancels.push((input as CommandInput<"tools.cancelInstall">).commandId);
+        if (this.cancelRefusal !== undefined) {
+          this.#pending.delete(reject);
+          reject(this.cancelRefusal);
+          return;
+        }
         done(this.cancelAnswer);
       } else {
         reject(new Error(`FlakyBridge: no handler for ${name}`));

@@ -8,18 +8,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@rennet/ui";
-import { ArrowLeft, Download, FileDown } from "lucide-react";
+import { ArrowLeft, Check, Download, FileDown } from "lucide-react";
 import { type RefObject, useId } from "react";
 import { Icon } from "../components/icon";
 import { InstallForMe } from "../components/install-for-me";
 import { useMutation } from "../data";
 import { useScopedState } from "../data/scoped-state";
-import { useDropInstallContinuation } from "../data/tool-install";
-import {
-  asksLargeFileChoice,
-  largeFileInstallOwner,
-  useWhileStillAsking,
-} from "./install-continuations";
+import { useInstalledByOwner } from "../data/tool-install";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE LARGE-FILE CHOICE (large-file-checkout spec, D4, task 3.4).
@@ -35,20 +30,18 @@ import {
 // that line), so dismissing it never strands the reviewer.
 //
 // Download needs Git LFS. When it is not installed, picking Download turns the dialog to
-// Install for me and Skip for now, and the checkout continues after either (spec: "Download
-// chosen, git-lfs missing"). Skip for now answers for this review only, so the project's
-// next review asks again — "for now" is exactly that.
+// Install for me and Skip for now (spec: "Download chosen, git-lfs missing"). Skip for now
+// answers for this review only, so the project's next review asks again — "for now" is
+// exactly that. When the install lands, the dialog goes back to the two choices with
+// Download available and says Git LFS is installed; the reviewer clicks Download. The
+// install answers nothing itself: an answer sent on the reviewer's behalf raced Cancel.
 //
 // WHAT OUTLIVES THE DIALOG. The route can swap the workspace under it mid-question (the
 // review attaches while the question is open), so which screen it is on, whether it was
 // answered, and the install running under it are kept per session (`useScopedState`, and
 // the install's own `owner`), not in this component. Closing it — Escape — does not stop an
-// install either: the install keeps running and, when it lands, answers Download as the
-// reviewer asked. Any OTHER answer withdraws that: once Skip is submitted, an install that
-// finishes later must not send a second, contradicting choice. So does a Cancel of the
-// preparation, and the landing install answers only if the session is STILL asking — read
-// from the daemon at that moment (`install-continuations.ts`). A failure to record the
-// answer is kept per session too, so the remounted dialog still says it.
+// install either: it keeps running, and reopening the dialog finds it, or its verdict. A
+// failure to record the answer is kept per session too, so the remounted dialog says it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface LargeFileChoiceProps {
@@ -77,6 +70,11 @@ export const LARGE_FILE_REMEMBERED =
 
 const FIRST_SCREEN: ChoiceScreen = { needsLfs: false, answered: false };
 
+/** The owner an install started from a session's large-file dialog runs under. */
+export function largeFileInstallOwner(sessionId: string): string {
+  return `large-file:${sessionId}`;
+}
+
 /** Where a session's large-file dialog keeps a failed answer's sentence across a remount. */
 export function largeFileFailureKey(sessionId: string): string {
   return `large-file-failure:${sessionId}`;
@@ -95,25 +93,25 @@ export function LargeFileChoice({
     `large-file-choice:${sessionId}`,
     FIRST_SCREEN,
   );
-  const { needsLfs, answered } = screen;
-  // Per session, like the screen: an answer the install's continuation sent after the route
-  // swap remounted this dialog must still be able to say it did not go through.
+  // Per session, like the screen: an answer that failed just before the route swap remounted
+  // this dialog must still be able to say it did not go through.
   const [failure, setFailure] = useScopedState<string | undefined>(
     largeFileFailureKey(sessionId),
     undefined,
   );
-  const dropInstallContinuation = useDropInstallContinuation();
-  const whileStillAsking = useWhileStillAsking();
   const owner = largeFileInstallOwner(sessionId);
+  // Git LFS installed from this dialog: Download is available now, so the "needs Git LFS"
+  // screen gives way to the choice again. Only the daemon's own verdict says so.
+  const installedHere = useInstalledByOwner({ tool: "git-lfs", locus, owner });
+  const lfsReady = lfsAvailable || installedHere;
+  const needsLfs = screen.needsLfs && !installedHere;
+  const { answered } = screen;
   // Answered: the dialog stays put, still, until the session row moves on and its owner
   // unmounts it. Closing it here would flash the "waiting for your choice" line for the
   // beat between the answer landing and the refreshed row arriving.
   const busy = choose.pending || answered;
 
   const answer = (mode: LargeFileMode, remember = true) => {
-    // This answer is THE answer: an install still running for Download must not send a
-    // second one when it lands.
-    dropInstallContinuation(owner, "git-lfs", locus);
     setFailure(undefined);
     choose
       .mutate({ sessionId, mode, commandId: newCommandId(), remember })
@@ -154,14 +152,7 @@ export function LargeFileChoice({
                 and the review continues with full files, or skip large files for now.
               </DialogDescription>
             </DialogHeader>
-            <InstallForMe
-              tool="git-lfs"
-              locus={locus}
-              owner={owner}
-              onInstalled={() =>
-                whileStillAsking(sessionId, asksLargeFileChoice, () => answer("download"))
-              }
-            />
+            <InstallForMe tool="git-lfs" locus={locus} owner={owner} />
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="outline"
@@ -190,16 +181,26 @@ export function LargeFileChoice({
                 Choose how review checkouts of this project treat them.
               </DialogDescription>
             </DialogHeader>
+            {installedHere ? (
+              <p
+                role="status"
+                data-slot="lfs-installed"
+                className="flex items-center gap-2 text-ink text-sm"
+              >
+                <Icon icon={Check} strokeWidth={2.5} className="size-3.5 text-green" />
+                Git LFS is installed. You can download large files now.
+              </p>
+            ) : null}
             <div className="grid gap-3">
               <ChoiceCard
                 mode="download"
                 icon={Download}
                 title="Download large files"
                 description="Full files in the checkout. Slower to open."
-                note={lfsAvailable ? undefined : "Needs Git LFS, which isn't installed here."}
+                note={lfsReady ? undefined : "Needs Git LFS, which isn't installed here."}
                 disabled={busy}
                 onChoose={() =>
-                  lfsAvailable
+                  lfsReady
                     ? answer("download")
                     : setScreen((previous) => ({ ...previous, needsLfs: true }))
                 }

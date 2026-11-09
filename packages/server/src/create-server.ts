@@ -205,7 +205,6 @@ import {
 import { type PromptContextFile, SESSION_BRIEFING_FILE } from "@rennet/prompts";
 import type {
   CodingHarnessSelection,
-  CommandOutput,
   ComposedHandoffBundle,
   ConventionCatalogue,
   CouncilHarnessId,
@@ -236,6 +235,8 @@ import type {
   SessionModel,
   SessionPreparation,
   SourceControlToolId,
+  ToolInstallOutput,
+  ToolInstallResult,
 } from "@rennet/protocol";
 import {
   canonicalize,
@@ -2211,7 +2212,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     /** The plan's command once it is resolved, carried on every event so a reviewer sees what
      *  is running while it runs (source-control-tooling: "the command SHALL be shown"). */
     command?: string;
-    readonly result: Promise<CommandOutput<"tools.install">["result"]>;
+    readonly result: Promise<ToolInstallResult>;
   }
   const toolInstallRuns = new Map<string, ToolInstallRun>();
   /** Install retries waiting for a cancelled run to die, by their command id. */
@@ -2230,7 +2231,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * (a client whose connection dropped mid-install asking again) is that command, not a new
    * install: it re-joins this promise and hears the output so far as one snapshot.
    */
-  type ToolInstallVerdict = CommandOutput<"tools.install">["result"];
+  type ToolInstallVerdict = ToolInstallResult;
   const toolInstallsByCommandId = new Map<string, Promise<ToolInstallVerdict>>();
   /**
    * The verdicts of FINISHED installs, by every command id that was waiting on one, kept for
@@ -2347,16 +2348,22 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * A command id is ONE request, however often it arrives: one still waiting re-joins its
    * own answer (with a snapshot of the output so far), and one that has finished gets its
    * retained verdict back — the installer never runs twice for it.
+   *
+   * `rejoin` is a client asking after a dropped connection. It only ever joins or reads back:
+   * a command id the daemon knows nothing of (it restarted, or the verdict aged out of the
+   * retained set) answers `{ outcome: "unknown" }` and starts NOTHING. Without `rejoin` an
+   * unknown id is a fresh request, exactly as before, so an older client is unaffected.
    */
   function installSourceControlTool(input: {
     readonly tool: SourceControlToolId;
     readonly locus: Locus;
     readonly commandId: string;
-  }): Promise<ToolInstallVerdict> {
+    readonly rejoin?: true | undefined;
+  }): Promise<ToolInstallOutput> {
     const finished = finishedToolInstall(input.commandId);
     if (finished !== undefined) {
       return finished.outcome.ok
-        ? Promise.resolve(finished.outcome.result)
+        ? Promise.resolve({ result: finished.outcome.result })
         : Promise.reject(finished.outcome.error);
     }
     const waiting = toolInstallsByCommandId.get(input.commandId);
@@ -2365,8 +2372,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         if (run.commandIds.has(input.commandId))
           replayToolInstall(input.commandId, input.tool, run);
       }
-      return waiting;
+      return waiting.then((result) => ({ result }));
     }
+    if (input.rejoin === true) return Promise.resolve({ outcome: "unknown" });
     const verdict = startOrJoinToolInstall(input);
     toolInstallsByCommandId.set(input.commandId, verdict);
     void verdict
@@ -2379,7 +2387,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           toolInstallsByCommandId.delete(input.commandId);
         }
       });
-    return verdict;
+    return verdict.then((result) => ({ result }));
   }
 
   function startOrJoinToolInstall(input: {
@@ -2468,7 +2476,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     signal: AbortSignal,
     onOutput: (stream: "stdout" | "stderr", chunk: string) => void,
     onCommand?: (command: string) => void,
-  ): Promise<CommandOutput<"tools.install">["result"]> {
+  ): Promise<ToolInstallResult> {
     const plan = await resolveInstallPlan(input.tool, {
       ...options.sourceControl?.installPlanDeps,
       ...(input.locus.kind === "wsl" ? { platform: "linux" as const } : {}),

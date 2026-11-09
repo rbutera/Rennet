@@ -258,16 +258,18 @@ the failure mode is a surface that quietly lies about it.
   Download needs a missing Git LFS, and Escape closes it to a calm line with a way back,
   where focus lands. Its state belongs to the SESSION, not the mount: the route swaps the
   workspace when the review attaches mid-question, and the dialog keeps its screen, its
-  dismissal and the install running under it. Escape does not stop that install; it
-  finishes and answers Download. Any other answer withdraws that, so an install landing
-  late never sends a second choice, and so does Cancel, from the inline control or the
-  floating chip: a cancelled review is never resumed by an install that lands after it.
-  Belt and braces, a landing install acts only if the session, read from the daemon at
-  that moment, is still asking what it answers (the failure block's Install for me
-  retries on the same terms: only while the session is still failed for want of it). A
-  write such a late install sends that does not go through says so in whichever dialog or
-  block is on screen by then, because its failure line belongs to the session too.
-  Install for me waits, disabled, until the project's machine is known.
+  dismissal and the install running under it. Escape does not stop that install.
+- **An install acts for nobody.** When Install for me lands it shows its verdict and the
+  surface makes the next step obvious; it sends nothing on the reviewer's behalf. In the
+  large-file dialog, Git LFS installed returns the dialog to the two choices with "Git LFS
+  is installed" and Download available, and the reviewer clicks Download. In the failure
+  block, the verdict ("Git LFS is installed") shows in place of the button and Retry
+  becomes the primary action. Automatic follow-ups (answering Download, retrying) raced
+  Cancel and Retry, so a cancelled review could resume itself; there are none. If the
+  connection drops and the daemon, once back, no longer knows the install (it restarted),
+  the button says plainly that Rennet lost track of it and offers Check again, which
+  only shows what is installed, and Install for me, a fresh install. Install for me waits,
+  disabled, until the project's machine is known.
 - **No tip over a review on its way.** First-run coach marks hold back while the session on
   screen is waiting or choosing (`Coachmark`'s `suppressed`, from `routes/layout.tsx`):
   there is nothing to teach yet, and a card there covered the way back to the question.
