@@ -399,6 +399,7 @@ export {
   ensurePrWorktree,
   ensureSiblingWorktree,
   expandWorktreeRootForWrite,
+  LARGE_FILES_HOOK_SKIPPED_WARNING,
   type LargeFileGitInvocation,
   type LargeFileMode,
   LOCAL_OWNER,

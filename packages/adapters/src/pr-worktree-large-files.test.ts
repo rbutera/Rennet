@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -17,6 +18,7 @@ import {
   ensureBranchWorktree,
   ensurePrWorktree,
   ensureSiblingWorktree,
+  LARGE_FILES_HOOK_SKIPPED_WARNING,
   largeFileGitInvocation,
 } from "./pr-worktree";
 
@@ -247,5 +249,123 @@ describe("worktree adds under a large-file mode", () => {
       kind: "tool-missing",
       tool: "git-lfs",
     });
+  });
+});
+
+/**
+ * The hook `git lfs install` writes into `.git/hooks/post-checkout`, verbatim. It runs after
+ * every checkout git makes, worktree adds included, and exits 2 when `git-lfs` is not on the
+ * PATH. Git propagates that exit code, so `worktree add` "fails" AFTER the worktree exists.
+ */
+const LFS_POST_CHECKOUT_HOOK = [
+  "#!/bin/sh",
+  `command -v git-lfs >/dev/null 2>&1 || { printf >&2 "\\n%s\\n\\n" "This repository is configured for Git LFS but 'git-lfs' was not found on your path. If you no longer wish to use Git LFS, remove this hook by deleting the 'post-checkout' file in the hooks directory (set by 'core.hookspath'; usually '.git/hooks')."; exit 2; }`,
+  'git lfs post-checkout "$@"',
+  "",
+].join("\n");
+
+function installHook(root: string, body: string): void {
+  const hook = join(root, ".git", "hooks", "post-checkout");
+  writeFileSync(hook, body);
+  chmodSync(hook, 0o755);
+}
+
+describe("skip under git-lfs's own post-checkout hook", () => {
+  it("checks a pull request out with pointer files and says the hook was skipped", async () => {
+    const { root, headOid, worktrees, git } = fixture();
+    installHook(root, LFS_POST_CHECKOUT_HOOK);
+    const target = join(worktrees, "acme", "widget", "pr-1");
+
+    const result = await ensurePrWorktree(git, root, target, headOid, { largeFiles: "skip" });
+
+    expect(result).toEqual({
+      path: target,
+      created: true,
+      warning: LARGE_FILES_HOOK_SKIPPED_WARNING,
+    });
+    expect(readFileSync(join(target, "assets", "model.bin"), "utf8")).toBe(POINTER);
+    // Re-opening the same snapshot is a plain hit, with no hook in the way.
+    expect(await ensurePrWorktree(git, root, target, headOid, { largeFiles: "skip" })).toEqual({
+      path: target,
+      created: false,
+    });
+  });
+
+  it("checks a branch out with pointer files", async () => {
+    const { root, worktrees, git } = fixture();
+    installHook(root, LFS_POST_CHECKOUT_HOOK);
+    const branchPath = join(worktrees, "branch", "feat", "large");
+
+    const branch = await ensureBranchWorktree(git, root, branchPath, "feat/large", {
+      largeFiles: "skip",
+    });
+
+    expect(branch).toEqual({
+      path: branchPath,
+      created: true,
+      warning: LARGE_FILES_HOOK_SKIPPED_WARNING,
+    });
+    expect(readFileSync(join(branchPath, "assets", "model.bin"), "utf8")).toBe(POINTER);
+  });
+
+  it("forks a sibling with pointer files", async () => {
+    const { root, worktrees, git } = fixture();
+    installHook(root, LFS_POST_CHECKOUT_HOOK);
+    const siblingPath = join(worktrees, "sibling", "main");
+
+    const sibling = await ensureSiblingWorktree(git, root, siblingPath, "main", {
+      largeFiles: "skip",
+    });
+
+    expect(sibling).toEqual({
+      path: siblingPath,
+      created: true,
+      workBranch: "rennet/main",
+      warning: LARGE_FILES_HOOK_SKIPPED_WARNING,
+    });
+    expect(readFileSync(join(siblingPath, "assets", "model.bin"), "utf8")).toBe(POINTER);
+  });
+
+  it("still fails download under the hook, classified as Git LFS missing", async () => {
+    const { root, headOid, worktrees, git } = fixture();
+    installHook(root, LFS_POST_CHECKOUT_HOOK);
+    const failure: unknown = await ensurePrWorktree(
+      git,
+      root,
+      join(worktrees, "pr-1"),
+      headOid,
+    ).then(
+      () => null,
+      (thrown: unknown) => thrown,
+    );
+    expect(classifyGitFailure(failure)).toMatchObject({ kind: "tool-missing", tool: "git-lfs" });
+  });
+
+  it("surfaces any other hook's failure in skip mode", async () => {
+    const { root, headOid, worktrees, git } = fixture();
+    installHook(root, '#!/bin/sh\necho "acme policy: checkouts are frozen" >&2\nexit 1\n');
+
+    const failure: unknown = await ensurePrWorktree(git, root, join(worktrees, "pr-1"), headOid, {
+      largeFiles: "skip",
+    }).then(
+      () => null,
+      (thrown: unknown) => thrown,
+    );
+    expect(failure).toBeInstanceOf(Error);
+    expect(String((failure as { stderr?: unknown }).stderr)).toContain(
+      "acme policy: checkouts are frozen",
+    );
+
+    const branchFailure: unknown = await ensureBranchWorktree(
+      git,
+      root,
+      join(worktrees, "branch", "feat", "large"),
+      "feat/large",
+      { largeFiles: "skip" },
+    ).then(
+      () => null,
+      (thrown: unknown) => thrown,
+    );
+    expect(branchFailure).toBeInstanceOf(Error);
   });
 });
