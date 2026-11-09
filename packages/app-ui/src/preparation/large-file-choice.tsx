@@ -9,12 +9,17 @@ import {
   DialogTitle,
 } from "@rennet/ui";
 import { ArrowLeft, Download, FileDown } from "lucide-react";
-import { type RefObject, useId, useState } from "react";
+import { type RefObject, useId } from "react";
 import { Icon } from "../components/icon";
 import { InstallForMe } from "../components/install-for-me";
 import { useMutation } from "../data";
 import { useScopedState } from "../data/scoped-state";
 import { useDropInstallContinuation } from "../data/tool-install";
+import {
+  asksLargeFileChoice,
+  largeFileInstallOwner,
+  useWhileStillAsking,
+} from "./install-continuations";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE LARGE-FILE CHOICE (large-file-checkout spec, D4, task 3.4).
@@ -40,7 +45,10 @@ import { useDropInstallContinuation } from "../data/tool-install";
 // the install's own `owner`), not in this component. Closing it — Escape — does not stop an
 // install either: the install keeps running and, when it lands, answers Download as the
 // reviewer asked. Any OTHER answer withdraws that: once Skip is submitted, an install that
-// finishes later must not send a second, contradicting choice.
+// finishes later must not send a second, contradicting choice. So does a Cancel of the
+// preparation, and the landing install answers only if the session is STILL asking — read
+// from the daemon at that moment (`install-continuations.ts`). A failure to record the
+// answer is kept per session too, so the remounted dialog still says it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface LargeFileChoiceProps {
@@ -69,9 +77,9 @@ export const LARGE_FILE_REMEMBERED =
 
 const FIRST_SCREEN: ChoiceScreen = { needsLfs: false, answered: false };
 
-/** The owner an install started from this dialog runs under: the session it is for. */
-export function largeFileInstallOwner(sessionId: string): string {
-  return `large-file:${sessionId}`;
+/** Where a session's large-file dialog keeps a failed answer's sentence across a remount. */
+export function largeFileFailureKey(sessionId: string): string {
+  return `large-file-failure:${sessionId}`;
 }
 
 export function LargeFileChoice({
@@ -88,8 +96,14 @@ export function LargeFileChoice({
     FIRST_SCREEN,
   );
   const { needsLfs, answered } = screen;
-  const [failure, setFailure] = useState<string | undefined>();
+  // Per session, like the screen: an answer the install's continuation sent after the route
+  // swap remounted this dialog must still be able to say it did not go through.
+  const [failure, setFailure] = useScopedState<string | undefined>(
+    largeFileFailureKey(sessionId),
+    undefined,
+  );
   const dropInstallContinuation = useDropInstallContinuation();
+  const whileStillAsking = useWhileStillAsking();
   const owner = largeFileInstallOwner(sessionId);
   // Answered: the dialog stays put, still, until the session row moves on and its owner
   // unmounts it. Closing it here would flash the "waiting for your choice" line for the
@@ -144,7 +158,9 @@ export function LargeFileChoice({
               tool="git-lfs"
               locus={locus}
               owner={owner}
-              onInstalled={() => answer("download")}
+              onInstalled={() =>
+                whileStillAsking(sessionId, asksLargeFileChoice, () => answer("download"))
+              }
             />
             <div className="flex flex-wrap items-center gap-2">
               <Button

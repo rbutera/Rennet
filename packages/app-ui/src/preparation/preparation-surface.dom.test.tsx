@@ -41,6 +41,7 @@ interface Recorded {
   readonly installs: CommandInput<"tools.install">[];
   readonly choices: CommandInput<"session.chooseLargeFileMode">[];
   readonly retries: CommandInput<"session.retryPreparation">[];
+  cancels: number;
 }
 
 function surface(
@@ -61,10 +62,22 @@ function surface(
     /** `session.cancelPreparation` and `session.chooseLargeFileMode` reject the same way. */
     readonly writesFail?: boolean;
     readonly workspaceNotes?: readonly string[];
+    /**
+     * The session's preparation as the daemon holds it NOW, read on every call: Retry moves
+     * it to capturing and Cancel to cancelled, as the daemon would, unless `cancelSticks` is
+     * false (a cancel the daemon's read does not show yet). Set it by hand to stand for
+     * another window acting on the session.
+     */
+    readonly live?: { current: SidebarSession["preparation"] };
+    readonly cancelSticks?: boolean;
+    /** Where the app opens, when not the session's board. */
+    readonly path?: string;
   } = {},
 ) {
+  const currentPreparation = () =>
+    options.live === undefined ? preparation : options.live.current;
   const reviewAttached = () => options.attached?.current ?? options.review === true;
-  const recorded: Recorded = { installs: [], choices: [], retries: [] };
+  const recorded: Recorded = { installs: [], choices: [], retries: [], cancels: 0 };
   const row = (): SidebarSession =>
     ({
       id: "sess-widget",
@@ -74,7 +87,7 @@ function surface(
       createdAt: 0,
       claim: { branch: "feat/widget-lfs", prNumber: 7 },
       ...(reviewAttached() ? { reviewId: REVIEW.id } : {}),
-      ...(preparation === undefined ? {} : { preparation }),
+      ...(currentPreparation() === undefined ? {} : { preparation: currentPreparation() }),
       ...(options.workspaceNotes === undefined
         ? {}
         : { workspaceNotes: [...options.workspaceNotes] }),
@@ -92,7 +105,11 @@ function surface(
     "forge.hosts": () => ({ hosts: [] }),
     "session.list": () => ({ sessions: [row()] }),
     "session.cancelPreparation": () => {
+      recorded.cancels += 1;
       if (options.writesFail === true) throw new Error("connection lost");
+      if (options.live !== undefined && options.cancelSticks !== false) {
+        options.live.current = { status: "cancelled", stage: "workspace", reviewId: REVIEW.id };
+      }
       return { session: row() };
     },
     "session.retryPreparation": (input: CommandInput<"session.retryPreparation">) => {
@@ -101,6 +118,9 @@ function surface(
         throw Object.assign(new Error("connection lost"), {
           name: "ConnectionError",
         });
+      if (options.live !== undefined) {
+        options.live.current = { status: "capturing", step: "capturing-change" };
+      }
       return { session: row() };
     },
     "session.chooseLargeFileMode": async (input: CommandInput<"session.chooseLargeFileMode">) => {
@@ -134,7 +154,7 @@ function surface(
       environmentId: "env-1",
     }),
   } as never);
-  const history = memoryHistory("/s/sess-widget");
+  const history = memoryHistory(options.path ?? "/s/sess-widget");
   const view = mount(<RennetRouterApp bridge={bridge} history={history} />);
   return { ...view, recorded, history };
 }
@@ -454,6 +474,222 @@ describe("a stopped preparation is one actionable block", () => {
     expect(buttons).toEqual(["Retry"]);
     await user.click(within(failure).getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(recorded.retries).toHaveLength(1));
+  });
+});
+
+describe("an install that lands after the review moved on", () => {
+  const lfsMissing: SidebarSession["preparation"] = {
+    status: "failed",
+    stage: "workspace",
+    reason: "Git LFS is needed to check out this pull request.",
+    kind: "tool-missing",
+    action: "install",
+    tool: "git-lfs",
+    reviewId: REVIEW.id,
+  };
+  const awaitingWithoutLfs: SidebarSession["preparation"] = {
+    status: "awaiting",
+    kind: "large-file-choice",
+    lfsAvailable: false,
+    reviewId: REVIEW.id,
+  };
+  const settleBeat = () => act(() => new Promise((resolve) => setTimeout(resolve, 80)));
+  const presenceCancel = () =>
+    waitFor(() => {
+      const found = document.querySelector<HTMLElement>('[data-testid="preparation-cancel"]');
+      if (!found) throw new Error("no Cancel");
+      return found;
+    });
+
+  /** Download, Install for me, then Escape: the install keeps running under the presence. */
+  async function installThenEscape(user: ReturnType<typeof surface>["user"]) {
+    const dialog = await choiceDialog();
+    await user.click(within(dialog).getByRole("button", { name: /Download large files/ }));
+    await user.click(await within(dialog).findByRole("button", { name: "Install for me" }));
+    await user.keyboard("{Escape}");
+    await screen.findByTestId("large-file-waiting");
+  }
+
+  it("dialog: Install, Escape, Cancel — the install landing answers nothing", async () => {
+    const install = deferred();
+    const live: { current: SidebarSession["preparation"] } = { current: awaitingWithoutLfs };
+    const { user, recorded } = surface(awaitingWithoutLfs, {
+      review: true,
+      live,
+      installGate: install.promise,
+    });
+    await installThenEscape(user);
+    await waitFor(() => expect(recorded.installs).toHaveLength(1));
+    await user.click(await presenceCancel());
+    await waitFor(() => expect(recorded.cancels).toBe(1));
+    await block();
+
+    install.resolve();
+    await settleBeat();
+    // No Download sent: it would have resumed — captured and drafted — the cancelled review.
+    expect(recorded.choices).toEqual([]);
+  });
+
+  it("dialog: Cancel withdraws the answer even before the daemon's read shows the cancel", async () => {
+    // The cancel went through, but the session read the continuation makes still says
+    // `awaiting` (the daemon's list is a beat behind). Withdrawing on Cancel is what holds.
+    const install = deferred();
+    const live: { current: SidebarSession["preparation"] } = { current: awaitingWithoutLfs };
+    const { user, recorded } = surface(awaitingWithoutLfs, {
+      review: true,
+      live,
+      cancelSticks: false,
+      installGate: install.promise,
+    });
+    await installThenEscape(user);
+    await waitFor(() => expect(recorded.installs).toHaveLength(1));
+    await user.click(await presenceCancel());
+    await waitFor(() => expect(recorded.cancels).toBe(1));
+
+    install.resolve();
+    await settleBeat();
+    expect(recorded.choices).toEqual([]);
+  });
+
+  it("dialog: the floating Cancel withdraws the answer too, where no presence is on screen", async () => {
+    // On the diff view the presence is not drawn, so Cancel is the floating chip — the
+    // header's own control, not the presence's. It must withdraw the answer just the same.
+    const install = deferred();
+    const live: { current: SidebarSession["preparation"] } = { current: awaitingWithoutLfs };
+    const { user, recorded } = surface(awaitingWithoutLfs, {
+      review: true,
+      live,
+      cancelSticks: false,
+      installGate: install.promise,
+      path: "/s/sess-widget?view=diff",
+    });
+    // The route paints the preparing frame first; the review workspace's dialog replaces it.
+    await screen.findByRole("dialog", { name: /large files/ });
+    await settleBeat();
+    const dialog = await screen.findByRole("dialog", { name: /large files/ });
+    await user.click(within(dialog).getByRole("button", { name: /Download large files/ }));
+    await user.click(await screen.findByRole("button", { name: "Install for me" }));
+    await waitFor(() => expect(recorded.installs).toHaveLength(1));
+    await user.keyboard("{Escape}");
+    await screen.findByTestId("large-file-waiting");
+    expect(document.querySelector('[data-kind="preparation-presence"]')).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Cancel board generation" }));
+    await waitFor(() => expect(recorded.cancels).toBe(1));
+
+    install.resolve();
+    await settleBeat();
+    expect(recorded.choices).toEqual([]);
+  });
+
+  it("dialog: a cancel from another window means the install landing answers nothing", async () => {
+    // No Cancel pressed here, so nothing was withdrawn: the continuation's own read of the
+    // session at landing time is what sees the review is no longer asking.
+    const install = deferred();
+    const live: { current: SidebarSession["preparation"] } = { current: awaitingWithoutLfs };
+    const { user, recorded } = surface(awaitingWithoutLfs, {
+      review: true,
+      live,
+      installGate: install.promise,
+    });
+    await installThenEscape(user);
+    await waitFor(() => expect(recorded.installs).toHaveLength(1));
+    live.current = { status: "cancelled", stage: "workspace", reviewId: REVIEW.id };
+
+    install.resolve();
+    await settleBeat();
+    expect(recorded.choices).toEqual([]);
+  });
+
+  it("block: Install, Retry, Cancel — the install landing does not retry the cancelled review", async () => {
+    const install = deferred();
+    const live: { current: SidebarSession["preparation"] } = { current: lfsMissing };
+    const { user, recorded } = surface(lfsMissing, {
+      live,
+      installGate: install.promise,
+    });
+    const failure = await block();
+    await user.click(within(failure).getByRole("button", { name: "Install Git LFS for me" }));
+    await waitFor(() => expect(recorded.installs).toHaveLength(1));
+    await user.click(within(failure).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(recorded.retries).toHaveLength(1));
+    await user.click(await presenceCancel());
+    await waitFor(() => expect(recorded.cancels).toBe(1));
+
+    install.resolve();
+    await settleBeat();
+    // Only the reviewer's own Retry: the landing install restarted nothing.
+    expect(recorded.retries).toHaveLength(1);
+  });
+
+  it("block: Install, then Retry got the review going — the install landing does not retry again", async () => {
+    const install = deferred();
+    const live: { current: SidebarSession["preparation"] } = { current: lfsMissing };
+    const { user, recorded } = surface(lfsMissing, {
+      live,
+      installGate: install.promise,
+    });
+    const failure = await block();
+    await user.click(within(failure).getByRole("button", { name: "Install Git LFS for me" }));
+    await waitFor(() => expect(recorded.installs).toHaveLength(1));
+    await user.click(within(failure).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(recorded.retries).toHaveLength(1));
+
+    install.resolve();
+    await settleBeat();
+    expect(recorded.retries).toHaveLength(1);
+  });
+
+  it("dialog: an answer the landing install sent says it failed in the remounted dialog", async () => {
+    // The review attaches mid-install, so the route remounts the dialog; the continuation's
+    // failed answer must reach the dialog on screen, not the one that unmounted.
+    const attached = { current: false };
+    const install = deferred();
+    const { user, recorded } = surface(awaitingWithoutLfs, {
+      attached,
+      installGate: install.promise,
+      writesFail: true,
+    });
+    let dialog = await screen.findByRole("dialog", { name: /large files/ });
+    await user.click(within(dialog).getByRole("button", { name: /Download large files/ }));
+    await user.click(await within(dialog).findByRole("button", { name: "Install for me" }));
+    await waitFor(() => expect(recorded.installs).toHaveLength(1));
+    attached.current = true;
+    await waitFor(
+      () => expect(document.querySelector('[data-kind="lens-board-view"]')).not.toBeNull(),
+      { timeout: 3_000 },
+    );
+    dialog = await screen.findByRole("dialog", { name: /large files/ });
+
+    install.resolve();
+    await waitFor(() => expect(recorded.choices).toHaveLength(1));
+    expect(await within(dialog).findByText("connection lost")).toBeTruthy();
+  });
+
+  it("block: a Retry the landing install sent says it failed in the remounted block", async () => {
+    // The reviewer leaves the review and comes back while the install runs: the block that
+    // started it unmounted, and the one on screen now is new. The continuation's failed Retry
+    // must say so there.
+    const install = deferred();
+    const { user, recorded, history } = surface(lfsMissing, {
+      installGate: install.promise,
+      retryFails: true,
+    });
+    const failure = await block();
+    await user.click(within(failure).getByRole("button", { name: "Install Git LFS for me" }));
+    await waitFor(() => expect(recorded.installs).toHaveLength(1));
+    act(() => history.navigate("/"));
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="preparation-failure"]')).toBeNull(),
+    );
+    act(() => history.navigate("/s/sess-widget"));
+    const remounted = await block();
+    expect(remounted).not.toBe(failure);
+
+    install.resolve();
+    await waitFor(() => expect(recorded.retries).toHaveLength(1));
+    expect(
+      await within(remounted).findByText("Rennet couldn't start this review again. Try again."),
+    ).toBeTruthy();
   });
 });
 

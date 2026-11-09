@@ -2,6 +2,7 @@ import { Button, cn } from "@rennet/ui";
 import { createContext, type ReactNode, useContext, useLayoutEffect, useState } from "react";
 import { useCommand, useMutation } from "../data";
 import { ActionFailureLine, useActionFailure } from "./action-failure";
+import { useWithdrawInstallContinuations } from "./install-continuations";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE PREPARATION PRESENCE (review-preparation-reliability D6, task 3.1) — the board area
@@ -85,6 +86,7 @@ export function PreparationPresence({
   const session = data?.sessions.find((candidate) => candidate.id === slug);
   const cancel = useMutation("session.cancelPreparation", { invalidates: ["session.list"] });
   const cancelFailure = useActionFailure();
+  const withdrawInstallContinuations = useWithdrawInstallContinuations();
   const setShown = useContext(PresenceShown)?.setShown;
   // A LAYOUT effect: the header reads `shown` to decide whether to float its own Cancel, and
   // a passive effect lands after the first paint — one frame with both Cancels on screen.
@@ -129,12 +131,15 @@ export function PreparationPresence({
             size="sm"
             data-testid="preparation-cancel"
             disabled={cancel.pending}
-            onClick={() =>
+            onClick={() => {
+              // Cancelled means no install still running for this review (Escape leaves one
+              // running under the large-file question) answers for it when it lands.
+              withdrawInstallContinuations(session.id);
               cancelFailure.run(
                 () => cancel.mutate({ sessionId: session.id }),
                 "Rennet couldn't cancel this review. Try again.",
-              )
-            }
+              );
+            }}
             className="app-region-no-drag text-ink-soft"
           >
             Cancel

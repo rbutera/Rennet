@@ -402,6 +402,24 @@ export function useToolInstall(options: {
 }
 
 /**
+ * Forget the completion EVERY install an owner is running would run — any tool, any machine —
+ * without stopping the installs. For a session whose preparation was cancelled: an install
+ * still running for it must not answer a question nobody is asking any more.
+ */
+export function useDropOwnerInstallContinuations(): (owner: string) => void {
+  const { cache } = useBridgeContext();
+  return useCallback(
+    (owner) => {
+      const prefix = `tool-install:${owner}:`;
+      for (const [key, record] of runs.get(cache) ?? []) {
+        if (key.startsWith(prefix)) record.continuation = undefined;
+      }
+    },
+    [cache],
+  );
+}
+
+/**
  * Forget the completion an owner's running install would run, without stopping the install.
  * For a surface that has moved on — the reviewer answered the question the install was for
  * another way — so the install finishing does not answer it a second time.

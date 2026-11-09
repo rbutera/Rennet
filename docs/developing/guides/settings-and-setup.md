@@ -210,7 +210,10 @@ install belongs to whoever started it — a session's failure block or large-fil
 — so it keeps running, and finishes the job it was started for, across a remount, a
 dismissed dialog or a dropped connection to the daemon; until the machine it installs on
 is known, the button waits; where no installer exists it shows the command and a link
-instead. After a dropped connection the button asks the daemon again under the same command id,
+instead. Cancelling the review withdraws that job: an install that lands after a Cancel
+neither answers the large-file question nor retries, and one that lands after the review
+moved on (a Retry, a cancel in another window) checks the session first and does nothing.
+After a dropped connection the button asks the daemon again under the same command id,
 and the daemon treats it as the same request: a run still going is re-joined, with its
 output so far sent as one snapshot that replaces the drawer's, and a run that finished
 meanwhile answers with the verdict the daemon keeps for it (about ten minutes, for the

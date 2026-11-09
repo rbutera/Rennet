@@ -10,10 +10,12 @@ import { useLocation } from "wouter";
 import { FailureDetail } from "../components/failure-detail";
 import { InstallForMe, TOOL_NAME } from "../components/install-for-me";
 import { useMutation } from "../data";
+import { useScopedState } from "../data/scoped-state";
 import { useDropInstallContinuation } from "../data/tool-install";
 import { settingsPath } from "../routes/url";
 import { ActionFailureLine, useActionFailure } from "./action-failure";
 import { preparationFailureCopy } from "./failure-copy";
+import { asksForInstall, failureInstallOwner, useWhileStillAsking } from "./install-continuations";
 import { LARGE_FILE_REMEMBERED, LargeFileChoice } from "./large-file-choice";
 import { useLfsAvailable, useProjectLocus } from "./session-locus";
 
@@ -36,14 +38,21 @@ import { useLfsAvailable, useProjectLocus } from "./session-locus";
 //
 // A cancelled run is calm: it says so and offers Retry. Nothing here names a stage or a
 // step; the stage is the daemon's bookkeeping, not something the reviewer acts on.
+//
+// Install for me retries when it lands, even if the block has unmounted meanwhile — but only
+// while the session is still failed for want of that install (`install-continuations.ts`):
+// a Retry and a Cancel since then mean nobody is waiting on it. A Retry that did not go
+// through says so from the per-session slot, so a block remounted by the route still shows it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Stopped = Extract<SessionPreparation, { status: "failed" | "cancelled" }>;
 
-/** The owner an install started from a failure block runs under: the session it retries. */
-function failureInstallOwner(sessionId: string): string {
-  return `failure:${sessionId}`;
+/** Where a session's failure block keeps a Retry's failure across a remount. */
+export function retryFailureKey(sessionId: string): string {
+  return `preparation-retry-failure:${sessionId}`;
 }
+
+const RETRY_FAILED = "Rennet couldn't start this review again. Try again.";
 
 export function PreparationFailure({
   session,
@@ -53,16 +62,21 @@ export function PreparationFailure({
   readonly preparation: Stopped;
 }) {
   const retry = useMutation("session.retryPreparation", { invalidates: ["session.list"] });
-  const retryFailure = useActionFailure();
+  const [retryFailure, , retryFailureHandle] = useScopedState<string | undefined>(
+    retryFailureKey(session.id),
+    undefined,
+  );
+  const whileStillAsking = useWhileStillAsking();
   const { locus, failed: locusFailed, retry: rereadLocus } = useProjectLocus(session.projectId);
   // Bound to THIS session: an install that started here retries the session it was for,
   // even if the workspace has since moved on to another one (`useToolInstall`).
   const sessionId = session.id;
-  const retryNow = () =>
-    retryFailure.run(
-      () => retry.mutate({ sessionId, commandId: newCommandId() }),
-      "Rennet couldn't start this review again. Try again.",
-    );
+  const retryNow = () => {
+    retryFailureHandle.set(undefined);
+    retry
+      .mutate({ sessionId, commandId: newCommandId() })
+      .catch(() => retryFailureHandle.set(RETRY_FAILED));
+  };
   const failed = preparation.status === "failed";
   // Absent `kind` reads as unknown and absent `action` as retry (protocol D5).
   const action = failed ? (preparation.action ?? "retry") : "retry";
@@ -99,7 +113,7 @@ export function PreparationFailure({
               locus={locus}
               owner={owner}
               label={`Install ${TOOL_NAME[tool]} for me`}
-              onInstalled={retryNow}
+              onInstalled={() => whileStillAsking(sessionId, asksForInstall, retryNow)}
             />
             {locusFailed ? (
               <p className="flex flex-wrap items-center gap-2 text-ink-soft text-sm">
@@ -129,7 +143,7 @@ export function PreparationFailure({
             {retry.pending ? "Retrying…" : "Retry"}
           </Button>
         </div>
-        <ActionFailureLine message={retryFailure.message} />
+        <ActionFailureLine message={retryFailure} />
         {copy?.detail !== undefined ? <FailureDetail detail={copy.detail} /> : null}
       </section>
     </div>

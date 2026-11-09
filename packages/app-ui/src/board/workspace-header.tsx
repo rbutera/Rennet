@@ -4,9 +4,10 @@ import { useCallback, useEffect, useRef } from "react";
 import { useCommand, useMutation, useRefreshCommand } from "../data";
 import { useScopedHandle, useScopedState } from "../data/scoped-state";
 import { ActionFailureLine, useActionFailure } from "../preparation/action-failure";
-import { LargeFileChoice } from "../preparation/large-file-choice";
-import { PreparationFailure } from "../preparation/preparation-failure";
-import { preparationPhase } from "../preparation/preparation-phase";
+import { useWithdrawInstallContinuations } from "../preparation/install-continuations";
+import { LargeFileChoice, largeFileFailureKey } from "../preparation/large-file-choice";
+import { PreparationFailure, retryFailureKey } from "../preparation/preparation-failure";
+import { preparationPhase, preparationStopped } from "../preparation/preparation-phase";
 import { usePresenceShown } from "../preparation/preparation-presence";
 import { useProjectLocus } from "../preparation/session-locus";
 
@@ -58,6 +59,7 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
   const refreshSessions = useRefreshCommand("session.list");
   const cancel = useMutation("session.cancelPreparation", { invalidates: ["session.list"] });
   const cancelFailure = useActionFailure();
+  const withdrawInstallContinuations = useWithdrawInstallContinuations();
   const phase = preparationPhase(preparation);
   const presenceShown = usePresenceShown();
   // The large-file dialog's remembered state belongs to ONE question. When the session is
@@ -66,6 +68,12 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
   useEffect(() => {
     if (phase !== "choosing") resetLargeFileQuestion();
   }, [phase, resetLargeFileQuestion]);
+  // A Retry's failure belongs to the stop it was for: once the review is going again, the
+  // next stop starts without it.
+  const retryFailure = useScopedHandle<string | undefined>(retryFailureKey(slug), undefined);
+  useEffect(() => {
+    if (!preparationStopped(phase)) retryFailure.set(undefined);
+  }, [phase, retryFailure]);
   // Still going: the poll is what moves the rail, the presence and the seats. `choosing` is
   // polled too, so an answer given from another window resumes this one.
   const active = phase === "waiting" || phase === "choosing" || phase === "drafting";
@@ -88,12 +96,14 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
         data-testid="preparation-cancel"
         aria-label="Cancel board generation"
         disabled={cancel.pending}
-        onClick={() =>
+        onClick={() => {
+          // Cancelled means no install still running for this review answers for it later.
+          withdrawInstallContinuations(session.id);
           cancelFailure.run(
             () => cancel.mutate({ sessionId: session.id }),
             "Rennet couldn't cancel this review. Try again.",
-          )
-        }
+          );
+        }}
         className="app-region-no-drag absolute right-6 bottom-6 z-40 flex h-8 items-center rounded-full border border-line/60 bg-surface/70 px-3 font-medium text-ink-soft text-sm backdrop-blur-md transition-colors hover:text-ink disabled:opacity-60"
       >
         Cancel
@@ -206,10 +216,12 @@ function useResetLargeFileQuestion(sessionId: string): () => void {
     needsLfs: false,
     answered: false,
   });
+  const failure = useScopedHandle<string | undefined>(largeFileFailureKey(sessionId), undefined);
   return useCallback(() => {
     open.set(true);
     screen.set({ needsLfs: false, answered: false });
-  }, [open, screen]);
+    failure.set(undefined);
+  }, [open, screen, failure]);
 }
 
 /** The generation-wide retry as a bare action, for the seat widget's failure state to

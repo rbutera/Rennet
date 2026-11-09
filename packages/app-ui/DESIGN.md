@@ -260,8 +260,14 @@ the failure mode is a surface that quietly lies about it.
   workspace when the review attaches mid-question, and the dialog keeps its screen, its
   dismissal and the install running under it. Escape does not stop that install; it
   finishes and answers Download. Any other answer withdraws that, so an install landing
-  late never sends a second choice. Install for me waits, disabled, until the project's
-  machine is known.
+  late never sends a second choice, and so does Cancel, from the inline control or the
+  floating chip: a cancelled review is never resumed by an install that lands after it.
+  Belt and braces, a landing install acts only if the session, read from the daemon at
+  that moment, is still asking what it answers (the failure block's Install for me
+  retries on the same terms: only while the session is still failed for want of it). A
+  write such a late install sends that does not go through says so in whichever dialog or
+  block is on screen by then, because its failure line belongs to the session too.
+  Install for me waits, disabled, until the project's machine is known.
 - **No tip over a review on its way.** First-run coach marks hold back while the session on
   screen is waiting or choosing (`Coachmark`'s `suppressed`, from `routes/layout.tsx`):
   there is nothing to teach yet, and a card there covered the way back to the question.
