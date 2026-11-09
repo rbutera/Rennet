@@ -367,6 +367,80 @@ describe("FirstRunWelcome", () => {
     expect(gitlab.queryByText("1.80.0")).toBeNull();
   });
 
+  // first-run-welcome / source-control-tooling: Git and Git LFS come from the daemon's own
+  // probe, and a missing Git LFS offers Install for me. The bridge RECORDS the install, so
+  // the action is proved by what it dispatched; the re-probe after it is proved by the row
+  // turning available off the refreshed read, not by the installer's word.
+  it("shows Git LFS as not installed with Install for me, and re-reads the probe after it", async () => {
+    const installs: unknown[] = [];
+    let lfsInstalled = false;
+    mount(
+      <RennetRouterApp
+        bridge={welcomeBridge({
+          "forge.hosts": () => ({
+            hosts: [
+              {
+                source: "local",
+                asked: true,
+                detected: [],
+                sourceControl: [
+                  { id: "git", version: "2.51.0", status: "available", detail: "Git 2.51.0" },
+                  lfsInstalled
+                    ? {
+                        id: "git-lfs",
+                        version: "3.6.1",
+                        status: "available",
+                        detail: "Git LFS 3.6.1",
+                      }
+                    : {
+                        id: "git-lfs",
+                        version: null,
+                        status: "not-installed",
+                        detail: "Git LFS isn't installed on this machine.",
+                      },
+                ],
+              },
+            ],
+          }),
+          "tools.install": (input) => {
+            installs.push(input);
+            lfsInstalled = true;
+            return {
+              result: {
+                status: "installed",
+                command: "brew install git-lfs && git lfs install",
+                output: "Git LFS initialized.",
+                probe: { id: "git-lfs", version: "3.6.1", status: "available", detail: "" },
+              },
+            };
+          },
+        })}
+        history={memoryHistory("/new-chat")}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
+
+    const lfsRow = () => document.querySelector<HTMLElement>('article[data-tool="git-lfs"]');
+    await waitFor(() => expect(lfsRow()?.textContent).toContain("Not installed"));
+    const lfs = within(lfsRow() as HTMLElement);
+    expect(lfs.getByText("Git LFS isn't installed on this machine.")).toBeTruthy();
+    // No version was proven, so none is shown.
+    expect(lfs.queryByText("3.6.1")).toBeNull();
+    // Git itself reads off the probe too — its proven version, not a fixed "Required" pill.
+    const git = document.querySelector<HTMLElement>('article[data-tool="git"]');
+    expect(git?.textContent).toContain("2.51.0");
+    expect(git?.textContent).not.toContain("Required");
+    expect(within(git as HTMLElement).queryByRole("button", { name: "Install for me" })).toBeNull();
+
+    fireEvent.click(lfs.getByRole("button", { name: "Install for me" }));
+    await waitFor(() => expect(installs).toHaveLength(1));
+    expect(installs[0]).toMatchObject({ tool: "git-lfs", locus: { kind: "host" } });
+    // The re-read probe turns the row available, with the version it now proves.
+    await waitFor(() => expect(lfsRow()?.querySelector("h3")?.textContent).toContain("3.6.1"));
+    expect(lfsRow()?.textContent).toContain("Available");
+  });
+
   it("shows an unreachable GitLab CLI without calling it signed out", async () => {
     const detail =
       "`glab` could not reach or verify GitLab.com. Run `glab auth status --hostname gitlab.com`.";

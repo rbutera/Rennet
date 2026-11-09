@@ -1,8 +1,10 @@
 import type {
   AppearanceScheme,
   DetectedForge,
+  DetectedSourceControlTool,
   ForgeHostDetection,
   HarnessHostDetection,
+  Locus,
   SettingsView,
 } from "@rennet/protocol";
 import { Button, cn, Toggle } from "@rennet/ui";
@@ -27,6 +29,7 @@ import {
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { Icon } from "../components/icon";
+import { InstallForMe } from "../components/install-for-me";
 import { LiquidSphere } from "../components/liquid-sphere";
 import { useBridge, useCommand, useMutation, useRefreshCommand } from "../data";
 import { newChatPath } from "../routes/url";
@@ -413,6 +416,8 @@ function ToolRow({
   status,
   good,
   index,
+  action,
+  tool,
 }: {
   id: SourceControlToolId | AgentToolId;
   name: string;
@@ -422,10 +427,15 @@ function ToolRow({
   good: boolean;
   /** Position in the list; the rows deal themselves in 70ms apart. */
   index: number;
+  /** What the person can do about this row — Install for me for a missing Git or Git LFS. */
+  action?: ReactNode;
+  /** Which source-control tool the row is, for a test or a screen to address it by. */
+  tool?: string;
 }) {
   const harness = id === "claude" || id === "codex";
   return (
     <article
+      data-tool={tool}
       className="grid min-h-[84px] animate-welcome-row grid-cols-[48px_1fr_auto] items-center gap-4 rounded-surface border border-line bg-surface px-[18px] py-[15px] motion-reduce:animate-none max-md:grid-cols-[44px_1fr]"
       style={{ animationDelay: `${index * 70}ms` }}
     >
@@ -438,11 +448,88 @@ function ToolRow({
           ) : null}
         </h3>
         <p className="mt-[5px] text-xs text-ink-faint">{detail}</p>
+        {action ? <div className="mt-3">{action}</div> : null}
       </div>
       <div className="max-md:col-start-2">
         <StatusPill good={good}>{status}</StatusPill>
       </div>
     </article>
+  );
+}
+
+function sourceControlStatusLabel(status: DetectedSourceControlTool["status"]): string {
+  switch (status) {
+    case "available":
+      return "Available";
+    case "not-installed":
+      return "Not installed";
+    case "unreachable":
+      return "Unreachable";
+  }
+}
+
+/** Where Install for me runs for the environment the welcome is detecting: this machine or
+ *  one of its WSL distros. A paired remote device installs nothing from here. */
+function locusOfSource(source: string): Locus | undefined {
+  if (source === "local") return { kind: "host" };
+  if (source.startsWith("wsl:")) return { kind: "wsl", distro: source.slice("wsl:".length) };
+  return undefined;
+}
+
+/**
+ * Git or Git LFS from the daemon's own probe (first-run-welcome: "the same probes used by
+ * Settings"). Only what the probe proved: a version it returned, a state it reported, and
+ * Install for me when the tool is missing. With no probe there is no claim either way.
+ */
+function SourceControlToolRow({
+  index,
+  tool,
+  probe,
+  asked,
+  locus,
+  onInstalled,
+}: {
+  index: number;
+  tool: "git" | "git-lfs";
+  probe: DetectedSourceControlTool | undefined;
+  asked: boolean;
+  locus: Locus | undefined;
+  onInstalled(): void;
+}) {
+  const name = tool === "git" ? "Git" : "Git LFS";
+  if (probe === undefined) {
+    return (
+      <ToolRow
+        index={index}
+        id="git"
+        tool={tool}
+        name={name}
+        status="Not checked"
+        good={false}
+        detail={
+          asked
+            ? `Rennet did not check for ${name} in this environment.`
+            : `Rennet could not check for ${name} in this environment.`
+        }
+      />
+    );
+  }
+  return (
+    <ToolRow
+      index={index}
+      id="git"
+      tool={tool}
+      name={name}
+      version={probe.version ?? undefined}
+      status={sourceControlStatusLabel(probe.status)}
+      good={probe.status === "available"}
+      detail={probe.detail}
+      action={
+        probe.status !== "available" && locus !== undefined ? (
+          <InstallForMe tool={tool} locus={locus} onInstalled={onInstalled} />
+        ) : undefined
+      }
+    />
   );
 }
 
@@ -466,16 +553,21 @@ function forgeStatusLabel(status: ReturnType<typeof forgeDisplayStatus>): string
 function ToolsStage({
   harnesses,
   forges,
+  onRefresh,
   onBack,
   onContinue,
 }: {
   harnesses?: HarnessHostDetection;
   forges?: ForgeHostDetection;
+  /** Re-read the probes, after Install for me changed what is installed. */
+  onRefresh(): void;
   onBack(): void;
   onContinue(): void;
 }) {
   const gh = forges?.asked ? forges.detected.find((tool) => tool.id === "github") : undefined;
   const glab = forges?.asked ? forges.detected.find((tool) => tool.id === "gitlab") : undefined;
+  const sourceControl = forges?.asked ? forges.sourceControl : undefined;
+  const locus = forges === undefined ? undefined : locusOfSource(forges.source);
   return (
     <section className={CONTENT_STAGE}>
       <div className="mb-9 max-w-[650px]">
@@ -486,17 +578,27 @@ function ToolsStage({
         </p>
       </div>
       <div className="welcome-tools grid gap-2.5">
-        <ToolRow
+        {/* Git and Git LFS from the probe, never a fixed "Required" pill: a Git row that
+            always read as present was a claim nobody had checked. */}
+        <SourceControlToolRow
           index={0}
-          id="git"
-          name="Git"
-          status="Required"
-          good
-          detail="Rennet uses Git for local branches, diffs, and repository history."
+          tool="git"
+          probe={sourceControl?.find((tool) => tool.id === "git")}
+          asked={forges?.asked === true}
+          locus={locus}
+          onInstalled={onRefresh}
+        />
+        <SourceControlToolRow
+          index={1}
+          tool="git-lfs"
+          probe={sourceControl?.find((tool) => tool.id === "git-lfs")}
+          asked={forges?.asked === true}
+          locus={locus}
+          onInstalled={onRefresh}
         />
         {gh ? (
           <ToolRow
-            index={1}
+            index={2}
             id="gh"
             name="GitHub CLI"
             version={gh.version ?? undefined}
@@ -506,7 +608,7 @@ function ToolsStage({
           />
         ) : (
           <ToolRow
-            index={1}
+            index={2}
             id="gh"
             name="GitHub CLI"
             status={forges?.asked ? "Not detected" : "Not checked"}
@@ -516,7 +618,7 @@ function ToolsStage({
         )}
         {glab ? (
           <ToolRow
-            index={2}
+            index={3}
             id="glab"
             name="GitLab CLI"
             version={glab.version ?? undefined}
@@ -526,7 +628,7 @@ function ToolsStage({
           />
         ) : (
           <ToolRow
-            index={2}
+            index={3}
             id="glab"
             name="GitLab CLI"
             status={forges?.asked ? "Not detected" : "Not checked"}
@@ -535,7 +637,7 @@ function ToolsStage({
           />
         )}
         <ToolRow
-          index={3}
+          index={4}
           id="bitbucket"
           name="Bitbucket"
           status="Not supported yet"
@@ -548,7 +650,7 @@ function ToolsStage({
               .map((tool, position) => (
                 <ToolRow
                   key={tool.id}
-                  index={4 + position}
+                  index={5 + position}
                   id={tool.id as AgentToolId}
                   name={tool.id === "claude" ? "Claude Code" : "Codex"}
                   version={tool.version ?? undefined}
@@ -951,6 +1053,7 @@ export function FirstRunWelcome({ settings }: { settings: SettingsView }) {
           <ToolsStage
             harnesses={harnesses}
             forges={forges}
+            onRefresh={refreshForges}
             onBack={() => setStep(0)}
             onContinue={() => setStep(2)}
           />
