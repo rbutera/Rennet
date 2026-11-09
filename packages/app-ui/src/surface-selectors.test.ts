@@ -42,6 +42,13 @@ const RETIRED_SELECTORS: ReadonlyArray<{ readonly selector: string; readonly rep
       selector: 'data-testid="bench-boards-landing"',
       replacedBy: "the board's own in-progress mark",
     },
+    {
+      // "No review is attached to this session, so there is no thread to open." — the chat
+      // dock's line on a session with no review (review-preparation-reliability 3.2).
+      selector: 'data-slot="t3-chat-no-review"',
+      replacedBy:
+        '`[data-slot="t3-chat-preparing"]`, the thread skeleton under the session title, or nothing',
+    },
   ];
 
 const SWEPT_DIRECTORIES = ["apps/desktop/e2e", "packages/app-ui/src"] as const;
@@ -81,7 +88,7 @@ describe("no test asserts a selector its surface no longer renders", () => {
     // HARD-CODED floors, not `files.length > 0`: an empty walk would satisfy both this
     // and the sweep below, which is exactly how a sweep comes to prove nothing.
     expect(files.length).toBeGreaterThan(150);
-    expect(RETIRED_SELECTORS).toHaveLength(3);
+    expect(RETIRED_SELECTORS).toHaveLength(4);
     expect(files.some((f) => f.includes("apps/desktop/e2e/"))).toBe(true);
     expect(files.some((f) => f.includes("packages/app-ui/src/board/"))).toBe(true);
   });

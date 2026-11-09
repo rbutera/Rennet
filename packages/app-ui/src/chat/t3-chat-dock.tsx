@@ -12,14 +12,17 @@ import { useT3ChatSlot } from "./t3-chat-slot";
  * skeleton, not a sentence: a wait reads as a wait without a label the reviewer has to parse
  * (Rai, 2026-09-14). The sr-only line keeps the state honest for a screen reader.
  */
-function ChatPaneSkeleton({ label }: { readonly label: string }) {
+function ChatPaneSkeleton({
+  label,
+  slot = "t3-chat-starting",
+}: {
+  readonly label: string;
+  /** Which wait this is. The sidecar bring-up and a review still being prepared are two
+   *  different facts (#872), so they never share a slot a test could confuse. */
+  readonly slot?: "t3-chat-starting" | "t3-chat-preparing";
+}) {
   return (
-    <div
-      data-slot="t3-chat-starting"
-      role="status"
-      aria-label={label}
-      className="flex flex-col gap-2.5 p-3"
-    >
+    <div data-slot={slot} role="status" aria-label={label} className="flex flex-col gap-2.5 p-3">
       <Skeleton className="h-3 w-2/3" />
       <Skeleton className="h-3 w-1/2" />
       <Skeleton className="h-3 w-4/5" />
@@ -73,9 +76,14 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
     >
       <ChatHeader trail={trail} {...(corner ? { corner } : {})} />
       {target.kind === "resolving" ? null : target.kind === "no-review" ? (
-        <p data-slot="t3-chat-no-review" className="p-3 text-xs text-ink-soft">
-          No review is attached to this session, so there is no thread to open.
-        </p>
+        // No review yet. While one is being prepared the thread is on its way, so the pane
+        // shows the thread's skeleton under the session's own title — never a sentence
+        // about Rennet's internals ("No review is attached…" was one, and it read as a
+        // dead end). Otherwise it shows nothing: a stopped preparation's failure block,
+        // over the workspace, owns the message.
+        target.preparing ? (
+          <ChatPaneSkeleton label="Preparing the conversation" slot="t3-chat-preparing" />
+        ) : null
       ) : error ? (
         <ChatUnavailable slot="t3-chat-error" />
       ) : pending || !data ? (

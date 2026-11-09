@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import type { Review, SettingsProject } from "@rennet/protocol";
+import type { Review, SettingsProject, SidebarSession } from "@rennet/protocol";
 import type { ComponentType } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { RennetRouterApp } from "../routes/app";
@@ -139,19 +139,18 @@ function mountDock(
 }
 
 /**
- * A CHAT-ONLY SESSION — the New Chat route as the daemon actually publishes it (#872).
+ * A SESSION WITH NO REVIEW YET — the New Chat route as the daemon actually publishes it
+ * (#872), here a pull request whose capture has not attached a review.
  *
  * The fixture is written from the daemon's side, not the dock's: `session.list` carries a
- * real session with NO `reviewId`, and `review.load` throws the daemon's own literal
- * "Review not found" for it (the sentence `routes/slug.ts` matches on). That is the shape
- * `/s/<slug>` has for a New Chat mint before its capture attaches and for a session that
- * never gets one, and it is a SESSION route — so the dock is open, not hidden.
+ * real session with NO `reviewId` and the title the daemon composes for it (the claimed
+ * branch), and `review.load` throws the daemon's own literal "Review not found" for it (the
+ * sentence `routes/slug.ts` matches on). It is a SESSION route — so the dock is open.
  *
  * A fixture that simply omitted the review would have resolved to `not-found` and passed
- * this test while the real route (a session that exists and holds no review) still showed
- * the sidecar-starting line.
+ * these tests while the real route (a session that exists and holds no review) did not.
  */
-function mountChatOnly() {
+function mountUnattached(preparation: SidebarSession["preparation"]) {
   const asks: unknown[] = [];
   const bridge = new MemoryBridge({
     ...frontDoorHandlers(),
@@ -159,14 +158,18 @@ function mountChatOnly() {
     "session.list": () => ({
       sessions: [
         {
-          id: "chat-only",
+          id: "pr-session",
           projectId: "p1",
-          title: "New review",
-          target: "your-branch",
+          title: "feat/widget-lfs",
+          target: "your-pr",
           createdAt: 1,
+          claim: { branch: "feat/widget-lfs", prNumber: 42 },
+          ...(preparation === undefined ? {} : { preparation }),
         },
       ],
     }),
+    "session.cancelPreparation": () => ({ session: null }),
+    "session.retryPreparation": () => ({ session: null }),
     "review.load": () => {
       throw new Error("Review not found");
     },
@@ -184,10 +187,13 @@ function mountChatOnly() {
     useRennetStore.getState().uiActions.setSidebarOpen(false);
     useRennetStore.getState().uiActions.setChatOpen(true);
   });
-  const history = memoryHistory("/s/chat-only");
+  const history = memoryHistory("/s/pr-session");
   const view = mount(<RennetRouterApp bridge={bridge} history={history} />);
   return { ...view, asks };
 }
+
+/** The copy the dock used to print on this route, which named Rennet's internals. */
+const INTERNAL_COPY = ["New review", "No review is attached"] as const;
 
 /** Both rung-two components provided, each recording its props. */
 function mountWithSlot() {
@@ -363,23 +369,55 @@ describe("the chat slot is always the T3 thread", () => {
   // DISABLED with no review, so `data` is undefined forever and the line never resolved.
   // It is not the copy that was wrong — it is that the arm was reachable at all from a
   // route where nothing is being started.
-  it("never says the sidecar is starting on a session that holds no review", async () => {
-    const { getByTestId, asks } = mountChatOnly();
+  it("titles a preparing pull request with its branch and shows the thread's skeleton", async () => {
+    // review-preparation-reliability 3.2. Rai, on the build this replaces: "'New review'
+    // 'This review has no thread and none is being opened' omg i hope i dont have to explain
+    // why that's really bad UX". The pane now says whose conversation this is — the branch
+    // the reviewer opened — and that it is on its way, without a sentence about either.
+    const { getByTestId, asks } = mountUnattached({
+      status: "capturing",
+      step: "resolving-repository",
+    });
     const dock = getByTestId("chat-dock-slot");
     await waitFor(() =>
-      expect(dock.querySelector('[data-slot="t3-chat-no-review"]')).not.toBeNull(),
+      expect(dock.querySelector('[data-slot="t3-chat-preparing"]')).not.toBeNull(),
     );
-    expect(dock.querySelector('[data-slot="t3-chat-no-review"]')?.textContent).toContain(
-      "No review is attached to this session",
-    );
-    // The line the issue was filed about, gone from this route.
+    expect(dock.querySelector("header")?.textContent).toContain("feat/widget-lfs");
+    expect(
+      dock.querySelector('[data-slot="t3-chat-preparing"] [data-slot="skeleton"]'),
+    ).not.toBeNull();
+    const text = dock.textContent ?? "";
+    for (const copy of INTERNAL_COPY) expect(text).not.toContain(copy);
+    // #872 still holds: this is a review being PREPARED, not a sidecar being started, so the
+    // bring-up skeleton is absent and nothing was asked of the sidecar. A dock that fired the
+    // read and merely relabelled its skeleton would fail here.
     expect(dock.querySelector('[data-slot="t3-chat-starting"]')).toBeNull();
-    // And it is not merely unrendered: nothing was ASKED of the sidecar either, which is
-    // the fact the copy was misreporting. A dock that still fired the read and hid the
-    // line would pass the assertion above and keep lying about the same thing.
     expect(asks).toEqual([]);
-    // The dock is on a session route, so it is open and this is really on screen.
     expect(dock.getAttribute("data-open")).toBe("true");
+  });
+
+  it("says nothing more than the title once the preparation has stopped", async () => {
+    // A failed capture: the failure block over the workspace owns the message, so the pane
+    // adds no second account of it — and no skeleton, because nothing is on its way.
+    const { getByTestId, asks } = mountUnattached({
+      status: "failed",
+      stage: "capture",
+      reason: "The pull request's branch could not be fetched.",
+    });
+    const dock = getByTestId("chat-dock-slot");
+    await waitFor(() =>
+      expect(dock.querySelector("header")?.textContent).toContain("feat/widget-lfs"),
+    );
+    // Give the resolution a beat to settle into `no-review`, then read the whole pane.
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="workspace-header"]')).not.toBeNull(),
+    );
+    expect(dock.querySelector('[data-slot="t3-chat-preparing"]')).toBeNull();
+    expect(dock.querySelector('[data-slot="t3-chat-starting"]')).toBeNull();
+    const text = dock.textContent ?? "";
+    for (const copy of INTERNAL_COPY) expect(text).not.toContain(copy);
+    expect(text).not.toContain("could not be fetched");
+    expect(asks).toEqual([]);
   });
 
   // The control for the pair above: the SAME assertions on a route that does hold a
@@ -390,7 +428,7 @@ describe("the chat slot is always the T3 thread", () => {
     await waitFor(() =>
       expect(dock.querySelector('[data-slot="t3-chat-unmounted"]')).not.toBeNull(),
     );
-    expect(dock.querySelector('[data-slot="t3-chat-no-review"]')).toBeNull();
+    expect(dock.querySelector('[data-slot="t3-chat-preparing"]')).toBeNull();
     expect(asks).toEqual([{ reviewId: "review-1" }]);
   });
 });
