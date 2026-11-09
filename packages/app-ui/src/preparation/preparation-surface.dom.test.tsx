@@ -338,6 +338,31 @@ describe("a stopped preparation is one actionable block", () => {
     ).toBeTruthy();
   });
 
+  it("still says a Retry did not go through after leaving the review and coming back", async () => {
+    // The sentence is kept per session (`retryFailureKey`), not per mount: the route unmounts
+    // the block, and the reviewer coming back must still see that their click went nowhere.
+    const { user, recorded, history } = surface(
+      { status: "failed", stage: "workspace", reason: "x", kind: "unknown" },
+      { retryFails: true },
+    );
+    const failure = await block();
+    await user.click(within(failure).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(recorded.retries).toHaveLength(1));
+    await within(failure).findByText("Rennet couldn't start this review again. Try again.");
+
+    act(() => history.navigate("/settings/appearance"));
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="preparation-failure"]')).toBeNull(),
+    );
+    act(() => history.navigate("/s/sess-widget"));
+    const back = await block();
+    expect(back).not.toBe(failure);
+    expect(
+      await within(back).findByText("Rennet couldn't start this review again. Try again."),
+    ).toBeTruthy();
+    expect(recorded.retries).toHaveLength(1);
+  });
+
   it("says plainly when Skip large files did not go through", async () => {
     const { user, recorded } = surface(lfsMissing, { writesFail: true });
     const failure = await block();
@@ -803,6 +828,26 @@ describe("the large-file choice while preparation waits on it", () => {
     await user.click(within(dialog).getByRole("button", { name: /Download large files/ }));
     await waitFor(() => expect(recorded.choices).toHaveLength(1));
     expect(recorded.choices[0]).toMatchObject({ mode: "download" });
+  });
+
+  it("still says a large-file answer did not go through after leaving the review and coming back", async () => {
+    // Kept per session (`largeFileFailureKey`), so the remounted dialog says it.
+    const { user, recorded, history } = surface(awaiting(true), {
+      review: true,
+      writesFail: true,
+    });
+    const dialog = await choiceDialog();
+    await user.click(within(dialog).getByRole("button", { name: /Skip large files/ }));
+    await waitFor(() => expect(recorded.choices).toHaveLength(1));
+    expect((await within(dialog).findByRole("alert")).textContent).toBe("connection lost");
+
+    act(() => history.navigate("/settings/appearance"));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /large files/ })).toBeNull());
+    act(() => history.navigate("/s/sess-widget"));
+    const reopened = await choiceDialog();
+    expect(reopened).not.toBe(dialog);
+    expect((await within(reopened).findByRole("alert")).textContent).toBe("connection lost");
+    expect(recorded.choices).toHaveLength(1);
   });
 
   it("stays dismissed when the review attaches after Escape", async () => {
