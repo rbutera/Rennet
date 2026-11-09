@@ -53,6 +53,24 @@ describe("background review activity", () => {
     expect(r.getByRole("status", { name: "Reviewing the change" })).toBeTruthy();
   });
 
+  it("never calls a review ready while it waits on the large-file answer", () => {
+    // capturing → awaiting attaches the review and stops for the reviewer's choice. Nothing
+    // is ready: reading the attached review id as "finished" would put a check on a review
+    // that has not been checked out, let alone drafted.
+    const r = mount(<SidebarReviewActivity sessionId="one" active={false} />);
+    reconcile([session("one", { status: "capturing", step: "capturing-change" })]);
+    reconcile([
+      session("one", {
+        status: "awaiting",
+        kind: "large-file-choice",
+        lfsAvailable: false,
+        reviewId: "review-one",
+      }),
+    ]);
+    expect(r.queryByRole("status", { name: "Review ready" })).toBeNull();
+    expect(r.getByRole("status", { name: "Reviewing the change" })).toBeTruthy();
+  });
+
   it("reconciles post-round work after navigation and does not acknowledge a successor operation", () => {
     const r = mount(<SidebarReviewActivity sessionId="one" active={false} />);
     const row = session("one");

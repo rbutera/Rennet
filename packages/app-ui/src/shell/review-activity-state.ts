@@ -34,8 +34,12 @@ export const useReviewActivityState = create<{
             : activity?.status === "failed"
               ? activity.reason
               : undefined;
+        // `awaiting` is still a review on its way — it is waiting on the reviewer's large-file
+        // answer, with the presence animating — so it must not fall through to the branch
+        // below that would mark it complete the moment it left `capturing`.
         if (
           preparation?.status === "capturing" ||
+          preparation?.status === "awaiting" ||
           preparation?.status === "drafting" ||
           activity?.status === "running"
         ) {
