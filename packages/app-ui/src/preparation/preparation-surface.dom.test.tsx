@@ -58,6 +58,8 @@ function surface(
     readonly attached?: { current: boolean };
     /** `session.retryPreparation` rejects, as a dropped connection would. */
     readonly retryFails?: boolean;
+    /** `session.cancelPreparation` and `session.chooseLargeFileMode` reject the same way. */
+    readonly writesFail?: boolean;
     readonly workspaceNotes?: readonly string[];
   } = {},
 ) {
@@ -89,7 +91,10 @@ function surface(
     },
     "forge.hosts": () => ({ hosts: [] }),
     "session.list": () => ({ sessions: [row()] }),
-    "session.cancelPreparation": () => ({ session: row() }),
+    "session.cancelPreparation": () => {
+      if (options.writesFail === true) throw new Error("connection lost");
+      return { session: row() };
+    },
     "session.retryPreparation": (input: CommandInput<"session.retryPreparation">) => {
       recorded.retries.push(input);
       if (options.retryFails === true)
@@ -101,6 +106,7 @@ function surface(
     "session.chooseLargeFileMode": async (input: CommandInput<"session.chooseLargeFileMode">) => {
       recorded.choices.push(input);
       await options.chooseGate;
+      if (options.writesFail === true) throw new Error("connection lost");
       return { session: row() };
     },
     "tools.install": async (input: CommandInput<"tools.install">) => {
@@ -280,6 +286,32 @@ describe("a stopped preparation is one actionable block", () => {
     await waitFor(() => expect(recorded.retries).toHaveLength(1));
     expect(
       await within(failure).findByText("Rennet couldn't start this review again. Try again."),
+    ).toBeTruthy();
+  });
+
+  it("says plainly when Skip large files did not go through", async () => {
+    const { user, recorded } = surface(lfsMissing, { writesFail: true });
+    const failure = await block();
+    await user.click(within(failure).getByRole("button", { name: "Skip large files" }));
+    await waitFor(() => expect(recorded.choices).toHaveLength(1));
+    expect(
+      await within(failure).findByText("Rennet couldn't record that choice. Try again."),
+    ).toBeTruthy();
+  });
+
+  it("says plainly when Cancel did not go through", async () => {
+    const { user } = surface(
+      { status: "capturing", step: "capturing-change" },
+      { writesFail: true },
+    );
+    const presence = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>('[data-kind="preparation-presence"]');
+      if (!found) throw new Error("no presence");
+      return found;
+    });
+    await user.click(await within(presence).findByRole("button", { name: "Cancel" }));
+    expect(
+      await within(presence).findByText("Rennet couldn't cancel this review. Try again."),
     ).toBeTruthy();
   });
 
