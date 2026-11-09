@@ -1135,6 +1135,61 @@ describe("the skip-mode overrides follow Git LFS on the host", () => {
   }, 60_000);
 });
 
+describe("the skip-mode index at daemon start and stop", () => {
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "a data directory whose index cannot be rewritten does not stop the daemon starting",
+    async () => {
+      const fixture = lfsRepository();
+      const index = new LargeFileSkipIndex(largeFileSkipIndexPath(fixture.dataDir));
+      // An entry whose checkout is gone, so the start's prune has something to write…
+      index.add(join(fixture.dataDir, "gone", ".git", "worktrees", "gone"), {
+        lfsAvailable: false,
+      });
+      // …into a folder it may not write.
+      const folder = dirname(index.indexPath);
+      chmodSync(folder, 0o555);
+      const warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
+        const server = await createRennetServer({ dataDir: fixture.dataDir, env: {} });
+        shutdowns.push(server.shutdown);
+        expect(warnings.mock.calls.flat().join("\n")).toMatch(
+          /could not prune the skip-mode index/,
+        );
+      } finally {
+        warnings.mockRestore();
+        chmodSync(folder, 0o755);
+      }
+    },
+  );
+
+  it("a host probe that settles after shutdown rewrites nothing", async () => {
+    const fixture = lfsRepository();
+    const index = new LargeFileSkipIndex(largeFileSkipIndexPath(fixture.dataDir));
+    // A registered checkout that still exists, under the form for a host without Git LFS.
+    index.add(join(fixture.repo, ".git"), { lfsAvailable: false });
+    const overrides = join(dirname(index.indexPath), "skip-overrides.gitconfig");
+    const before = readFileSync(overrides, "utf8");
+    let answer: (tools: DetectedSourceControlTool[]) => void = () => undefined;
+    const probed = vi.fn(
+      () =>
+        new Promise<DetectedSourceControlTool[]>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const server = await createRennetServer({
+      dataDir: fixture.dataDir,
+      env: {},
+      sourceControl: { detect: probed },
+    });
+    // The start probe is in flight; the server shuts down; then Git LFS answers.
+    await vi.waitFor(() => expect(probed).toHaveBeenCalled());
+    await server.shutdown();
+    answer([gitRow, { ...missingLfsRow, status: "available", version: "3.7.1" }]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(readFileSync(overrides, "utf8")).toBe(before);
+  });
+});
+
 /**
  * A session can be told its own large-file mode, leaving its project's choice alone — the
  * headless `rennet review --large-files`, or an answer given with `remember: false`.

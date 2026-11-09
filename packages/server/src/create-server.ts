@@ -2861,7 +2861,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   let largeFileStateClosed = false;
   // A checkout removed while this daemon was not running (by hand, or by an older build)
   // leaves its entry behind; git would hand the next worktree added there the same git dir.
-  largeFileSkipIndex.prune();
+  // Never fatal: a data directory that cannot be written leaves the entries for the next
+  // checkout's prune, and the daemon starts.
+  try {
+    largeFileSkipIndex.prune();
+  } catch (error) {
+    // `console` directly: the sibling log is composed further down this factory.
+    console.warn(
+      `rennet: could not prune the skip-mode index — ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   /**
    * The ONE workspace a session is bound to (session-bound-workspace D1), decided once from
    * the review target and then only re-pinned:
