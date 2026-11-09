@@ -37,6 +37,10 @@ test("the board reports a failed drafting attempt without disguising it as empty
     await expect(board).toBeVisible();
     await expect(board.locator('[data-kind="board-failed"]')).toContainText("no runnable seat");
     await expect(board.locator('[data-kind="board-empty"]')).toHaveCount(0);
+    // A settled review with no preparation on record shows no preparation chrome at all:
+    // neither the failure block nor the waiting presence.
+    await expect(page.locator('[data-testid="preparation-failure"]')).toHaveCount(0);
+    await expect(page.locator('[data-kind="preparation-presence"]')).toHaveCount(0);
     await expect(page.getByRole("tablist", { name: "Lens" }).getByRole("tab")).toHaveCount(5);
     await openDiffView(page);
     await expect(board).toHaveCount(0);

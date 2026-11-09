@@ -200,7 +200,7 @@ test("#668: a row click opens real generation progress before held drafting comp
     ).toHaveCount(5);
     // The internal-state copy the reviewer used to meet here is gone.
     await expect(page.getByText("No board for this generation yet.")).toHaveCount(0);
-    await expect(page.locator('[data-testid="workspace-header"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="preparation-failure"]')).toHaveCount(0);
     // ⚠️ ABSENCE ASSERTIONS, and they are the honest half of the presence: the daemon has
     // opened NO lane yet, so nothing on screen may claim a seat is working or a board is
     // being written. The presence is a presence, not five invented readers.
@@ -213,12 +213,14 @@ test("#668: a row click opens real generation progress before held drafting comp
     await expect(cancel).toBeVisible();
 
     // Cancellation is a live command, not a disabled navigation state. The review remains on
-    // the same route with an explicit terminal account and can be retried in place — and the
-    // header, silent while the generation ran, comes back to carry that account.
+    // the same route with one calm terminal block and can be retried in place; the presence
+    // stops, because nothing is on its way any more.
     await cancel.click();
-    const header = page.locator('[data-testid="workspace-header"]');
-    await expect(header).toHaveAttribute("data-status", "cancelled");
-    await expect(header.getByRole("button", { name: "Retry" })).toBeVisible();
+    const block = page.locator('[data-testid="preparation-failure"]');
+    await expect(block).toHaveAttribute("data-status", "cancelled");
+    await expect(block).toContainText("Cancelled");
+    await expect(block.getByRole("button", { name: "Retry" })).toBeVisible();
+    await expect(presence).toHaveCount(0);
     // …and a cancelled run still says nothing is being written.
     await expect(page.locator('[data-kind="board-ghost"]')).toHaveCount(0);
     await expect(page.locator('[data-register="working"]')).toHaveCount(0);

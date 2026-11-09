@@ -410,7 +410,7 @@ describe("the chat slot is always the T3 thread", () => {
     );
     // Give the resolution a beat to settle into `no-review`, then read the whole pane.
     await waitFor(() =>
-      expect(document.querySelector('[data-testid="workspace-header"]')).not.toBeNull(),
+      expect(document.querySelector('[data-testid="preparation-failure"]')).not.toBeNull(),
     );
     expect(dock.querySelector('[data-slot="t3-chat-preparing"]')).toBeNull();
     expect(dock.querySelector('[data-slot="t3-chat-starting"]')).toBeNull();

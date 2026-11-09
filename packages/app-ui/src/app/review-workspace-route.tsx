@@ -372,6 +372,19 @@ export function ReviewWorkspace({ review }: { review: Review }) {
           because that answer is a git read the note makes. So the border and the padding
           moved inside it, and an empty answer now renders nothing at all. */}
       {showWorkBranch && session !== undefined ? <WorkBranchNote sessionId={session.id} /> : null}
+      {/* Quiet facts about the bound checkout (review-preparation-reliability): today only that
+          a skip-mode checkout left large files as placeholders. Plain sentences beside the
+          review, never a failure and never a dialog. */}
+      {session?.workspaceNotes !== undefined && session.workspaceNotes.length > 0 ? (
+        <ul
+          data-slot="workspace-notes"
+          className="flex shrink-0 flex-col gap-1 border-line border-b px-6 py-2 text-ink-soft text-xs"
+        >
+          {session.workspaceNotes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+      ) : null}
       {view === "handoff" ? (
         <HandoffMount key={slug} review={review} slug={slug} navigate={navigate} />
       ) : view === "diff" ? (

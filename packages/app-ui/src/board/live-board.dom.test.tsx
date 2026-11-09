@@ -262,7 +262,7 @@ describe("the review opens on its boards, with no waiting stage in front of them
     expect(text).not.toContain("No board for this generation yet.");
     expect(text).not.toMatch(/resolving|capturing/i);
     expect(document.querySelector('[data-kind="board-empty"]')).toBeNull();
-    expect(document.querySelector('[data-testid="workspace-header"]')).toBeNull();
+    expect(document.querySelector('[data-testid="preparation-failure"]')).toBeNull();
     // No preparation SCREEN survives anywhere.
     expect(document.querySelector('[data-screen="session-preparation"]')).toBeNull();
   });
@@ -585,9 +585,9 @@ describe("a run that is over never says a seat is still writing", () => {
       { timeout: 4_000 },
     );
     // …and the screen still says what happened, in one voice rather than two.
-    expect(document.querySelector('[data-testid="workspace-header"]')?.textContent).toContain(
-      "cancelled",
-    );
+    const block = document.querySelector('[data-testid="preparation-failure"]');
+    expect(block?.getAttribute("data-status")).toBe("cancelled");
+    expect(block?.textContent).toContain("Cancelled");
   });
 
   it("says nothing is being written when capture failed before any lane opened", async () => {
@@ -605,7 +605,7 @@ describe("a run that is over never says a seat is still writing", () => {
     open(live, "?lens=design");
 
     await waitFor(() =>
-      expect(document.querySelector('[data-testid="workspace-header"]')).toBeTruthy(),
+      expect(document.querySelector('[data-testid="preparation-failure"]')).toBeTruthy(),
     );
     expect(noStillWriting()).toEqual({
       inProgressMark: false,
@@ -619,32 +619,47 @@ describe("a run that is over never says a seat is still writing", () => {
     // Noise waits on nobody. The rail still LISTS all five (5.1) — that part was right.
     expect(tabOf("noise")?.getAttribute("data-waiting-on")).toBeNull();
     expect(document.querySelectorAll('[data-kind="lens-switcher"] [data-lens]')).toHaveLength(5);
-    expect(document.querySelector('[data-testid="workspace-header"]')?.textContent).toContain(
+    // ONE block says what happened, and nothing under it says it again: the empty board
+    // that used to sit beneath the strip ("No board for this generation yet.") is gone.
+    expect(document.querySelector('[data-testid="preparation-failure"]')?.textContent).toContain(
       "Could not resolve the repository.",
     );
+    expect(document.body.textContent).not.toContain("No board for this generation yet.");
+    expect(document.querySelector('[data-kind="board-empty"]')).toBeNull();
   });
 
-  // review-preparation-reliability (c): a stage this surface has no copy of yet — the
-  // workspace stage — reads with the capture copy, never as a boards failure.
-  it("labels a workspace-stage failure with the capture copy", async () => {
+  // review-preparation-reliability D5/D6: a checkout that failed because Git LFS is missing
+  // reads as the daemon's plain sentence, offers the two real ways forward and Retry, and
+  // keeps git's own words behind Details. No stage label: "Capture failed" named a pipeline
+  // step the reviewer cannot act on.
+  it("offers Install for me, Skip large files and Retry when Git LFS is missing", async () => {
     const live = liveBridge({
       review: false,
       preparation: {
         status: "failed",
         stage: "workspace",
-        reason: "Git LFS isn't installed, so this pull request's large files can't be checked out.",
+        reason: "Git LFS is needed to check out this pull request.",
         kind: "tool-missing",
         action: "install",
         tool: "git-lfs",
-        detail: "git-lfs: command not found",
+        detail: "git-lfs filter-process --skip: git-lfs: command not found",
       },
     });
     open(live, "?lens=design");
-    await waitFor(() =>
-      expect(document.querySelector('[data-testid="preparation-stage"]')?.textContent).toBe(
-        "Capture failed",
-      ),
+    const block = await waitFor(() => {
+      const found = document.querySelector('[data-testid="preparation-failure"]');
+      if (!found) throw new Error("no failure block");
+      return found;
+    });
+    expect(block.getAttribute("data-failure-kind")).toBe("tool-missing");
+    expect(block.textContent).toContain("Git LFS is needed to check out this pull request.");
+    const buttons = [...block.querySelectorAll("button")].map((button) => button.textContent);
+    expect(buttons).toEqual(
+      expect.arrayContaining(["Install Git LFS for me", "Skip large files", "Retry"]),
     );
+    // Git's stderr is NOT on the page until Details is opened…
+    expect(document.body.textContent).not.toContain("command not found");
+    expect(document.body.textContent).not.toMatch(/capture failed/i);
   });
 
   it("draws no board being written while capture is still running", async () => {

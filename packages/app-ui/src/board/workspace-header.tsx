@@ -1,8 +1,11 @@
 import { newCommandId, type SessionPreparation, type SidebarSession } from "@rennet/protocol";
-import { Button, cn } from "@rennet/ui";
-import { useEffect } from "react";
+import { Button } from "@rennet/ui";
+import { useEffect, useState } from "react";
 import { useCommand, useMutation, useRefreshCommand } from "../data";
+import { LargeFileChoice } from "../preparation/large-file-choice";
+import { PreparationFailure } from "../preparation/preparation-failure";
 import { preparationPhase } from "../preparation/preparation-phase";
+import { useProjectLocus } from "../preparation/session-locus";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE WORKSPACE HEADER (lens-board-tools 5.2/5.4, D12) — capture reported IN the
@@ -27,7 +30,9 @@ import { preparationPhase } from "../preparation/preparation-phase";
 // titlebar, in the same skin as the rest of the floating chrome.
 //
 // The header comes back for a terminal state, because a failure has something only it
-// can say (its reason) and an action only it can offer (Retry).
+// can say (its reason) and actions only it can offer: since review-preparation-reliability
+// that is one PreparationFailure block, with the recovery its kind calls for and Retry.
+// And it carries the large-file question while preparation waits on it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** How often this component re-asks `session.list` while preparation is live. The lane
@@ -49,7 +54,6 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
   const preparation: SessionPreparation | undefined = session?.preparation;
   const refreshSessions = useRefreshCommand("session.list");
   const cancel = useMutation("session.cancelPreparation", { invalidates: ["session.list"] });
-  const retry = useMutation("session.retryPreparation", { invalidates: ["session.list"] });
   const phase = preparationPhase(preparation);
   // Still going: the poll is what moves the rail, the presence and the seats. `choosing` is
   // polled too, so an answer given from another window resumes this one.
@@ -65,10 +69,23 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
   // what is happening TO them.
   if (preparation === undefined || session === undefined) return null;
 
-  const failed = preparation.status === "failed";
-  const cancelled = preparation.status === "cancelled";
+  // WAITING: nothing here. The board area is the preparation presence, and its Cancel sits
+  // inline under the skeleton (review-preparation-reliability D6) — a second, floating Cancel
+  // over a board that is itself a waiting presence would be two ways to say one thing.
+  if (phase === "waiting") return null;
 
-  // RUNNING: one control, floating, and nothing else. It sits in the EXIT's corner —
+  // CHOOSING: the large-file question, over the presence that keeps animating behind it.
+  if (preparation.status === "awaiting") {
+    return <AwaitingChoice session={session} lfsAvailable={preparation.lfsAvailable} />;
+  }
+
+  // STOPPED: one block that says what happened and what to do (task 3.3), in place of the
+  // strip that used to sit over an empty board.
+  if (preparation.status === "failed" || preparation.status === "cancelled") {
+    return <PreparationFailure session={session} preparation={preparation} />;
+  }
+
+  // DRAFTING: one control, floating, and nothing else. It sits in the EXIT's corner —
   // `right-6 bottom-6`, the slot `handoff/fab.tsx` uses for Continue — because the two
   // never coexist: Continue is absent while the boards are being written, and this chip
   // is absent once they are. One corner, one thing the reviewer can do to the review at
@@ -79,61 +96,58 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
   // the outlet, and the outlet — not the window — is what the dock sits beside.
   // `app-region-no-drag` is explicit: a control that does not opt out of a drag region
   // never receives its own clicks.
-  // WAITING: nothing here. The board area is the preparation presence, and its Cancel sits
-  // inline under the skeleton (review-preparation-reliability D6) — a second, floating Cancel
-  // over a board that is itself a waiting presence would be two ways to say one thing.
-  if (phase === "waiting" || phase === "choosing") return null;
-  if (active) {
-    return (
-      <button
-        type="button"
-        data-testid="preparation-cancel"
-        aria-label="Cancel board generation"
-        disabled={cancel.pending}
-        onClick={() => void cancel.mutate({ sessionId: session.id })}
-        className="app-region-no-drag absolute right-6 bottom-6 z-40 flex h-8 items-center rounded-full border border-line/60 bg-surface/70 px-3 font-medium text-ink-soft text-sm backdrop-blur-md transition-colors hover:text-ink disabled:opacity-60"
-      >
-        Cancel
-      </button>
-    );
-  }
-
-  // Only the boards stage reads as Review. Every other stage, including `workspace` and any
-  // stage a newer daemon adds, takes the capture copy: it stopped before the review existed
-  // as boards (review-preparation-reliability D5).
-  const stage = (failed || cancelled) && preparation.stage !== "boards" ? "Capture" : "Review";
-
   return (
-    <header
-      data-testid="workspace-header"
-      data-status={preparation.status}
-      role={failed ? "alert" : "status"}
-      className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-line border-b bg-surface px-6 py-2.5"
+    <button
+      type="button"
+      data-testid="preparation-cancel"
+      aria-label="Cancel board generation"
+      disabled={cancel.pending}
+      onClick={() => void cancel.mutate({ sessionId: session.id })}
+      className="app-region-no-drag absolute right-6 bottom-6 z-40 flex h-8 items-center rounded-full border border-line/60 bg-surface/70 px-3 font-medium text-ink-soft text-sm backdrop-blur-md transition-colors hover:text-ink disabled:opacity-60"
     >
-      <span
-        data-testid="preparation-stage"
-        className={cn("font-medium text-13", failed ? "text-danger" : "text-ink")}
-      >
-        {failed ? `${stage} failed` : cancelled ? `${stage} cancelled` : stage}
-      </span>
-      <span className={cn("font-serif text-13", failed ? "text-danger" : "text-ink-soft")}>
-        {failed
-          ? preparation.reason
-          : cancelled
-            ? "The review is still here. Retry when you’re ready."
-            : ""}
-      </span>
-      <span className="flex-1" />
-      <Button
-        variant="accent"
-        size="sm"
-        data-testid="workspace-retry"
-        disabled={retry.pending}
-        onClick={() => void retry.mutate({ sessionId: session.id, commandId: newCommandId() })}
-      >
-        {retry.pending ? "Retrying…" : "Retry"}
-      </Button>
-    </header>
+      Cancel
+    </button>
+  );
+}
+
+/**
+ * The large-file question while preparation waits on it. The modal opens on its own; Escape
+ * (or its close button) does not strand the reviewer — it leaves this calm line with a way
+ * back, while the presence keeps animating below.
+ */
+function AwaitingChoice({
+  session,
+  lfsAvailable,
+}: {
+  readonly session: SidebarSession;
+  readonly lfsAvailable: boolean;
+}) {
+  const [open, setOpen] = useState(true);
+  const locus = useProjectLocus(session.projectId);
+  return (
+    <>
+      <LargeFileChoice
+        sessionId={session.id}
+        open={open}
+        onOpenChange={setOpen}
+        lfsAvailable={lfsAvailable}
+        locus={locus}
+      />
+      {open ? null : (
+        <div
+          data-testid="large-file-waiting"
+          role="status"
+          className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-line border-b bg-surface/60 px-6 py-2.5"
+        >
+          <span className="text-ink-soft text-sm">
+            This review is waiting for your choice about large files.
+          </span>
+          <Button variant="accent" size="sm" onClick={() => setOpen(true)}>
+            Choose large-file mode
+          </Button>
+        </div>
+      )}
+    </>
   );
 }
 
