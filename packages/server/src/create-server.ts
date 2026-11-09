@@ -2207,6 +2207,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     /** What has streamed so far, for a command that joins late. Capped: the tail is kept. */
     readonly streamed: { stream: "stdout" | "stderr"; chunk: string }[];
     streamedBytes: number;
+    /** The plan's command once it is resolved, carried on every event so a reviewer sees what
+     *  is running while it runs (source-control-tooling: "the command SHALL be shown"). */
+    command?: string;
     readonly result: Promise<CommandOutput<"tools.install">["result"]>;
   }
   const toolInstallRuns = new Map<string, ToolInstallRun>();
@@ -2222,8 +2225,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     tool: SourceControlToolId,
     stream: "stdout" | "stderr",
     chunk: string,
+    command?: string,
   ): void {
-    const event = { kind: "tool-install-output", tool, stream, chunk } as const;
+    const event = {
+      kind: "tool-install-output",
+      tool,
+      stream,
+      chunk,
+      ...(command === undefined ? {} : { command }),
+    } as const;
     options.broadcastProgress?.(commandId, event);
     wsListener?.broadcastProgress(commandId, event);
   }
@@ -2275,8 +2285,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     if (running !== undefined) {
       if (!running.commandIds.has(input.commandId)) {
         running.commandIds.add(input.commandId);
+        if (running.command !== undefined) {
+          emitToolInstallOutput(input.commandId, input.tool, "stdout", "", running.command);
+        }
         for (const { stream, chunk } of running.streamed) {
-          emitToolInstallOutput(input.commandId, input.tool, stream, chunk);
+          emitToolInstallOutput(input.commandId, input.tool, stream, chunk, running.command);
         }
       }
       return running.result;
@@ -2292,16 +2305,27 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       streamed,
       streamedBytes: 0,
       result: Promise.resolve().then(() =>
-        runSourceControlInstall(input, controller.signal, (stream, chunk) => {
-          streamed.push({ stream, chunk });
-          run.streamedBytes += chunk.length;
-          while (run.streamedBytes > TOOL_INSTALL_REPLAY_CAP && streamed.length > 1) {
-            run.streamedBytes -= streamed.shift()?.chunk.length ?? 0;
-          }
-          for (const commandId of commandIds) {
-            emitToolInstallOutput(commandId, input.tool, stream, chunk);
-          }
-        }),
+        runSourceControlInstall(
+          input,
+          controller.signal,
+          (stream, chunk) => {
+            streamed.push({ stream, chunk });
+            run.streamedBytes += chunk.length;
+            while (run.streamedBytes > TOOL_INSTALL_REPLAY_CAP && streamed.length > 1) {
+              run.streamedBytes -= streamed.shift()?.chunk.length ?? 0;
+            }
+            for (const commandId of commandIds) {
+              emitToolInstallOutput(commandId, input.tool, stream, chunk, run.command);
+            }
+          },
+          (command) => {
+            // Said once, before the installer prints anything: what is about to run.
+            run.command = command;
+            for (const commandId of commandIds) {
+              emitToolInstallOutput(commandId, input.tool, "stdout", "", command);
+            }
+          },
+        ),
       ),
     };
     toolInstallRuns.set(key, run);
@@ -2317,11 +2341,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     input: { readonly tool: SourceControlToolId; readonly locus: Locus },
     signal: AbortSignal,
     onOutput: (stream: "stdout" | "stderr", chunk: string) => void,
+    onCommand?: (command: string) => void,
   ): Promise<CommandOutput<"tools.install">["result"]> {
     const plan = await resolveInstallPlan(input.tool, {
       ...options.sourceControl?.installPlanDeps,
       ...(input.locus.kind === "wsl" ? { platform: "linux" as const } : {}),
     });
+    // A manual plan runs nothing, so there is nothing to show "while it runs": its command
+    // arrives with the result.
+    if (plan.plan !== "manual" && !signal.aborted) onCommand?.(plan.command);
     const result = await runInstallPlan(plan, {
       onOutput: (chunk, stream) => onOutput(stream, chunk),
       reprobe: async () => {

@@ -837,6 +837,14 @@ export const toolInstallProgressEventSchema = z.object({
   tool: SourceControlToolIdSchema,
   stream: z.enum(["stdout", "stderr"]),
   chunk: z.string(),
+  /**
+   * The command the install is running, as one line a person can read and copy (the
+   * result's `command`). Sent on every event once the plan is known — the first event of a
+   * run carries it with an empty chunk, before the installer prints anything — so the
+   * command is shown alongside the install while it runs, not only after. Optional: an
+   * older daemon omits it, and the command then appears with the result.
+   */
+  command: z.string().min(1).optional(),
 });
 export type ToolInstallProgressEvent = z.infer<typeof toolInstallProgressEventSchema>;
 

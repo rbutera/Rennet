@@ -133,6 +133,16 @@ describe("tools.install (Install for me)", () => {
       expect(order.every((index) => index >= 0)).toBe(true);
       expect([...order].sort((a, b) => a - b)).toEqual(order);
       expect(result.output).toContain("Git LFS initialized.");
+      // The command is said FIRST, before the installer prints a line, and rides every event
+      // after: the UI shows it alongside the install while it runs, not only afterwards.
+      const commands = events
+        .filter((entry) => entry.commandId === commandId)
+        .map((entry) => entry.event as unknown as { chunk: string; command?: string });
+      expect(commands[0]).toMatchObject({
+        chunk: "",
+        command: "brew install git-lfs && git lfs install",
+      });
+      expect(commands.every((event) => event.command === result.command)).toBe(true);
     },
   );
 
