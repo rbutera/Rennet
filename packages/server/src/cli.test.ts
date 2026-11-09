@@ -21,6 +21,7 @@ import {
   type CliIo,
   HEADLESS_LARGE_FILES_LINE,
   NO_SIDECAR_WARNING,
+  olderDaemonLargeFilesLine,
   runCli as runSourceCli,
   writeCaptureFailureDocument,
 } from "./cli";
@@ -813,6 +814,169 @@ describe("rennet review: argument and daemon-identity handling", () => {
       expect(captured.out.some((line) => line.startsWith("added "))).toBe(false);
     } finally {
       await new Promise<void>((closed) => wss.close(() => closed()));
+    }
+  });
+});
+
+/**
+ * A daemon one protocol behind this CLI (mixed versions after an update, before the daemon
+ * restarted): it accepts the CLI's handshake — this build still speaks to version 3 — and its
+ * schemas drop `largeFiles` on `session.mint` and `remember` on `session.chooseLargeFileMode`
+ * without a word. The CLI must not send either to it.
+ */
+describe("rennet review against an older daemon that would drop the large-file fields", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function captureIo(): { io: CliIo; out: string[]; err: string[] } {
+    const out: string[] = [];
+    const err: string[] = [];
+    return { io: { out: (line) => out.push(line), err: (line) => err.push(line) }, out, err };
+  }
+
+  /** A fake daemon speaking `protocolVersion`, answering the review driver's reads. Every
+   *  command it receives is recorded. Its one session is waiting on the large-file question. */
+  async function olderDaemon(protocolVersion: number, repo: string) {
+    const received: { command: string; input: Record<string, unknown> }[] = [];
+    const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+    await new Promise<void>((ready) => wss.on("listening", () => ready()));
+    const port = (wss.address() as { port: number }).port;
+    const answers: Record<string, unknown> = {
+      "projects.list": { projects: [{ id: "p1", name: "widget", path: repo, openPath: repo }] },
+      "repository.identify": { repository: "acme/widget" },
+      "session.mint": {
+        reattached: false,
+        session: {
+          id: "s1",
+          projectId: "p1",
+          title: "feat/x",
+          preparation: { status: "awaiting", kind: "large-file-choice", lfsAvailable: true },
+        },
+      },
+      "session.chooseLargeFileMode": { session: null },
+      "session.list": { sessions: [] },
+    };
+    wss.on("connection", (socket) => {
+      socket.on("message", (data) => {
+        const frame = JSON.parse(data.toString()) as {
+          type: string;
+          requestId?: string;
+          command?: string;
+          input?: Record<string, unknown>;
+        };
+        if (frame.type === "hello") {
+          socket.send(
+            JSON.stringify({
+              type: "serverInfo",
+              version: "1.2.1",
+              protocolVersion,
+              minCompatibleProtocolVersion: 3,
+              features: { serverRequests: true, "review-cli": true },
+            }),
+          );
+          return;
+        }
+        if (frame.type !== "request" || frame.command === undefined) return;
+        received.push({ command: frame.command, input: frame.input ?? {} });
+        socket.send(
+          JSON.stringify({
+            type: "response",
+            requestId: frame.requestId,
+            output: answers[frame.command] ?? {},
+          }),
+        );
+      });
+    });
+    const identity = {
+      pid: process.pid,
+      wsPort: port,
+      host: "127.0.0.1",
+      version: "1.2.1",
+      protocolVersion,
+    };
+    return {
+      received,
+      deps: {
+        probe: async () => ({
+          kind: "healthy" as const,
+          identity: { ...identity, minCompatibleProtocolVersion: 3 },
+          claim: { ...identity, startedAt: new Date().toISOString() },
+        }),
+        kill: vi.fn(),
+      },
+      close: () => new Promise<void>((closed) => wss.close(() => closed())),
+    };
+  }
+
+  function repository(): string {
+    const repo = realpathSync(mkdtempSync(resolve(tmpdir(), "rennet-review-older-")));
+    dirs.push(repo);
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    return repo;
+  }
+
+  it("refuses --large-files before minting anything, and says to restart Rennet", async () => {
+    const repo = repository();
+    const daemon = await olderDaemon(3, repo);
+    try {
+      const captured = captureIo();
+      const code = await runSourceCli(
+        ["review", "main..feat/x", repo, "--large-files", "skip", "--data-dir", repo],
+        captured.io,
+        {},
+        daemon.deps,
+      );
+      expect(code).toBe(1);
+      expect(captured.err).toEqual([`rennet review: ${olderDaemonLargeFilesLine(3)}`]);
+      expect(captured.err[0]).toContain("restart Rennet");
+      // Nothing was sent that the daemon would have dropped.
+      expect(daemon.received.map((call) => call.command)).not.toContain("session.mint");
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it("will not answer the large-file question for this session only on an older daemon", async () => {
+    const repo = repository();
+    const daemon = await olderDaemon(3, repo);
+    try {
+      const captured = captureIo();
+      const code = await runSourceCli(
+        ["review", "main..feat/x", repo, "--data-dir", repo],
+        captured.io,
+        {},
+        daemon.deps,
+      );
+      expect(code).toBe(1);
+      expect(captured.err).toContain(`rennet review: ${olderDaemonLargeFilesLine(3)}`);
+      // `remember: false` would have been dropped, recording the headless answer as the
+      // project's choice: the answer was never sent.
+      expect(daemon.received.map((call) => call.command)).not.toContain(
+        "session.chooseLargeFileMode",
+      );
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it("a current daemon gets the session-only answer", async () => {
+    const repo = repository();
+    const daemon = await olderDaemon(PROTOCOL_VERSION, repo);
+    try {
+      const captured = captureIo();
+      await runSourceCli(
+        ["review", "main..feat/x", repo, "--data-dir", repo],
+        captured.io,
+        {},
+        daemon.deps,
+      );
+      expect(captured.err.join("\n")).not.toContain("restart Rennet");
+      const answer = daemon.received.find((call) => call.command === "session.chooseLargeFileMode");
+      expect(answer?.input).toMatchObject({ sessionId: "s1", mode: "download", remember: false });
+    } finally {
+      await daemon.close();
     }
   });
 });

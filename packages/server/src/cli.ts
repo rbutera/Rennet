@@ -495,6 +495,8 @@ interface CliSocket {
   readonly features: Readonly<Record<string, boolean>>;
   /** The daemon's own version from the `serverInfo` frame, for a truthful capability refusal. */
   readonly serverVersion: string;
+  /** The protocol version the daemon speaks, from the `serverInfo` frame. */
+  readonly serverProtocolVersion: number;
   /** Close the socket. Idempotent from the caller's side. */
   close(): void;
 }
@@ -525,6 +527,7 @@ async function openCliSocket(dataDir: string, deps: CliDeps): Promise<CliSocket>
     // this promise resolves, then read through the getters below so `api` stays a readonly view.
     let capturedFeatures: Record<string, boolean> = {};
     let capturedVersion = "";
+    let capturedProtocolVersion = 0;
     const openTimer = setTimeout(() => {
       socket.close();
       rejectSocket(new Error("timed out waiting for the daemon"));
@@ -546,6 +549,9 @@ async function openCliSocket(dataDir: string, deps: CliDeps): Promise<CliSocket>
       },
       get serverVersion() {
         return capturedVersion;
+      },
+      get serverProtocolVersion() {
+        return capturedProtocolVersion;
       },
       close() {
         socket.close();
@@ -574,6 +580,7 @@ async function openCliSocket(dataDir: string, deps: CliDeps): Promise<CliSocket>
           // `socket.features` sees the handshake facts the moment it holds the socket (D11).
           capturedFeatures = frame.features;
           capturedVersion = frame.version;
+          capturedProtocolVersion = frame.protocolVersion;
           ready = true;
           clearTimeout(openTimer);
           resolveSocket(api);
@@ -810,6 +817,20 @@ export const HEADLESS_LARGE_FILES_LINE =
   "this repository uses Git LFS and its project has no large-file choice, so this review downloads large files; pass --large-files skip to skip them, or choose in Rennet's settings";
 
 /**
+ * The oldest daemon protocol that understands a session's own large-file mode: `largeFiles`
+ * on `session.mint` and `remember: false` on `session.chooseLargeFileMode`. An older daemon
+ * accepts this CLI's handshake and then drops both fields without a word — the review would
+ * run under the project's choice, or record the headless answer as the project's — so the CLI
+ * refuses instead of sending them.
+ */
+export const SESSION_LARGE_FILES_MIN_PROTOCOL = 4;
+
+/** The one line a refusal of an older daemon prints. */
+export function olderDaemonLargeFilesLine(protocolVersion: number): string {
+  return `the running Rennet daemon is older than this CLI (protocol ${protocolVersion}) and would ignore the large-file choice; restart Rennet so the daemon updates, then run this again`;
+}
+
+/**
  * Answer the large-file question for a headless run (large-file-checkout spec): nobody is
  * there to ask, so the run never stops at `awaiting`. The answer is `--large-files` when it
  * was passed, else download, and it is this SESSION's only (`remember: false`): the project's
@@ -865,6 +886,16 @@ async function pollPreparation(
       const done = terminalResult(previous, reviewId);
       if (done) return done;
       if (previous?.status === "awaiting" && !answered) {
+        // The answer is this session's only (`remember: false`), which an older daemon drops
+        // and records as the project's choice. Say so instead of sending it.
+        if (socket.serverProtocolVersion < SESSION_LARGE_FILES_MIN_PROTOCOL) {
+          return {
+            outcome: "failed",
+            reviewId,
+            reason: olderDaemonLargeFilesLine(socket.serverProtocolVersion),
+            settledAtMs: Date.now(),
+          };
+        }
         answered = true;
         await answerLargeFilesHeadless(socket, sessionId, largeFiles, Date.now() - startedAtMs, io);
       }
@@ -1066,6 +1097,15 @@ async function driveReview(
   const unsupported = reviewCliUnsupportedMessage(socket.features, socket.serverVersion);
   if (unsupported !== undefined) {
     io.err(`rennet review: ${unsupported}`);
+    return 1;
+  }
+  // `--large-files` is this session's own mode, a field an older daemon drops silently: the
+  // review would run under the project's choice while this run said otherwise.
+  if (
+    target.largeFiles !== undefined &&
+    socket.serverProtocolVersion < SESSION_LARGE_FILES_MIN_PROTOCOL
+  ) {
+    io.err(`rennet review: ${olderDaemonLargeFilesLine(socket.serverProtocolVersion)}`);
     return 1;
   }
 

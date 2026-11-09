@@ -669,7 +669,10 @@ A headless run never stops at the large-file question. `--large-files download`
 or `--large-files skip` sets the mode for that review's checkout only. Without
 the flag, a repository whose project has a choice uses it; one whose project has
 none downloads large files, as a headless run always did, prints one line saying
-so and how to choose, and records nothing on the project.
+so and how to choose, and records nothing on the project. A daemon older than the
+CLI (protocol 3) would drop both the flag and the session-only answer without a
+word, so against one the run stops with a single line asking you to restart
+Rennet so the daemon updates, and sends neither.
 
 `serve`, `status`, and `stop` operate on the daemon. `stop` asks the verified
 daemon to shut itself down over its own HTTP port (`POST /shutdown`, beside
