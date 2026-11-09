@@ -100,6 +100,8 @@ still goes through the one seam; only the label is hand-written.
 | `forge.detect` | Read-only disclosure with no mounted reader. |
 | `forge.hosts` | Read the environments surface drives for itself. |
 | `forge.setEnabled` | Needs the host, the forge id, and the new state. |
+| `tools.install` | Needs the tool and the machine it is installed on, and its output must be displayed as it streams. |
+| `tools.cancelInstall` | Needs the running install being stopped. |
 | `daemon.status` | Read the environments surface drives for itself. |
 | `daemon.reconnect` | Needs the host being reconnected. |
 | `daemon.update` | Needs the host being updated. |
@@ -217,6 +219,7 @@ still goes through the one seam; only the label is hand-written.
 | `session.mint` | Needs the project, and the branch or pull request being claimed — New Chat's picker is where a reviewer names them. A parameterless mint could only guess a target, and guessing one would claim it. |
 | `session.cancelPreparation` | Needs the session whose active capture or board generation should stop. |
 | `session.retryPreparation` | Needs the failed or cancelled session and a fresh command id. |
+| `session.chooseLargeFileMode` | Needs the session that asked and the reviewer's answer: download or skip large files. |
 | `session.rename` | Needs the session and the new title. |
 | `session.setPinned` | Needs the session and the pin state. |
 | `session.archive` | Needs the session being archived or restored. |

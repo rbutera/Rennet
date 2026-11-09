@@ -9,6 +9,7 @@ import {
   AskEventBodySchema,
   AskProjectionSchema,
   attentionFamilySchema,
+  LargeFileModeSchema,
   LensAbsenceReasonSchema,
   LensDraftSnapshotSchema,
   LensFailureAccountSchema,
@@ -17,6 +18,7 @@ import {
   RoundLedgerRecordSchema,
   RoundOperationProgressSnapshotSchema,
   SessionTranscriptSchema,
+  SourceControlToolIdSchema,
   StagedAskSchema,
   VerdictOverrideSchema,
 } from "../session";
@@ -30,6 +32,7 @@ import {
   deltaDigestResultSchema,
   detectedForgeSchema,
   detectedHarnessSchema,
+  detectedSourceControlToolSchema,
   discoveryResultSchema,
   dispositionTypeSchema,
   flaggedReviewSchema,
@@ -44,6 +47,7 @@ import {
   handoffDispositionSchema,
   handoffRunOutputSchema,
   harnessHostDetectionSchema,
+  locusSchema,
   noiseReviewSchema,
   openSpecChangeSchema,
   pairedDeviceSchema,
@@ -508,6 +512,57 @@ const definitions = {
   // Source Control toggles, mirroring harness.setEnabled exactly and persisted on the same
   // per-host daemon-settings entry. The current surface exposes it for GitHub; health-only
   // GitLab has no toggle until merge-request operations exist for that ruling to control.
+  // Install a missing source-control tool on ONE execution locus (source-control-tooling
+  // spec, D3: "Install for me"). Pressing the button is the request — no confirmation step
+  // (Rule Zero). On macOS with Homebrew it runs the plan's commands, streaming every chunk of
+  // output as a `tool-install-output` progress event under `commandId`, then re-probes the
+  // tool; anywhere else it runs nothing and answers `manual` with the command and a link. The
+  // result carries the tool's real state after the run, not the installer's opinion of it.
+  "tools.install": {
+    input: z.object({
+      tool: SourceControlToolIdSchema,
+      locus: locusSchema,
+      commandId: commandIdSchema,
+    }),
+    output: z.object({
+      result: z.discriminatedUnion("status", [
+        z.object({
+          status: z.literal("installed"),
+          /** What ran, as one line a person can read and copy. */
+          command: z.string().min(1),
+          output: z.string(),
+          probe: detectedSourceControlToolSchema,
+        }),
+        z.object({
+          status: z.literal("failed"),
+          command: z.string().min(1),
+          /** One plain sentence; `output` is the detail. */
+          message: z.string().min(1),
+          /** The step that failed, as a person would type it. */
+          failedCommand: z.string().min(1),
+          exitCode: z.number().int().nullable(),
+          /** Present when the install stopped because it was cancelled. */
+          cancelled: z.literal(true).optional(),
+          output: z.string(),
+          probe: detectedSourceControlToolSchema,
+        }),
+        z.object({
+          status: z.literal("manual"),
+          /** The command to run by hand on that locus. */
+          command: z.string().min(1),
+          docsUrl: z.string().min(1),
+          probe: detectedSourceControlToolSchema,
+        }),
+      ]),
+    }),
+  },
+  // Stop a running `tools.install` by its `commandId`: the running step and everything it
+  // started are terminated and no later step runs. `cancelled: false` when nothing by that id
+  // was running (it had already finished, or never started).
+  "tools.cancelInstall": {
+    input: z.object({ commandId: commandIdSchema }),
+    output: z.object({ cancelled: z.boolean() }),
+  },
   "forge.setEnabled": {
     input: z.object({
       source: sourceSchema,
@@ -1652,6 +1707,21 @@ const definitions = {
   },
   "session.retryPreparation": {
     input: z.object({ sessionId: z.string().min(1), commandId: commandIdSchema }),
+    output: z.object({ session: sidebarSessionSchema.nullable() }),
+  },
+  // The answer to the large-file question (large-file-checkout spec, D4): how this session's
+  // project treats Git LFS content in review checkouts. Writes `checkout.largeFiles` on the
+  // repository's repo rung, so later checkouts of the project never ask again, then resumes
+  // the session's preparation, which binds the checkout under the chosen mode. Also the
+  // answer to a failure whose action is `choose-large-files`. A preparation still running is
+  // left alone: the mode is recorded and applies to its next checkout. `commandId` keys the
+  // resumed run; absent ⇒ the daemon mints one.
+  "session.chooseLargeFileMode": {
+    input: z.object({
+      sessionId: z.string().min(1),
+      mode: LargeFileModeSchema,
+      commandId: commandIdSchema.optional(),
+    }),
     output: z.object({ session: sidebarSessionSchema.nullable() }),
   },
   "session.rename": {
