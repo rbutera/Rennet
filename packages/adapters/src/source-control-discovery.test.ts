@@ -1,10 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execa } from "execa";
 import { afterEach, describe, expect, it } from "vitest";
 import { execaGit } from "./git-range-diff";
 import {
+  defaultSourceControlDetectionDeps,
   detectGit,
   detectGitLfs,
   detectSourceControlTool,
@@ -21,6 +23,8 @@ interface Fixture {
   readonly dirContents?: Record<string, readonly string[]>;
   readonly executables?: ReadonlySet<string>;
   readonly versions?: Record<string, string>;
+  /** What a binary that does not answer its version prints instead, keyed by path. */
+  readonly failures?: Record<string, string>;
   /** `git lfs version` answers, keyed by the git path that ran it. */
   readonly lfsHealth?: Record<string, string>;
   readonly platform?: NodeJS.Platform;
@@ -40,7 +44,12 @@ function recordingDeps(fixture: Fixture): { deps: SourceControlDetectionDeps; ca
     isExecutable: (path) => Promise.resolve(fixture.executables?.has(path) ?? false),
     probeVersion: (path) => {
       calls.push(`version ${path}`);
-      return Promise.resolve(fixture.versions?.[path] ?? null);
+      const version = fixture.versions?.[path];
+      return Promise.resolve(
+        version === undefined
+          ? { version: null, output: fixture.failures?.[path] ?? "" }
+          : { version },
+      );
     },
     probeGitLfs: (gitPath) => {
       calls.push(`lfs-health ${gitPath}`);
@@ -144,6 +153,38 @@ describe("git and git-lfs probes", () => {
     });
   });
 
+  it("reports the first git on the PATH when it is broken, not a working one after it", async () => {
+    const { deps, calls } = recordingDeps({
+      loginShellPath: "/usr/local/bin:/opt/homebrew/bin",
+      dirContents: { "/usr/local/bin": ["git"], "/opt/homebrew/bin": ["git"] },
+      executables: new Set(["/usr/local/bin/git", "/opt/homebrew/bin/git"]),
+      versions: { "/opt/homebrew/bin/git": "2.53.0" },
+      failures: { "/usr/local/bin/git": "dyld: Library not loaded: libpcre2-8.0.dylib" },
+    });
+    const git = await detectGit(deps);
+    expect(git).toMatchObject({ status: "unreachable", version: null, path: "/usr/local/bin/git" });
+    expect(git.detail).toContain("dyld: Library not loaded");
+    expect(calls).not.toContain("version /opt/homebrew/bin/git");
+  });
+
+  it("reports the macOS developer-tools shim as Git not installed, naming xcode-select", async () => {
+    const shim =
+      "xcrun: error: invalid active developer path (/Library/Developer/CommandLineTools), missing xcrun at: /Library/Developer/CommandLineTools/usr/bin/xcrun";
+    const fixture = {
+      envPath: "/usr/bin:/bin",
+      dirContents: { "/usr/bin": ["git"] },
+      executables: new Set(["/usr/bin/git"]),
+      failures: { "/usr/bin/git": shim },
+    };
+    const git = await detectGit(recordingDeps({ ...fixture, platform: "darwin" }).deps);
+    expect(git).toMatchObject({ status: "not-installed", version: null, path: "/usr/bin/git" });
+    expect(git.detail).toContain("`xcode-select --install`");
+    // Only macOS has the shim; elsewhere the same words are a broken git, reported as such.
+    expect(await detectGit(recordingDeps({ ...fixture, platform: "linux" }).deps)).toMatchObject({
+      status: "unreachable",
+    });
+  });
+
   it("reports git-lfs as unreachable when git cannot run it", async () => {
     const { deps } = recordingDeps({ ...HOMEBREW, lfsHealth: {} });
     const lfs = await detectGitLfs(deps);
@@ -228,5 +269,80 @@ describe("repoUsesLfs", () => {
     expect(await repoUsesLfs(root)).toBe(false);
     expect(await repoUsesLfs(root, { ref: "main", git: execaGit })).toBe(true);
     expect(await repoUsesLfs(root, { ref: "no-such-branch", git: execaGit })).toBe(false);
+  });
+});
+
+/** A directory holding one executable shell script. */
+function scriptDir(prefix: string, name: string, body: string): string {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  scratch.push(dir);
+  const path = join(dir, name);
+  writeFileSync(path, `#!/bin/sh\n${body}\n`);
+  chmodSync(path, 0o755);
+  return dir;
+}
+
+/** The host deps with every PATH source pinned to `envPath`, so nothing on this machine's
+ *  own PATH or login shell can answer for the fixture. */
+function hostDepsOn(envPath: string, platform: NodeJS.Platform = process.platform) {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "rennet-scd-home-")));
+  scratch.push(home);
+  return {
+    ...defaultSourceControlDetectionDeps(),
+    envPath,
+    home,
+    platform,
+    loginShellPath: () => Promise.resolve(null),
+  } satisfies SourceControlDetectionDeps;
+}
+
+describe.skipIf(process.platform === "win32")("detection runs the binary bare git runs", () => {
+  it("reports a broken git that shadows a working one as unreachable, as the checkout runner sees it", async () => {
+    const broken = scriptDir("rennet-broken-git-", "git", 'echo "git: broken build" >&2\nexit 1');
+    const working = realpathSync(mkdtempSync(join(tmpdir(), "rennet-working-git-")));
+    scratch.push(working);
+    const realGit = realpathSync(
+      execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim(),
+    );
+    symlinkSync(realGit, join(working, "git"));
+    const path = `${broken}:${working}`;
+
+    // What the checkout runner does: a bare `git` on this PATH runs the broken one.
+    const bare = await execa("git", ["--version"], {
+      env: { PATH: path },
+      extendEnv: false,
+      reject: false,
+    });
+    expect(bare.exitCode).toBe(1);
+
+    const git = await detectGit(hostDepsOn(path));
+    expect(git).toMatchObject({ status: "unreachable", version: null, path: join(broken, "git") });
+    expect(git.detail).toContain("git: broken build");
+  });
+
+  it("applies the same rule to git-lfs", async () => {
+    const broken = scriptDir("rennet-broken-lfs-", "git-lfs", "exit 1");
+    const working = scriptDir(
+      "rennet-working-lfs-",
+      "git-lfs",
+      'echo "git-lfs/3.7.0 (GitHub; darwin arm64; go 1.24.4)"',
+    );
+    const lfs = await detectGitLfs(hostDepsOn(`${broken}:${working}`));
+    expect(lfs).toMatchObject({
+      status: "unreachable",
+      version: null,
+      path: join(broken, "git-lfs"),
+    });
+  });
+
+  it("reads a real xcrun-shim git's output on macOS as not installed", async () => {
+    const shim = scriptDir(
+      "rennet-xcrun-git-",
+      "git",
+      'echo "xcrun: error: invalid active developer path (/Library/Developer/CommandLineTools), missing xcrun at: /Library/Developer/CommandLineTools/usr/bin/xcrun" >&2\nexit 1',
+    );
+    const git = await detectGit(hostDepsOn(shim, "darwin"));
+    expect(git).toMatchObject({ status: "not-installed", path: join(shim, "git") });
+    expect(git.detail).toContain("`xcode-select --install`");
   });
 });

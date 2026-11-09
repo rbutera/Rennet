@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join, posix as posixPath, win32 as win32Path } from "node:path";
+import { type Locus, locusCommand } from "@rennet/core";
 import { execa } from "execa";
 import { defaultForgeDetectionDeps, type ForgeDetectionDeps } from "./forge-discovery";
 import type { SourceControlToolId } from "./git-failure";
@@ -13,6 +14,13 @@ import type { GitExec } from "./git-range-diff";
  * PATH, union it with the inherited PATH and curated install directories, resolve each
  * candidate ourselves, and PROVE it by executing it. A file that is there but will not
  * answer is not reported as installed.
+ *
+ * ⚠️ THE FIRST CANDIDATE IS THE ANSWER, WORKING OR NOT. Checkouts run a bare `git`, which
+ * resolves to the first executable `git` on the PATH, in the same order the daemon's PATH
+ * is hydrated (login shell, then inherited, then curated). If that one is broken, every
+ * checkout hits it, so detection reports it as unreachable with its path. It does not
+ * skip to a later, working `git` that no checkout would ever run. `git-lfs` follows the
+ * same rule, because git finds `git lfs` on the PATH the same way.
  *
  * The states are the detection row's own (`available`, `not-installed`, `unreachable`),
  * so Settings and the first-run tools stage render these rows with no new vocabulary:
@@ -41,9 +49,19 @@ export interface DetectedSourceControlTool {
   readonly detail: string;
 }
 
-/** Forge detection's effects, minus the auth probe, plus the Git LFS health probe. */
-export interface SourceControlDetectionDeps extends Omit<ForgeDetectionDeps, "probeAuth"> {
-  /** Run `<gitPath> lfs version` under the daemon's environment; the version, or `null`. */
+/** What `<binary> --version` answered: a version, or nothing and what it printed instead. */
+export type ToolVersionProbe =
+  | { readonly version: string }
+  | { readonly version: null; readonly output: string };
+
+/** Forge detection's effects, minus the auth probe, with a version probe that keeps what a
+ *  failing binary printed, plus the Git LFS health probe. Every probe runs in the locus. */
+export interface SourceControlDetectionDeps
+  extends Omit<ForgeDetectionDeps, "probeAuth" | "probeVersion"> {
+  /** Run `<path> --version` in the locus. */
+  probeVersion(path: string): Promise<ToolVersionProbe>;
+  /** Run `<gitPath> lfs version` in the locus, under the daemon's environment; the version,
+   *  or `null`. */
   probeGitLfs(gitPath: string): Promise<string | null>;
 }
 
@@ -78,7 +96,7 @@ function knownDirectories(home: string, platform: NodeJS.Platform | undefined): 
 
 type Resolution =
   | { readonly kind: "resolved"; readonly path: string; readonly version: string }
-  | { readonly kind: "unanswered"; readonly path: string }
+  | { readonly kind: "unanswered"; readonly path: string; readonly output: string }
   | { readonly kind: "missing" };
 
 function resolveBinaryFilename(
@@ -98,8 +116,8 @@ function resolveBinaryFilename(
   return entries.includes(base) ? base : null;
 }
 
-/** The first candidate that proves itself, else the first that was there and would not
- *  answer, else nothing. */
+/** The first executable candidate, in PATH order, proven or not: the one a bare `binary`
+ *  would run. Nothing when no searched directory has one. */
 async function resolveBinary(
   binary: string,
   deps: SourceControlDetectionDeps,
@@ -115,8 +133,6 @@ async function resolveBinary(
   ]) {
     if (directory.length > 0 && !directories.includes(directory)) directories.push(directory);
   }
-  const tried = new Set<string>();
-  let unanswered: string | null = null;
   for (const directory of directories) {
     const filename = resolveBinaryFilename(
       await deps.listDir(directory),
@@ -126,14 +142,31 @@ async function resolveBinary(
     );
     if (filename === null) continue;
     const path = joinFor(directory, filename);
-    if (tried.has(path)) continue;
-    tried.add(path);
+    // A file the OS will not execute is skipped by the PATH search too.
     if (!(await deps.isExecutable(path))) continue;
-    const version = await deps.probeVersion(path);
-    if (version !== null) return { kind: "resolved", path, version };
-    unanswered ??= path;
+    // The first executable one is what runs. A failure here is the answer: a later
+    // candidate that works is one no bare `git` would ever reach.
+    const probe = await deps.probeVersion(path);
+    return probe.version === null
+      ? { kind: "unanswered", path, output: probe.output }
+      : { kind: "resolved", path, version: probe.version };
   }
-  return unanswered === null ? { kind: "missing" } : { kind: "unanswered", path: unanswered };
+  return { kind: "missing" };
+}
+
+/** The xcrun shim `/usr/bin/git` is on a Mac without the Command Line Tools: it is on the
+ *  PATH, it is executable, and all it does is say the tools are missing. */
+const XCRUN_WITHOUT_TOOLS = /xcrun: error: invalid active developer path/i;
+
+/** One line of what a failing binary printed, for a detail. */
+function firstLine(output: string): string {
+  return (
+    output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0)
+      ?.slice(0, 200) ?? ""
+  );
 }
 
 function gitMissingDetail(platform: NodeJS.Platform | undefined): string {
@@ -170,14 +203,26 @@ export async function detectGit(
           path: resolved.path,
           detail: "Git is installed.",
         };
-      case "unanswered":
+      case "unanswered": {
+        if (deps.platform === "darwin" && XCRUN_WITHOUT_TOOLS.test(resolved.output)) {
+          return {
+            id: "git",
+            version: null,
+            status: "not-installed",
+            path: resolved.path,
+            detail:
+              "Git is not installed: the macOS command line developer tools are missing. Run `xcode-select --install`, or `brew install git`.",
+          };
+        }
+        const said = firstLine(resolved.output);
         return {
           id: "git",
           version: null,
           status: "unreachable",
           path: resolved.path,
-          detail: `A \`git\` was found at \`${resolved.path}\`, but it did not answer \`git --version\`.`,
+          detail: `The first \`git\` on the PATH, \`${resolved.path}\`, did not answer \`git --version\`${said.length > 0 ? ` (it said: ${said})` : ""}. Fix or remove it, or put a working Git before it on the PATH.`,
         };
+      }
       case "missing":
         return {
           id: "git",
@@ -230,7 +275,7 @@ export async function detectGitLfs(
         status: "unreachable",
         path: resolved.path,
         ...required,
-        detail: `A \`git-lfs\` was found at \`${resolved.path}\`, but it did not answer \`git-lfs --version\`.`,
+        detail: `The first \`git-lfs\` on the PATH, \`${resolved.path}\`, did not answer \`git-lfs --version\`. Fix or remove it, or put a working Git LFS before it on the PATH.`,
       };
     }
     const git = options.git ?? (await detectGit(deps));
@@ -301,10 +346,73 @@ export function parseGitLfsVersion(output: string): string | null {
   );
 }
 
-/** The default effects: forge discovery's (login-shell PATH, filesystem, `--version`)
- *  plus `git lfs version` under this process's environment. */
-export function defaultSourceControlDetectionDeps(): SourceControlDetectionDeps {
-  const { probeAuth: _probeAuth, ...forge } = defaultForgeDetectionDeps();
+/** What one probe process returned. */
+export interface LocusRunResult {
+  readonly exitCode: number | undefined;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/** Run one command, bounded, never throwing for a non-zero exit. The seam a test fakes. */
+export type LocusRun = (file: string, args: readonly string[]) => Promise<LocusRunResult>;
+
+const execaLocusRun: LocusRun = async (file, args) => {
+  const result = await execa(file, [...args], {
+    reject: false,
+    shell: false,
+    stdin: "ignore",
+    timeout: COMMAND_TIMEOUT_MS,
+  });
+  return {
+    exitCode: result.exitCode,
+    stdout: typeof result.stdout === "string" ? result.stdout : "",
+    stderr: typeof result.stderr === "string" ? result.stderr : "",
+  };
+};
+
+/** The version and health probes, run through `locus` with `run`. */
+function locusProbes(
+  locus: Locus,
+  run: LocusRun,
+): Pick<SourceControlDetectionDeps, "probeVersion" | "probeGitLfs"> {
+  const inLocus = (program: string, args: readonly string[]) => {
+    const command = locusCommand(locus, program, args);
+    return run(command.file, command.args);
+  };
+  return {
+    async probeVersion(path: string): Promise<ToolVersionProbe> {
+      try {
+        const result = await inLocus(path, ["--version"]);
+        const version =
+          result.exitCode === 0 ? (result.stdout.match(/\d+\.\d+\.\d+/)?.[0] ?? null) : null;
+        return version === null
+          ? { version: null, output: `${result.stderr}\n${result.stdout}`.trim() }
+          : { version };
+      } catch (error) {
+        return { version: null, output: error instanceof Error ? error.message : String(error) };
+      }
+    },
+    async probeGitLfs(gitPath: string): Promise<string | null> {
+      try {
+        const result = await inLocus(gitPath, ["lfs", "version"]);
+        return result.exitCode === 0 ? parseGitLfsVersion(result.stdout) : null;
+      } catch {
+        return null;
+      }
+    },
+  };
+}
+
+/** The default (host) effects: forge discovery's login-shell PATH and filesystem, with
+ *  `--version` and `git lfs version` run on the host under this process's environment. */
+export function defaultSourceControlDetectionDeps(
+  run: LocusRun = execaLocusRun,
+): SourceControlDetectionDeps {
+  const {
+    probeAuth: _probeAuth,
+    probeVersion: _probeVersion,
+    ...forge
+  } = defaultForgeDetectionDeps();
   // One login-shell harvest per detection pass, however many binaries it resolves.
   let harvested: Promise<string | null> | undefined;
   return {
@@ -313,19 +421,7 @@ export function defaultSourceControlDetectionDeps(): SourceControlDetectionDeps 
       harvested ??= forge.loginShellPath();
       return harvested;
     },
-    async probeGitLfs(gitPath: string): Promise<string | null> {
-      try {
-        const result = await execa(gitPath, ["lfs", "version"], {
-          reject: false,
-          shell: false,
-          stdin: "ignore",
-          timeout: COMMAND_TIMEOUT_MS,
-        });
-        return result.exitCode === 0 ? parseGitLfsVersion(result.stdout) : null;
-      } catch {
-        return null;
-      }
-    },
+    ...locusProbes({ kind: "host" }, run),
   };
 }
 

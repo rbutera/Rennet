@@ -639,11 +639,14 @@ export {
   detectSourceControlTool,
   detectSourceControlTools,
   gitattributesUseLfs,
+  type LocusRun,
+  type LocusRunResult,
   parseGitLfsVersion,
   type RepoUsesLfsOptions,
   repoUsesLfs,
   type SourceControlDetectionDeps,
   type SourceControlToolStatus,
+  type ToolVersionProbe,
 } from "./source-control-discovery";
 export { SqliteReviewStore } from "./sqlite-review-store";
 export {
