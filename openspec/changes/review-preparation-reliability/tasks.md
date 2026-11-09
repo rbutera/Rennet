@@ -48,17 +48,17 @@
 
 ## 3. Wave 3: App UI
 
-- [ ] 3.1 Replace `PreparingWorkspace`'s empty-id `LensBoardView` with `PreparationPresence`:
+- [x] 3.1 Replace `PreparingWorkspace`'s empty-id `LensBoardView` with `PreparationPresence`:
   - the lens rail in a shared waiting shimmer;
   - a board skeleton pulse that respects `prefers-reduced-motion`;
   - Cancel inline;
   - no step labels and no invented seats.
   - Update `live-board.dom.test.tsx:202-238,550-576` and `apps/desktop/e2e/new-chat-start.spec.ts:150-216`.
   - Verify: the tests assert the animated presence and that "No board for this generation yet." is absent.
-- [ ] 3.2 Dock: `useChatTrail` falls back to the session's title from `session.list`, and `no-review` during preparation renders a thread skeleton.
+- [x] 3.2 Dock: `useChatTrail` falls back to the session's title from `session.list`, and `no-review` during preparation renders a thread skeleton.
   - Update `t3-chat-dock.dom.test.tsx:366-385`.
   - Verify: the test asserts the branch title and skeleton, and that "New review" and "No review is attached" are absent.
-- [ ] 3.3 Add `PreparationFailure`:
+- [x] 3.3 Add `PreparationFailure`:
   - plain message;
   - the action button by kind (Install for me with a streaming output drawer, Choose large-file mode, Sign in, Retry);
   - Retry;
@@ -66,16 +66,16 @@
   - Use it for `failed` and `cancelled` in `workspace-header.tsx`/`PreparingWorkspace`.
   - Update `routes/app.dom.test.tsx:309-380`, `live-board.dom.test.tsx:516-548`, `board-drafting-failure.spec.ts`, `board-lenses.spec.ts`.
   - Verify: tests for each kind's action, and the raw text visible only after expanding details.
-- [ ] 3.4 Add the `LargeFileChoice` modal, rendered while preparation is `awaiting` large-file-choice:
+- [x] 3.4 Add the `LargeFileChoice` modal, rendered while preparation is `awaiting` large-file-choice:
   - Download / Skip, each with a one-line description;
   - Install for me inline when `lfsAvailable` is false;
   - calls `session.chooseLargeFileMode`.
   - Verify: dom tests for both choices and the missing-lfs path.
-- [ ] 3.5 Settings → Environments source-control: add Git and Git LFS `DetectionRow`s with Install for me (or the manual command); add a per-project "Large files in review checkouts" control for `checkout.largeFiles`.
+- [x] 3.5 Settings → Environments source-control: add Git and Git LFS `DetectionRow`s with Install for me (or the manual command); add a per-project "Large files in review checkouts" control for `checkout.largeFiles`.
   - Verify: `source-control.dom.test.tsx` and the settings tests.
-- [ ] 3.6 First-run welcome tools stage: show Git and Git LFS rows from the same probes with Install for me.
+- [x] 3.6 First-run welcome tools stage: show Git and Git LFS rows from the same probes with Install for me.
   - Verify: the welcome dom test covers git-lfs absent with an install action.
-- [ ] 3.7 Copy pass against DESIGN.md (sentence case, no machinery nouns); update `packages/app-ui/DESIGN.md`'s preparation section to describe the animated presence and the failure block.
+- [x] 3.7 Copy pass against DESIGN.md (sentence case, no machinery nouns); update `packages/app-ui/DESIGN.md`'s preparation section to describe the animated presence and the failure block.
   - Verify: grep shows no remaining "No board for this generation yet." or "No review is attached" in the preparation paths.
 
 ## 4. Integration and release

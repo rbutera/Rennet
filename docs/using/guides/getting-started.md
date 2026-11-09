@@ -321,12 +321,20 @@ the transcript drawer.
 
 While the change is being reviewed there is no Continue yet; it appears in the
 bottom-right corner when the review is ready. The Rennet mark in the top-left
-corner is what animates while Rennet works — in the sidebar's lockup when the
-sidebar is open, and as a floating orb in the corner when it is collapsed — so
-nothing repeats that over the boards. A floating Cancel button sits in that
-bottom-right corner while the boards are being generated. If a generation
-fails or you cancel it, a header appears over the boards with the reason and a
-Retry.
+corner animates while Rennet works — in the sidebar's lockup when the sidebar is
+open, and as a floating orb in the corner when it is collapsed. Until the first
+lens starts, the lens tabs and the board area move together while your review is
+on its way, with Cancel under them; the chat pane shows your branch's name. Once
+the lenses are writing, a floating Cancel button sits in the bottom-right corner.
+If preparing the review fails, one block says what went wrong, offers the fix
+(for example Install for me when Git LFS is missing), and Retry; git's own output
+is under Details. If you cancel, the block says so and offers Retry.
+
+If the repository stores large files with Git LFS, the first review of the project
+asks how to check them out: Download large files (full files, slower) or Skip large
+files (faster, with small placeholder files). Rennet remembers the answer for the
+project, and you can change it in Settings → Projects under Large files in review
+checkouts.
 
 You can navigate elsewhere while a review runs. Its sidebar row keeps an animated
 ring. Completion briefly shows a checkmark, then a dot until you open that review.
