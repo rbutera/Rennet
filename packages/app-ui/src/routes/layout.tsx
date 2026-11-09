@@ -4,6 +4,7 @@ import { useRoute } from "wouter";
 import { T3ChatDock } from "../chat/t3-chat-dock";
 import { Coachmark } from "../coach/coachmark";
 import { CoachDataProvider } from "../coach/provider";
+import { presenceShows, usePreparationPhase } from "../preparation/preparation-phase";
 import { CodeDestinationProvider } from "../review/code-destination";
 import { AppDialogs } from "../shell/app-dialogs";
 import { CommandMenu } from "../shell/command-menu";
@@ -46,9 +47,15 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
 
   // The dock and the session top-bar show only on a review-session route; every
   // other route is a takeover (settings, new chat, archived, indexing).
-  const [onSession] = useRoute(ROUTES.session);
+  const [onSession, sessionParams] = useRoute(ROUTES.session);
   const [onRun] = useRoute(ROUTES.sessionRun);
   const isSessionRoute = onSession || onRun;
+  // First-run tips wait while the review on screen is still on its way (the waiting presence
+  // or the large-file question): there is nothing yet to teach, and a card there covers the
+  // controls that matter.
+  const sessionSlug =
+    onSession && sessionParams?.slug ? decodeURIComponent(sessionParams.slug) : "";
+  const coachSuppressed = presenceShows(usePreparationPhase(sessionSlug));
   const dockOpen = chatOpen && isSessionRoute;
   // Which pane owns the corner slot — the ONE authority, so exactly one of the three
   // call sites renders it (`shell/corner-slot.tsx`).
@@ -235,7 +242,7 @@ export function AppLayout({ children }: { readonly children: ReactNode }) {
 
             {/* The one active coach mark for the whole shell — reads the elected mark from
             the store and renders that single card + spotlight, or nothing. */}
-            <Coachmark />
+            <Coachmark suppressed={coachSuppressed} />
           </div>
         </CoachDataProvider>
       </KeyOwner>

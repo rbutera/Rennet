@@ -80,14 +80,22 @@ function useAnchorBox(el: Element | null): AnchorBox {
   return box;
 }
 
-/** The shell-mounted surface: renders whichever mark the store has elected. */
-export function Coachmark() {
+/**
+ * The shell-mounted surface: renders whichever mark the store has elected.
+ *
+ * `suppressed` holds every mark back without retiring it — for a screen that is not the
+ * one the tour teaches. A review still being prepared is that screen: the "Five Lenses"
+ * card spotlit a rail that was only breathing, and after Escape it sat over the one way
+ * back to the large-file question. The elected mark simply waits and appears once the
+ * review is there to be learned.
+ */
+export function Coachmark({ suppressed = false }: { readonly suppressed?: boolean }) {
   // Optional context: before the provider mounts (the store awaits `settings.get`,
   // Cluster 3) there is no store to subscribe to. Read it non-throwingly and render
   // nothing until it appears — a conditional store subscription would break the rules
   // of hooks, so the subscription lives in the inner component behind this guard.
   const coach = useCoachOptional();
-  if (!coach) return null;
+  if (!coach || suppressed) return null;
   return <ElectedCoachmark store={coach.store} />;
 }
 

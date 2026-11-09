@@ -605,6 +605,18 @@ describe("the large-file choice while preparation waits on it", () => {
     expect(recorded.choices[0]).toMatchObject({ mode: "download" });
   });
 
+  it("holds first-run tips back while the review is still on its way", async () => {
+    // After Escape, the "Five Lenses" card sat over the one control that reopens the
+    // question. Nothing is there to teach yet, so no tip shows until the review is.
+    const { user } = surface(awaiting(true), { review: true });
+    await choiceDialog();
+    await user.keyboard("{Escape}");
+    await screen.findByTestId("large-file-waiting");
+    await act(() => new Promise((resolve) => setTimeout(resolve, 300)));
+    expect(screen.queryByRole("button", { name: "Dismiss tip" })).toBeNull();
+    expect(screen.queryByText("Five Lenses")).toBeNull();
+  });
+
   it("returns focus to the way back after Escape", async () => {
     const { user } = surface(awaiting(true), { review: true });
     await choiceDialog();
