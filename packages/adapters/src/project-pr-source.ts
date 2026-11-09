@@ -82,18 +82,24 @@ export class ProjectPrSourceUnavailable extends Error {
 export interface GitHubProjectPrSourceConfig {
   /** A token-bound client from `createGitHubOctokit`. The token never leaves it. */
   octokit: Octokit;
-  /** How many 50-node pages to page through before declaring the set truncated. */
+  /**
+   * How many 50-node pages' worth of PRs to page through before declaring the set
+   * truncated. The budget is in PRs (maxPages x 50), so it holds when a heavy repo
+   * forces smaller pages.
+   */
   maxPages?: number;
 }
 
 const PAGE_SIZE = 50;
 const DEFAULT_MAX_PAGES = 5;
+/** The smallest page a gateway timeout may shrink to before the failure is surfaced. */
+const MIN_PAGE_SIZE = 6;
 
 const VIEWER_QUERY = `query{ viewer{ login avatarUrl } }`;
 
-const PRS_QUERY = `query($owner:String!,$name:String!,$states:[PullRequestState!]!,$cursor:String){
+const PRS_QUERY = `query($owner:String!,$name:String!,$states:[PullRequestState!]!,$cursor:String,$first:Int!){
   repository(owner:$owner,name:$name){
-    pullRequests(states:$states, first:${PAGE_SIZE}, after:$cursor, orderBy:{field:UPDATED_AT, direction:DESC}){
+    pullRequests(states:$states, first:$first, after:$cursor, orderBy:{field:UPDATED_AT, direction:DESC}){
       totalCount
       pageInfo{ hasNextPage endCursor }
       nodes{
@@ -266,11 +272,25 @@ function repositoryUnavailable(
   );
 }
 
+/**
+ * GitHub answers a GraphQL query that overruns its ~10 s execution budget with an
+ * nginx 502 (or 504) HTML page, not a GraphQL error. On a busy monorepo a 50-node
+ * PR page can cost that much (diff stats and check rollups per PR), so these two
+ * statuses mean "ask for less", not "GitHub is down".
+ */
+function isGatewayTimeout(error: unknown): boolean {
+  const status = (error as { status?: unknown } | null)?.status;
+  return status === 502 || status === 504;
+}
+
 /** The GitHub GraphQL implementation of `ProjectPrSource`. */
 export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig): ProjectPrSource {
   const maxPages = config.maxPages ?? DEFAULT_MAX_PAGES;
   const withListSlot = createSemaphore(MAX_CONCURRENT_LIST_FETCHES);
   let viewer: ProjectViewer | null | undefined;
+  // Per-repo page size learned from gateway timeouts, so a heavy repo pays the
+  // timeout once per source rather than on every listing.
+  const pageSizeByRepo = new Map<string, number>();
 
   async function graphql<T>(
     query: string,
@@ -310,6 +330,7 @@ export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig)
     name: string,
     states: readonly PullRequestState[],
     cursor: string | null,
+    first: number,
   ): Promise<{ page: OpenPrsPage | null; partial: boolean; sso: SsoState }> {
     const result = await graphql<{ repository: { pullRequests: OpenPrsPage } | null }>(PRS_QUERY, {
       owner,
@@ -317,6 +338,7 @@ export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig)
       // The protocol's lowercase states map 1:1 onto GitHub's GraphQL enum.
       states: states.map((state) => state.toUpperCase()),
       cursor,
+      first,
     });
     return {
       page: result.data.repository?.pullRequests ?? null,
@@ -334,25 +356,39 @@ export function createGitHubProjectPrSource(config: GitHubProjectPrSourceConfig)
     }
     const viewerLogin = (await resolveViewer())?.login ?? null;
 
+    const repoKey = `${repository.owner}/${repository.name}`;
+    let first = pageSizeByRepo.get(repoKey) ?? PAGE_SIZE;
+    // The truncation budget is in PRs, so shrinking the page never shrinks coverage.
+    const budget = maxPages * PAGE_SIZE;
+    let requested = 0;
+
     const prs: PullRequest[] = [];
     let cursor: string | null = null;
-    let pages = 0;
     let hasNext: boolean;
     let sawPartial = false;
     do {
-      const { page, partial, sso } = await fetchPrsPage(
-        repository.owner,
-        repository.name,
-        states,
-        cursor,
-      );
+      let result: Awaited<ReturnType<typeof fetchPrsPage>>;
+      for (;;) {
+        try {
+          result = await fetchPrsPage(repository.owner, repository.name, states, cursor, first);
+          break;
+        } catch (error) {
+          // Only a gateway timeout is retried, and only while there is room to shrink;
+          // every other failure (and the last timeout) still throws, so a broken fetch
+          // never renders as "complete, zero PRs".
+          if (!isGatewayTimeout(error) || first <= MIN_PAGE_SIZE) throw error;
+          first = Math.max(MIN_PAGE_SIZE, Math.floor(first / 2));
+          pageSizeByRepo.set(repoKey, first);
+        }
+      }
+      const { page, partial, sso } = result;
       if (partial) sawPartial = true;
       if (!page) throw repositoryUnavailable(repository, sso);
       for (const prNode of page.nodes) prs.push(mapNode(prNode, repository, viewerLogin));
       cursor = page.pageInfo.endCursor;
       hasNext = page.pageInfo.hasNextPage;
-      pages += 1;
-    } while (hasNext && cursor && pages < maxPages);
+      requested += first;
+    } while (hasNext && cursor && requested < budget);
 
     // Truncated ONLY when there is genuinely more than we paged through, or SSO
     // truncated a page. A repo whose whole set fits in <= maxPages is complete;

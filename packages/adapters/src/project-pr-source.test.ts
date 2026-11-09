@@ -387,3 +387,96 @@ describe("createGitHubProjectPrSource — listPullRequests", () => {
     expect(seen.auth).toBe("token secret-token");
   });
 });
+
+describe("createGitHubProjectPrSource — gateway timeouts on heavy pages", () => {
+  /**
+   * GitHub answers a GraphQL query that runs past its ~10 s budget with an nginx
+   * `502 Bad Gateway` HTML page. A busy monorepo hits this on a 50-node PR page
+   * (seen on a 400+ open-PR monorepo, Nov 2026). This fetch times out any PR page whose
+   * `first` exceeds `maxOkFirst` and records every `first` it was asked for.
+   */
+  function timeoutFetch(opts: { maxOkFirst: number; status?: number; pages?: number }) {
+    const firsts: number[] = [];
+    let served = 0;
+    const totalPages = opts.pages ?? 1;
+    const fetch: typeof globalThis.fetch = async (_input, init) => {
+      const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as {
+        query: string;
+        variables?: { first?: number };
+      };
+      if (!body.query.includes("pullRequests")) {
+        return response({ data: { viewer: { login: "octocat", avatarUrl: null } } });
+      }
+      const first = body.variables?.first ?? -1;
+      firsts.push(first);
+      if (first > opts.maxOkFirst) {
+        return new Response("<html><head><title>502 Bad Gateway</title></head></html>", {
+          status: opts.status ?? 502,
+          headers: { "content-type": "text/html" },
+        });
+      }
+      served += 1;
+      const hasNextPage = served < totalPages;
+      return response({
+        data: {
+          repository: {
+            pullRequests: {
+              totalCount: totalPages,
+              pageInfo: { hasNextPage, endCursor: hasNextPage ? `c${served}` : null },
+              nodes: [node({ id: `PR_${served}` })],
+            },
+          },
+        },
+      });
+    };
+    return { fetch, firsts };
+  }
+
+  it("sends the page size as the `first` variable (50 by default)", async () => {
+    const { fetch, firsts } = timeoutFetch({ maxOkFirst: 100 });
+    await sourceFor(fetch).listPullRequests(GITHUB_REPOSITORY);
+    expect(firsts).toEqual([50]);
+  });
+
+  it("halves the page and retries when GitHub times a page out with a 502", async () => {
+    const { fetch, firsts } = timeoutFetch({ maxOkFirst: 25 });
+    const { prs, truncated } = await sourceFor(fetch).listPullRequests(GITHUB_REPOSITORY);
+    expect(firsts).toEqual([50, 25]);
+    expect(prs.map((p) => p.id)).toEqual(["PR_1"]);
+    expect(truncated).toBe(false);
+  });
+
+  it("treats a 504 the same as a 502", async () => {
+    const { fetch, firsts } = timeoutFetch({ maxOkFirst: 25, status: 504 });
+    await sourceFor(fetch).listPullRequests(GITHUB_REPOSITORY);
+    expect(firsts).toEqual([50, 25]);
+  });
+
+  it("keeps the smaller page for the rest of the listing and for later listings of that repo", async () => {
+    const { fetch, firsts } = timeoutFetch({ maxOkFirst: 12, pages: 2 });
+    const source = sourceFor(fetch);
+    await source.listPullRequests(GITHUB_REPOSITORY);
+    expect(firsts).toEqual([50, 25, 12, 12]);
+    firsts.length = 0;
+    await source.listPullRequests(GITHUB_REPOSITORY);
+    expect(firsts).toEqual([12]); // starts at the learned size; no new timeout
+  });
+
+  it("covers the same number of PRs at a smaller page size before declaring truncation", async () => {
+    // maxPages 2 at 50 per page = a 100-PR budget; at 25 per page that is 4 pages.
+    const { fetch, firsts } = timeoutFetch({ maxOkFirst: 25, pages: 10 });
+    const { prs, truncated } = await sourceFor(fetch, 2).listPullRequests(GITHUB_REPOSITORY);
+    expect(firsts).toEqual([50, 25, 25, 25, 25]);
+    expect(prs).toHaveLength(4);
+    expect(truncated).toBe(true);
+  });
+
+  it("still THROWS when the page times out even at the smallest size", async () => {
+    const { fetch, firsts } = timeoutFetch({ maxOkFirst: 0 });
+    const error = await sourceFor(fetch)
+      .listPullRequests(GITHUB_REPOSITORY)
+      .catch((caught: unknown) => caught);
+    expect((error as { status?: number }).status).toBe(502);
+    expect(firsts).toEqual([50, 25, 12, 6]);
+  });
+});
