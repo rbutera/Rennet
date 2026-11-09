@@ -209,6 +209,38 @@ const WORKSPACE_SETTING: SettingDeclaration<WorkspaceMode> = {
 };
 
 /**
+ * How a review checkout treats Git LFS content: the `checkout.largeFiles` setting
+ * (review-preparation-reliability D4, large-file-checkout spec).
+ *
+ * `download` is git as the user configured it, so the LFS filter fetches the real files.
+ * `skip` leaves LFS pointer files in place, and works whether or not `git-lfs` is installed.
+ * The builtin is `ask`, which is not a value anyone stores: it is "no choice recorded", and
+ * the first review checkout of a repository that uses Git LFS asks with a modal. A checkout
+ * that is not asked (one bound outside a preparation) treats `ask` as `download`, which is
+ * what every checkout did before the setting existed.
+ *
+ * REPO RUNG ONLY. The choice is about one project's large files, made in that project's own
+ * modal; a host-wide default would make the modal a question nobody asked. Nothing detects it.
+ */
+export type LargeFilesChoice = "ask" | "download" | "skip";
+export const BUILTIN_LARGE_FILES: LargeFilesChoice = "ask";
+
+const LARGE_FILES_SETTING: SettingDeclaration<LargeFilesChoice> = {
+  key: "checkout.largeFiles",
+  // The stored vocabulary is the two answers; `ask` validates because it is the builtin
+  // (every key's builtin passes its own validator), but nothing stores it: the settings
+  // write treats `ask` as a reset that drops the entry, and a stored `ask` is not offered.
+  validate: (value) => {
+    if (value === "download" || value === "skip" || value === "ask") return value;
+    throw new Error(`checkout.largeFiles must be download|skip, got ${JSON.stringify(value)}`);
+  },
+  builtinDefault: BUILTIN_LARGE_FILES,
+  layers: REPO_ONLY,
+  merge: "replace",
+  render: identity,
+};
+
+/**
  * Which project mark a project shows (#900): the builtin is `glyph`, the `detected` rung is
  * offered when the project holds a copied repo logo, and the user's own answer sits on the
  * repo rung. That ordering IS the product decision — a fresh add shows the repo's logo with
@@ -258,6 +290,9 @@ export const SETTINGS_REGISTRY = {
   worktreePattern: stringSetting("worktreePattern", CONFIG_ONLY, BUILTIN_WORKTREE_PATTERN),
   prWorktreePattern: stringSetting("prWorktreePattern", CONFIG_ONLY, BUILTIN_PR_WORKTREE_PATTERN),
   workspace: WORKSPACE_SETTING,
+  // `checkout.largeFiles` (large-file-checkout spec): the project's own answer to the
+  // large-file question, read at every review checkout of the repository.
+  largeFiles: LARGE_FILES_SETTING,
   projectGlyph: stringSetting("projectGlyph", REPO_ONLY),
   projectMark: PROJECT_MARK_SETTING,
 } as const;
