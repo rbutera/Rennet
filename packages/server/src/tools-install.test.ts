@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DetectedSourceControlTool } from "@rennet/adapters";
-import type { CommandOutput, ProjectProcessEvent } from "@rennet/protocol";
+import type { CommandOutput, ProjectProgressEvent } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRennetServer } from "./create-server";
 
@@ -34,7 +34,7 @@ async function installer(brew: string, git: string) {
   stub(bin, "git", git);
   // The probe answers "installed" only once the stub brew has left its mark.
   const installed = join(bin, "installed");
-  const events: { commandId: string; event: ProjectProcessEvent }[] = [];
+  const events: { commandId: string; event: ProjectProgressEvent }[] = [];
   const server = await createRennetServer({
     dataDir,
     env: {},

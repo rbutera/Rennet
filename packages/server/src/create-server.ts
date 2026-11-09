@@ -224,6 +224,7 @@ import type {
   Patchset,
   Project,
   ProjectProcessEvent,
+  ProjectProgressEvent,
   ProjectSource,
   Review,
   RoundEvent,
@@ -1289,7 +1290,7 @@ export interface RennetServerOptions {
   /** The repository-chooser fallback (Electron's directory dialog); used only when RENNET_TEST_REPO is unset. */
   readonly chooseRepositoryFallback?: () => Promise<string | null>;
   /** Broadcast a background-rehydration progress event to every client (Electron: every open window). */
-  readonly broadcastProgress?: (commandId: string, event: ProjectProcessEvent) => void;
+  readonly broadcastProgress?: (commandId: string, event: ProjectProgressEvent) => void;
   /** Open a path in the OS (Electron's shell.openPath), the editor-launch fallback; resolves whether it opened. */
   readonly openPath?: (absPath: string) => Promise<boolean>;
   /** The outbound HTTP transport for GitHub egress (the daemon's global fetch). */
@@ -2167,8 +2168,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       const result = await runInstallPlan(plan, {
         onOutput: (chunk, stream) => {
           const event = { kind: "tool-install-output", tool: input.tool, stream, chunk } as const;
-          options.broadcastProgress?.(input.commandId, event as never);
-          wsListener?.broadcastProgress(input.commandId, event as never);
+          options.broadcastProgress?.(input.commandId, event);
+          wsListener?.broadcastProgress(input.commandId, event);
         },
         reprobe: async () => {
           const tools = await detectSourceControlOnLocus(input.locus);

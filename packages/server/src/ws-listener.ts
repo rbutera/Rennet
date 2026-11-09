@@ -32,7 +32,6 @@ import type {
   BoardEventFrame,
   CommandName,
   LensDraftEvent,
-  ProjectProcessEvent,
   ProjectProgressEvent,
   RoundEvent,
   SessionFrame,
@@ -282,7 +281,7 @@ export interface WsListener {
   /** The host the listener bound (`127.0.0.1` by default, or the configured `daemon.listen.host`). */
   readonly host: string;
   /** Fan a rehydration/background progress event out to every connected socket (projected per connection class). */
-  broadcastProgress(commandId: string, event: ProjectProcessEvent): void;
+  broadcastProgress(commandId: string, event: ProjectProgressEvent): void;
   /**
    * Fan newly appended board events out to every authorized socket (B4 broadcast).
    * `private` (loopback) sockets receive the raw events; `projected` sockets receive
@@ -838,7 +837,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
   }
   boundPort = address.port;
 
-  const broadcastProgress = (commandId: string, event: ProjectProcessEvent): void => {
+  const broadcastProgress = (commandId: string, event: ProjectProgressEvent): void => {
     // Serialize once per class: private sockets get the raw event, projected sockets the projection.
     const rawPayload = JSON.stringify({
       type: "progressEvent",
