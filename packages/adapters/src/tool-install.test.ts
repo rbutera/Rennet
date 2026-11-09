@@ -279,6 +279,66 @@ describe("runInstallPlan", () => {
     expect(existsSync(late)).toBe(false);
   }, 20_000);
 
+  it.skipIf(process.platform === "win32")(
+    "kills a descendant that ignores SIGTERM, even once the step itself has exited",
+    async () => {
+      const bin = dir("rennet-stub-brew-stubborn-");
+      const calls = join(bin, "calls.log");
+      const late = join(bin, "late-write");
+      // A post-install child that ignores SIGTERM (so does its `sleep`, which inherits the
+      // ignored disposition) and keeps brew's pipes. brew itself dies on the SIGTERM, so
+      // only an escalation that does not wait on brew's exit or its pipes can reach it.
+      script(
+        bin,
+        "brew",
+        [
+          `echo "brew $*" >> "${calls}"`,
+          `( trap '' TERM; sleep 3; echo "too late" > "${late}" ) &`,
+          'echo "==> Downloading git-lfs"',
+          "sleep 30",
+        ].join("\n"),
+      );
+      script(bin, "git", `echo "git $*" >> "${calls}"`);
+      const plan = await resolveInstallPlan("git-lfs", {
+        platform: "darwin",
+        envPath: bin,
+        brewDirectories: [],
+      });
+
+      const controller = new AbortController();
+      let aborted = 0;
+      let probes = 0;
+      const result = await runInstallPlan(plan, {
+        onOutput: (chunk) => {
+          if (chunk.includes("==> Downloading")) {
+            aborted = Date.now();
+            controller.abort();
+          }
+        },
+        reprobe: async () => {
+          probes += 1;
+          return { status: "not-installed" as const };
+        },
+        signal: controller.signal,
+        env: { PATH: "/bin:/usr/bin" },
+      });
+
+      expect(result).toMatchObject({
+        status: "failed",
+        failedCommand: "brew install git-lfs",
+        exitCode: null,
+        cancelled: true,
+      });
+      if (result.status === "failed") expect(result.output).toContain("Install cancelled.");
+      expect(probes).toBe(1);
+      expect(readFileSync(calls, "utf8")).toBe("brew install git-lfs\n");
+      // Past the child's 3 s delay: had it outlived the cancel, the file would be there.
+      await sleep(Math.max(0, 3_500 - (Date.now() - aborted)));
+      expect(existsSync(late)).toBe(false);
+    },
+    20_000,
+  );
+
   it.skipIf(!hasPerl())(
     "does not wait on a descendant that left the process group and kept the pipes",
     async () => {

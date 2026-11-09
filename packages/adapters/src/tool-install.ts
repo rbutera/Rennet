@@ -186,6 +186,9 @@ export const INSTALL_OUTPUT_CAP = 64_000;
 /** How long a cancelled step's process group gets after SIGTERM before SIGKILL. */
 const KILL_GRACE_MS = 2_000;
 
+/** How often a cancelled step's process group is checked for being gone. */
+const GROUP_POLL_MS = 50;
+
 /** How long the output pipes stay open after a step exits. A descendant that left the
  *  step's process group (a daemon that called `setsid`) can hold them open forever, and
  *  execa would wait for it; by now the step's own output has long been read. */
@@ -220,6 +223,70 @@ class OutputTail {
     this.discarded += cut;
     this.text = this.text.slice(cut);
   }
+}
+
+/** Signal every process in group `pgid`. A group that is already gone is no error. */
+function signalGroup(pgid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pgid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+}
+
+/** Whether any process is left in group `pgid`. One we may not signal is still there. */
+function groupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Cancellation for one step's process group (POSIX), on the clock alone.
+ *
+ * execa's own `forceKillAfterDelay` is not enough: its SIGKILL is dropped the moment execa
+ * settles, and execa settles once the step has exited and its pipes have closed. A
+ * descendant that ignores SIGTERM outlives both. So on abort the group gets SIGTERM, and
+ * KILL_GRACE_MS later SIGKILL, whatever the step or its pipes did in between. `settled()`
+ * holds the run's result until that SIGKILL has gone out or the group is empty.
+ */
+function escalateOnAbort(
+  pgid: number | undefined,
+  signal: AbortSignal | undefined,
+): { settled(): Promise<void> } {
+  if (pgid === undefined || signal === undefined || process.platform === "win32") {
+    return { settled: () => Promise.resolve() };
+  }
+  let escalation: Promise<void> | undefined;
+  const escalate = () => {
+    signalGroup(pgid, "SIGTERM");
+    escalation = new Promise((resolve) => {
+      const poll = setInterval(() => {
+        if (groupAlive(pgid)) return;
+        clearInterval(poll);
+        clearTimeout(deadline);
+        resolve();
+      }, GROUP_POLL_MS);
+      const deadline = setTimeout(() => {
+        clearInterval(poll);
+        signalGroup(pgid, "SIGKILL");
+        resolve();
+      }, KILL_GRACE_MS);
+    });
+  };
+  if (signal.aborted) escalate();
+  else signal.addEventListener("abort", escalate, { once: true });
+  return {
+    settled: () => {
+      // A step that finished before any abort leaves its group alone: once the group is
+      // empty, its id can be reused.
+      signal.removeEventListener("abort", escalate);
+      return escalation ?? Promise.resolve();
+    },
+  };
 }
 
 function displayStep(step: InstallStep): string {
@@ -261,8 +328,9 @@ export async function runInstallPlan<P>(
       try {
         // `killDescendants` runs the step in its own process group and, when execa
         // terminates it (cancellation), signals the whole group: Homebrew's own children
-        // (curl, tar, the post-install scripts) go with it. `forceKillAfterDelay` follows up
-        // with SIGKILL for anything that ignores SIGTERM.
+        // (curl, tar, the post-install scripts) go with it. On POSIX `escalateOnAbort`
+        // follows up with SIGKILL for anything that ignores SIGTERM; on Windows execa's own
+        // `forceKillAfterDelay` does.
         const child = execa(step.file, [...step.args], {
           env,
           reject: false,
@@ -289,7 +357,8 @@ export async function runInstallPlan<P>(
           }, PIPE_DRAIN_MS).unref();
         if (spawned.exitCode !== null || spawned.signalCode !== null) releasePipes();
         else spawned.once("exit", releasePipes);
-        const result = await child;
+        const escalation = escalateOnAbort(spawned.pid, options.signal);
+        const result = await child.finally(() => escalation.settled());
         exitCode = result.exitCode ?? null;
         failed = result.failed || exitCode !== 0;
         cancelled = result.isCanceled;
