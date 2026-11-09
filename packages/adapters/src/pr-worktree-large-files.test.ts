@@ -299,6 +299,20 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
   );
 }
 
+/** Whether an unpinned git on this machine prints German under a German locale. */
+function gitSpeaksGerman(): boolean {
+  try {
+    execFileSync("git", ["rev-parse", "--acme-no-such-option"], {
+      env: { ...process.env, LANG: "de_DE.UTF-8", LC_ALL: "de_DE.UTF-8", LANGUAGE: "de" },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    return false;
+  } catch (error) {
+    const stderr = String((error as { stderr?: Buffer | string }).stderr ?? "");
+    return stderr.length > 0 && !/unknown option|unrecognized/i.test(stderr);
+  }
+}
+
 function installHook(root: string, body: string): void {
   const hook = join(root, ".git", "hooks", "post-checkout");
   writeFileSync(hook, body);
@@ -326,28 +340,33 @@ describe("skip under git-lfs's own post-checkout hook", () => {
     });
   });
 
-  it("still tolerates the stock hook when the user's git speaks another language", async () => {
-    // A localized git prints its progress lines in that language ("Bereite
-    // Arbeitsverzeichnis vor …"); the skip call pins git's messages so the allow-list holds.
-    vi.stubEnv("LANG", "de_DE.UTF-8");
-    vi.stubEnv("LC_ALL", "de_DE.UTF-8");
-    vi.stubEnv("LANGUAGE", "de");
-    try {
-      const { root, headOid, worktrees, git } = fixture();
-      installHook(root, LFS_POST_CHECKOUT_HOOK);
-      const target = join(worktrees, "acme", "widget", "pr-de");
+  // Only meaningful where git really speaks German (translations + a de_DE locale); on a
+  // runner without them git prints English regardless and the test would prove nothing.
+  it.skipIf(!gitSpeaksGerman())(
+    "still tolerates the stock hook when the user's git speaks another language",
+    async () => {
+      // A localized git prints its progress lines in that language ("Bereite
+      // Arbeitsverzeichnis vor …"); the skip call pins git's messages so the allow-list holds.
+      vi.stubEnv("LANG", "de_DE.UTF-8");
+      vi.stubEnv("LC_ALL", "de_DE.UTF-8");
+      vi.stubEnv("LANGUAGE", "de");
+      try {
+        const { root, headOid, worktrees, git } = fixture();
+        installHook(root, LFS_POST_CHECKOUT_HOOK);
+        const target = join(worktrees, "acme", "widget", "pr-de");
 
-      const result = await ensurePrWorktree(git, root, target, headOid, { largeFiles: "skip" });
+        const result = await ensurePrWorktree(git, root, target, headOid, { largeFiles: "skip" });
 
-      expect(result).toEqual({
-        path: target,
-        created: true,
-        warning: LARGE_FILES_HOOK_SKIPPED_WARNING,
-      });
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
+        expect(result).toEqual({
+          path: target,
+          created: true,
+          warning: LARGE_FILES_HOOK_SKIPPED_WARNING,
+        });
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
 
   it("checks a branch out with pointer files", async () => {
     const { root, worktrees, git } = fixture();
