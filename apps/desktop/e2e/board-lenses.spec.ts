@@ -36,7 +36,15 @@ test("the board reports a failed drafting attempt without disguising it as empty
     await openFixtureReview(page, repository, userData);
     const board = page.locator('[data-kind="lens-board-view"]');
     await expect(board).toBeVisible();
-    await expect(board.locator('[data-kind="board-failed"]')).toContainText("no runnable seat");
+    // The headline is plain (this environment has no coding agent), and the daemon's own
+    // seat text sits behind Details rather than glued onto it.
+    const failed = board.locator('[data-kind="board-failed"]');
+    await expect(failed).toContainText("No coding agent is installed");
+    await expect(failed).not.toContainText("no runnable");
+    await failed.getByText("Details", { exact: true }).click();
+    await expect(failed.locator('[data-slot="failure-detail-output"]')).toContainText(
+      "no runnable review seat",
+    );
     await expect(board.locator('[data-kind="board-empty"]')).toHaveCount(0);
     // A settled review with no preparation on record shows no preparation chrome at all:
     // neither the failure block nor the waiting presence.

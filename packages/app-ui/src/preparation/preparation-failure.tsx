@@ -1,12 +1,12 @@
 import { newCommandId, type SessionPreparation, type SidebarSession } from "@rennet/protocol";
-import { Button, cn } from "@rennet/ui";
-import { ChevronRight } from "lucide-react";
+import { Button } from "@rennet/ui";
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { Icon } from "../components/icon";
+import { FailureDetail } from "../components/failure-detail";
 import { InstallForMe, TOOL_NAME } from "../components/install-for-me";
 import { useMutation } from "../data";
 import { settingsPath } from "../routes/url";
+import { preparationFailureCopy } from "./failure-copy";
 import { LargeFileChoice } from "./large-file-choice";
 import { useLfsAvailable, useProjectLocus } from "./session-locus";
 
@@ -17,7 +17,9 @@ import { useLfsAvailable, useProjectLocus } from "./session-locus";
 // strip that used to sit over an empty board. Rai, on the build it replaces: a pull request
 // that "didn't look like it was working at all", then a raw git error. So:
 //
-//   • The message is the daemon's plain sentence (`reason`), never the tool's output.
+//   • The message is the daemon's plain sentence (`reason`) when the failure is classified,
+//     and a fixed plain sentence when it is not: an unclassified `reason` is whatever the
+//     failing step said, so it moves behind Details with the raw output (`failure-copy.ts`).
 //   • The action is the one the failure's kind calls for: Install for me (streaming its
 //     output, with the command shown), Choose large-file mode (the large-file choice), or
 //     Sign in (the GitHub account rows in Settings → Environments). Retry is always there.
@@ -44,6 +46,7 @@ export function PreparationFailure({
   const failed = preparation.status === "failed";
   // Absent `kind` reads as unknown and absent `action` as retry (protocol D5).
   const action = failed ? (preparation.action ?? "retry") : "retry";
+  const copy = failed ? preparationFailureCopy(preparation) : undefined;
 
   return (
     <div className="border-line border-b bg-surface/60">
@@ -55,8 +58,8 @@ export function PreparationFailure({
         role={failed ? "alert" : "status"}
         className="mx-auto flex w-full max-w-[760px] flex-col gap-4 px-8 py-6"
       >
-        {failed ? (
-          <p className="font-medium text-base text-ink">{preparation.reason}</p>
+        {copy ? (
+          <p className="font-medium text-base text-ink">{copy.headline}</p>
         ) : (
           <div className="flex flex-col gap-1">
             <p className="font-medium text-base text-ink">Cancelled</p>
@@ -89,9 +92,7 @@ export function PreparationFailure({
             {retry.pending ? "Retrying…" : "Retry"}
           </Button>
         </div>
-        {failed && preparation.detail !== undefined ? (
-          <FailureDetail detail={preparation.detail} />
-        ) : null}
+        {copy?.detail !== undefined ? <FailureDetail detail={copy.detail} /> : null}
       </section>
     </div>
   );
@@ -139,35 +140,5 @@ function SignIn() {
     <Button variant="accent" size="sm" onClick={() => navigate(settingsPath("environments"))}>
       Sign in
     </Button>
-  );
-}
-
-/** The raw tool output, behind a disclosure. Rendered only while open, so it is never on
- *  the page — or in a screen reader's way — until the reviewer asks for it. */
-function FailureDetail({ detail }: { readonly detail: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <details
-      data-slot="failure-detail"
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-      className="group text-sm"
-    >
-      <summary className="flex w-fit cursor-default list-none items-center gap-1 text-ink-soft text-xs hover:text-ink [&::-webkit-details-marker]:hidden">
-        <Icon
-          icon={ChevronRight}
-          className={cn("size-3 transition-transform", open && "rotate-90")}
-        />
-        Details
-      </summary>
-      {open ? (
-        <pre
-          data-slot="failure-detail-output"
-          className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-line bg-raised p-3 font-mono text-2xs text-ink-soft"
-        >
-          {detail}
-        </pre>
-      ) : null}
-    </details>
   );
 }

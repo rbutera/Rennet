@@ -9,8 +9,10 @@ import type {
 import { cn } from "@rennet/ui";
 import { type RefCallback, useEffect, useMemo, useRef } from "react";
 import { useCoachAnchor } from "../coach/registry";
+import { FailureDetail } from "../components/failure-detail";
 import { ReviewActivity } from "../components/review-activity";
 import { useRefreshCommand } from "../data";
+import { lensFailureHeadline } from "../preparation/failure-copy";
 import {
   preparationStopped,
   presenceShows,
@@ -387,13 +389,18 @@ export function BoardAccount({
           role="alert"
           className="text-danger text-sm"
         >
-          <p className="font-medium">This lens failed to generate.</p>
-          <p className="text-muted-foreground">{resolution.reason}</p>
+          {/* A plain headline, never the daemon's words: a lens failure's reason is the
+              failing step's own text ("…resolved to no runnable review seat (no claude
+              harness; no codex harness)"), so it sits behind Details (failure-copy.ts). */}
+          <p className="font-medium">{lensFailureHeadline(resolution.reason)}</p>
           {resolution.account?.classification === "retryable" ? (
             <p className="text-muted-foreground">
               Another drafting attempt can still produce this board.
             </p>
           ) : null}
+          <div className="mt-2 text-ink">
+            <FailureDetail detail={resolution.reason} />
+          </div>
         </div>
       );
     default:

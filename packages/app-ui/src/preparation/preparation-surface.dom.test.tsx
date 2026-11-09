@@ -243,6 +243,54 @@ describe("a stopped preparation is one actionable block", () => {
     await waitFor(() => expect(history.history.at(-1)).toBe("/settings/environments"));
   });
 
+  it("leads an unclassified failure with a plain sentence, the raw reason behind Details", async () => {
+    // Opus's screenshot: a seven-line wall of daemon text as the headline.
+    const raw = "spawn git ENOENT\n    at ChildProcess._handle.onexit (node:internal)";
+    const { user } = surface({
+      status: "failed",
+      stage: "capture",
+      reason: raw,
+      detail: "exit 128",
+    });
+    const failure = await block();
+    expect(failure.querySelector("p")?.textContent).toBe("Rennet couldn't prepare this review.");
+    expect(document.body.textContent).not.toContain("ENOENT");
+    await user.click(within(failure).getByText("Details"));
+    const detail = failure.querySelector('[data-slot="failure-detail-output"]')?.textContent;
+    expect(detail).toContain("spawn git ENOENT");
+    expect(detail).toContain("exit 128");
+  });
+
+  it("says no coding agent is installed when the unclassified failure says so", async () => {
+    surface({
+      status: "failed",
+      stage: "boards",
+      reason:
+        "lens-draft-flagged resolved to no runnable review seat (no claude harness; no codex harness)",
+    });
+    const failure = await block();
+    expect(failure.querySelector("p")?.textContent).toBe(
+      "No coding agent is installed, so Rennet can't draft this review. Install Claude Code or Codex, then Retry.",
+    );
+    expect(document.body.textContent).not.toContain("runnable review seat");
+    expect(within(failure).getByRole("button", { name: "Retry" })).toBeTruthy();
+  });
+
+  it("keeps a classified failure's own plain sentence as its headline", async () => {
+    surface({
+      status: "failed",
+      stage: "workspace",
+      reason: "GitHub didn't accept the saved credentials for this repository.",
+      kind: "auth",
+      action: "sign-in",
+      detail: "fatal: Authentication failed",
+    });
+    const failure = await block();
+    expect(failure.querySelector("p")?.textContent).toBe(
+      "GitHub didn't accept the saved credentials for this repository.",
+    );
+  });
+
   it("offers Retry alone for a failure it cannot classify", async () => {
     const { user, recorded } = surface({
       status: "failed",
