@@ -200,6 +200,24 @@ describe("LargeFileSkipIndex", () => {
     expect((await git(skip, ["config", "--get", "filter.lfs.required"])).trim()).toBe("true");
   });
 
+  it("an add that does not know whether Git LFS is installed never downgrades the overrides", () => {
+    const { index } = fixture();
+    const overrides = join(dirname(index.indexPath), "skip-overrides.gitconfig");
+    // Nothing written yet and nothing known: the form git can always check out with.
+    index.add("/acme/one/.git/worktrees/one");
+    expect(index.cleansOnAdd()).toBe(false);
+    expect(readFileSync(overrides, "utf8")).toContain("\tprocess =\n");
+    // Known installed: LFS's own skip filter.
+    index.add("/acme/two/.git/worktrees/two", { lfsAvailable: true });
+    expect(index.cleansOnAdd()).toBe(true);
+    // A probe that could not tell (unreachable, timed out, threw) keeps it.
+    index.add("/acme/three/.git/worktrees/three");
+    expect(index.cleansOnAdd()).toBe(true);
+    // Only a definite "not installed" blanks it.
+    index.add("/acme/four/.git/worktrees/four", { lfsAvailable: false });
+    expect(index.cleansOnAdd()).toBe(false);
+  });
+
   it("matches a checkout whose path carries glob and quoting characters", () => {
     const data = scratchDir("rennet-skipidx-odd-");
     const index = new LargeFileSkipIndex(largeFileSkipIndexPath(data));

@@ -2108,12 +2108,21 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // `git` and `git-lfs` on one execution locus (source-control-tooling spec), probed with the
   // daemon's own resolved environment — the one its checkouts run under. The test seam
   // answers instead when a composition supplies one.
+  //
+  // Every HOST probe also tells the skip-mode overrides what it saw (`observeHostGitLfs`), so
+  // the settings detection, the large-file question's own probe and Install for me's re-probe
+  // all keep them in step with the machine, not only the install.
   async function detectSourceControlOnLocus(
     locus: Locus,
     detectOptions: { readonly lfsRequired?: boolean } = {},
   ): Promise<readonly AdapterSourceControlTool[]> {
-    if (options.sourceControl?.detect) return options.sourceControl.detect(locus, detectOptions);
-    return detectSourceControlTools(await sourceControlDetectionDepsFor(locus), detectOptions);
+    const tools = options.sourceControl?.detect
+      ? await options.sourceControl.detect(locus, detectOptions)
+      : await detectSourceControlTools(await sourceControlDetectionDepsFor(locus), detectOptions);
+    if (locus.kind === "host") {
+      observeHostGitLfs(tools.find((tool) => tool.id === "git-lfs")?.status);
+    }
+    return tools;
   }
 
   /** The wire row for one detected tool: the same states, and no host path. */
@@ -2148,8 +2157,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
 
   /** Whether Git LFS answers on `locus` — what the large-file question offers Install by. */
   async function gitLfsAvailableOn(locus: Locus): Promise<boolean> {
-    const tools = await detectSourceControlOnLocus(locus).catch(() => []);
-    return tools.some((tool) => tool.id === "git-lfs" && tool.status === "available");
+    return (await gitLfsKnownOn(locus)) === true;
+  }
+
+  /**
+   * Whether Git LFS is installed on `locus`, only when the probe could TELL: `true` when it
+   * answers, `false` on a definite `not-installed`, `undefined` when the probe was unreachable,
+   * timed out or threw. The skip-mode overrides move only on a definite answer.
+   */
+  async function gitLfsKnownOn(locus: Locus): Promise<boolean | undefined> {
+    const tools = await detectSourceControlOnLocus(locus).catch(() => undefined);
+    const status = tools?.find((tool) => tool.id === "git-lfs")?.status;
+    if (status === "available") return true;
+    if (status === "not-installed") return false;
+    return undefined;
   }
 
   /**
@@ -2815,6 +2836,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * of the user's git config changing.
    */
   const largeFileSkipIndex = new LargeFileSkipIndex(largeFileSkipIndexPath(dataDir));
+  /** Set once the server shuts down: nothing late rewrites the overrides or session notes. */
+  let largeFileStateClosed = false;
   // A checkout removed while this daemon was not running (by hand, or by an older build)
   // leaves its entry behind; git would hand the next worktree added there the same git dir.
   largeFileSkipIndex.prune();
@@ -3038,14 +3061,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         largeFileSkipIndex.remove((entry) => entry === gitDir);
         return [];
       }
-      const lfsAvailable = await gitLfsAvailableOn(HOST_LOCUS);
-      if (!largeFileSkipIndex.add(gitDir, { lfsAvailable })) {
+      const lfsAvailable = await gitLfsKnownOn(HOST_LOCUS);
+      if (!largeFileSkipIndex.add(gitDir, lfsAvailable === undefined ? {} : { lfsAvailable })) {
         siblingLog(
           `rennet: could not mark ${JSON.stringify(checkout)} as skipping large files — its git directory's path has a control character`,
         );
         return [LARGE_FILES_NOT_REGISTERED_NOTE];
       }
-      return lfsAvailable ? [] : [LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE];
+      // The note follows the form the overrides are IN, which an unknown probe left alone.
+      return largeFileSkipIndex.cleansOnAdd() ? [] : [LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE];
     } catch (error) {
       siblingLog(
         `rennet: could not record the large-file mode for ${checkout} — ${error instanceof Error ? error.message : String(error)}`,
@@ -3078,7 +3102,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         largeFileSkipIndex.remove((entry) => entry === gitDir);
         return;
       }
-      largeFileSkipIndex.add(gitDir, { lfsAvailable: await gitLfsAvailableOn(HOST_LOCUS) });
+      const lfsAvailable = await gitLfsKnownOn(HOST_LOCUS);
+      largeFileSkipIndex.add(gitDir, lfsAvailable === undefined ? {} : { lfsAvailable });
     } catch (error) {
       siblingLog(
         `rennet: could not record the large-file mode for ${checkout} before replacing it — ${error instanceof Error ? error.message : String(error)}`,
@@ -3114,19 +3139,86 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   }
 
   /**
-   * Git LFS was installed on this host: every registered skip-mode checkout gets LFS's own
-   * skip filter, which cleans a large file on add again, and the sessions stop saying their
-   * large files are committed without it.
+   * What a HOST probe saw of Git LFS, applied to the skip-mode overrides (every probe reports
+   * here through `detectSourceControlOnLocus`, and the daemon probes once at start when it
+   * has skip-mode checkouts): `available` upgrades them, a definite `not-installed`
+   * downgrades them, and anything else — unreachable, no row at all — changes nothing.
+   */
+  function observeHostGitLfs(status: string | undefined): void {
+    if (status === "available") largeFilesNowCleanOnAdd();
+    else if (status === "not-installed") largeFilesNowCommittedWithoutLfs();
+  }
+
+  /**
+   * Git LFS answers on this host: every registered skip-mode checkout gets LFS's own skip
+   * filter, which cleans a large file on add again, and every session — older ones included —
+   * stops saying its large files are committed without it. A no-op once the server has shut
+   * down: an install or probe that settles after that writes nothing.
    */
   function largeFilesNowCleanOnAdd(): void {
-    if (largeFileSkipIndex.gitDirs().length > 0) largeFileSkipIndex.setLfsAvailable(true);
-    for (const session of sessionStore.list()) {
-      const notes = session.workspaceNotes ?? [];
-      if (!notes.includes(LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE)) continue;
-      sessionStore.setWorkspaceNotes(
-        session.id,
-        notes.filter((note) => note !== LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE),
+    if (largeFileStateClosed) return;
+    try {
+      if (largeFileSkipIndex.gitDirs().length > 0 && !largeFileSkipIndex.cleansOnAdd()) {
+        largeFileSkipIndex.setLfsAvailable(true);
+      }
+      for (const session of sessionStore.list()) {
+        const notes = session.workspaceNotes ?? [];
+        if (!notes.includes(LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE)) continue;
+        sessionStore.setWorkspaceNotes(
+          session.id,
+          notes.filter((note) => note !== LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE),
+        );
+      }
+    } catch (error) {
+      siblingLog(
+        `rennet: could not switch skip-mode checkouts to Git LFS's own filter — ${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+  }
+
+  /**
+   * Git LFS is DEFINITELY not installed on this host any more, while the overrides are still
+   * its own skip filter — which would fail every git command that touches a large file. They
+   * go back to the blank form, and every session bound to a registered checkout says what
+   * that costs. Only on that change: a session whose checkout was created without Git LFS
+   * already carries the note.
+   */
+  function largeFilesNowCommittedWithoutLfs(): void {
+    if (largeFileStateClosed) return;
+    try {
+      const gitDirs = largeFileSkipIndex.gitDirs();
+      if (gitDirs.length === 0 || !largeFileSkipIndex.cleansOnAdd()) return;
+      largeFileSkipIndex.setLfsAvailable(false);
+      const checkouts = gitDirs.flatMap((gitDir) => {
+        const checkout = checkoutOfGitDir(gitDir);
+        return checkout === undefined ? [] : [checkout];
+      });
+      for (const session of sessionStore.list()) {
+        const bound = session.boundRoot;
+        if (bound === undefined) continue;
+        if (!checkouts.some((checkout) => sameDirectory(checkout, bound))) continue;
+        const notes = session.workspaceNotes ?? [];
+        if (notes.includes(LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE)) continue;
+        sessionStore.setWorkspaceNotes(session.id, [
+          ...notes,
+          LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE,
+        ]);
+      }
+    } catch (error) {
+      siblingLog(
+        `rennet: could not switch skip-mode checkouts to the form for a host without Git LFS — ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /** The checkout a linked worktree's git dir belongs to, from the `gitdir` file git keeps
+   *  there (`<checkout>/.git`); `undefined` when it cannot be read. */
+  function checkoutOfGitDir(gitDir: string): string | undefined {
+    try {
+      const dotGit = readFileSync(join(gitDir, "gitdir"), "utf8").trim();
+      return dotGit.length === 0 ? undefined : dirname(dotGit);
+    } catch {
+      return undefined;
     }
   }
 
@@ -7455,6 +7547,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     console.error("Durable round recovery failed", error);
   });
 
+  // The skip-mode overrides follow the machine across restarts (large-file-checkout): Git LFS
+  // installed or removed while the daemon was down is seen by one host probe at start, but
+  // only when there is a skip-mode checkout for it to matter to.
+  if (largeFileSkipIndex.gitDirs().length > 0) {
+    void detectSourceControlOnLocus(HOST_LOCUS).catch(() => undefined);
+  }
+
   let didShutdown = false;
   let shutdownSettled: Promise<void> = Promise.resolve();
   const shutdown = (): Promise<void> => {
@@ -7466,6 +7565,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // The WS listener closes last, dropping every client socket.
     if (didShutdown) return shutdownSettled;
     didShutdown = true;
+    largeFileStateClosed = true;
     // Installers first: each is aborted now, and the returned promise settles once every one
     // has ended, so a caller that waits (the daemon does) never leaves Homebrew running.
     shutdownSettled = stopToolInstalls();

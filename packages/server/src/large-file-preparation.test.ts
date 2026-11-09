@@ -265,6 +265,8 @@ async function serverFor(
     readonly projectId?: string;
     /** Git LFS answers on this host from the start. */
     readonly lfsInstalled?: boolean;
+    /** What the host's Git LFS probe says, read on every probe; `throw` makes it throw. */
+    readonly lfsStatus?: () => DetectedSourceControlTool["status"] | "throw";
   } = {},
 ) {
   await createGitHubTokenStore(fixture.dataDir).setGitHubCredential({ token: "gho_acme_widget" });
@@ -276,11 +278,20 @@ async function serverFor(
     httpFetch: gitHub(fixture.baseOid, fixture.headOid),
     // What this machine has installed must not decide the answer.
     sourceControl: {
-      detect: async () =>
-        serverOptions.lfsInstalled === true ||
-        (brewBin !== undefined && existsSync(join(brewBin, "installed")))
+      detect: async () => {
+        const said = serverOptions.lfsStatus?.();
+        if (said === "throw") throw new Error("the probe did not come back");
+        if (said !== undefined) {
+          return [
+            gitRow,
+            { ...missingLfsRow, status: said, version: said === "available" ? "3.7.1" : null },
+          ];
+        }
+        return serverOptions.lfsInstalled === true ||
+          (brewBin !== undefined && existsSync(join(brewBin, "installed")))
           ? [gitRow, { ...missingLfsRow, version: "3.7.1", status: "available" as const }]
-          : [gitRow, missingLfsRow],
+          : [gitRow, missingLfsRow];
+      },
       ...(brewBin === undefined
         ? {}
         : { installPlanDeps: { platform: "darwin", envPath: "", brewDirectories: [brewBin] } }),
@@ -986,6 +997,121 @@ describe("cancel and answer around the workspace stage", () => {
     );
     expect(drafting.preparation?.status).toBe("drafting");
     await server.dispatch("session.cancelPreparation", { sessionId });
+  }, 60_000);
+});
+
+/**
+ * The skip-mode overrides follow what a host probe can TELL about Git LFS (review finding 4/5):
+ * only a definite "not installed" blanks LFS's own skip filter, and it is re-read at daemon
+ * start and on every host probe, not only by Install for me.
+ */
+describe("the skip-mode overrides follow Git LFS on the host", () => {
+  const overridesOf = (dataDir: string) =>
+    readFileSync(
+      join(dirname(largeFileSkipIndexPath(dataDir)), "skip-overrides.gitconfig"),
+      "utf8",
+    );
+  const LFS_OWN_SKIP = "\tprocess = git-lfs filter-process --skip\n";
+  const BLANK = "\tprocess =\n";
+
+  for (const unknown of ["unreachable", "throw"] as const) {
+    it(`a probe that cannot tell (${unknown}) never downgrades them, and adds no note`, async () => {
+      const fixture = lfsRepository();
+      let status: DetectedSourceControlTool["status"] | "throw" = "available";
+      const { server, mint, waitFor, setMode } = await serverFor(fixture, {
+        lfsStatus: () => status,
+      });
+      await setMode("skip");
+      const sessionId = await mint();
+      const drafting = await waitFor(sessionId, (session) =>
+        expect(session?.preparation?.status).toBe("drafting"),
+      );
+      expect(drafting.workspaceNotes).toBeUndefined();
+      expect(overridesOf(fixture.dataDir)).toContain(LFS_OWN_SKIP);
+      const store = new SessionStore(join(fixture.dataDir, "sessions"));
+      const boundRoot = store.load(sessionId)?.boundRoot ?? "";
+
+      // The probe stops answering, and a re-pin replaces the checkout, which registers it
+      // again and probes again.
+      status = unknown;
+      execFileSync(
+        "git",
+        [
+          "-c",
+          "filter.lfs.process=",
+          "-c",
+          "filter.lfs.smudge=",
+          "-c",
+          "filter.lfs.required=false",
+          "checkout",
+          "-q",
+          "--detach",
+          fixture.baseOid,
+        ],
+        { cwd: boundRoot },
+      );
+      await server.dispatch("session.transcript", { reviewId: drafting.reviewId ?? "" });
+      expect(
+        execFileSync("git", ["rev-parse", "HEAD"], { cwd: boundRoot, encoding: "utf8" }).trim(),
+      ).toBe(fixture.headOid);
+      expect(overridesOf(fixture.dataDir)).toContain(LFS_OWN_SKIP);
+      expect(store.load(sessionId)?.workspaceNotes ?? []).not.toContain(
+        LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE,
+      );
+      await server.dispatch("session.cancelPreparation", { sessionId });
+    }, 60_000);
+  }
+
+  it("Git LFS gone when the daemon restarts: the overrides go blank and every bound session says so", async () => {
+    const fixture = lfsRepository();
+    const first = await serverFor(fixture, { lfsStatus: () => "available" });
+    await first.setMode("skip");
+    const sessionId = await first.mint();
+    await first.waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("drafting"),
+    );
+    expect(overridesOf(fixture.dataDir)).toContain(LFS_OWN_SKIP);
+    await first.server.dispatch("session.cancelPreparation", { sessionId });
+    await first.server.shutdown();
+
+    // Uninstalled while Rennet was down: LFS's own filter would now fail every git command
+    // that touches a large file in that checkout.
+    const second = await serverFor(fixture, {
+      lfsStatus: () => "not-installed",
+      projectId: first.projectId,
+    });
+    const store = new SessionStore(join(fixture.dataDir, "sessions"));
+    await vi.waitFor(
+      () =>
+        expect(store.load(sessionId)?.workspaceNotes).toEqual([
+          LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE,
+        ]),
+      { timeout: 20_000, interval: 25 },
+    );
+    expect(overridesOf(fixture.dataDir)).toContain(BLANK);
+    await second.server.shutdown();
+  }, 60_000);
+
+  it("Git LFS installed while the daemon was down: the restart upgrades the overrides and drops the note", async () => {
+    const fixture = lfsRepository();
+    const first = await serverFor(fixture, { lfsStatus: () => "not-installed" });
+    await first.setMode("skip");
+    const sessionId = await first.mint();
+    const drafting = await first.waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("drafting"),
+    );
+    expect(drafting.workspaceNotes).toEqual([LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE]);
+    expect(overridesOf(fixture.dataDir)).toContain(BLANK);
+    await first.server.dispatch("session.cancelPreparation", { sessionId });
+    await first.server.shutdown();
+
+    await serverFor(fixture, { lfsStatus: () => "available", projectId: first.projectId });
+    const store = new SessionStore(join(fixture.dataDir, "sessions"));
+    await vi.waitFor(() => expect(store.load(sessionId)?.workspaceNotes).toBeUndefined(), {
+      timeout: 20_000,
+      interval: 25,
+    });
+    expect(overridesOf(fixture.dataDir)).toContain(LFS_OWN_SKIP);
   }, 60_000);
 });
 

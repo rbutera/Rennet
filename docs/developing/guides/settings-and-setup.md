@@ -465,7 +465,16 @@ The overrides depend on whether Git LFS is installed on the host:
 | Git LFS | What later git commands in a skip-mode checkout do |
 |---|---|
 | Installed | Run Git LFS's own skip filter (`git-lfs filter-process --skip`): a checkout leaves pointer files, and a large file added there is still stored as a pointer. |
-| Not installed | Run no filter at all, which is the only way git can check the files out. A large file changed there is committed as an ordinary file, and the session says so beside the review. Install for me switches every skip-mode checkout to the first row and drops that note. |
+| Not installed | Run no filter at all, which is the only way git can check the files out. A large file changed there is committed as an ordinary file, and the session says so beside the review. |
+
+Every host probe of Git LFS keeps the overrides in step: Install for me, the
+Source Control rows' detection, the large-file question's own probe, and one
+probe when the daemon starts with skip-mode checkouts registered. A probe that
+finds Git LFS switches every skip-mode checkout to the first row and drops the
+note from every session, older ones included. Only a probe that definitely finds
+Git LFS missing switches them back to the second row, and then every session
+bound to a registered checkout gets the note. A probe that times out, fails, or
+finds a `git-lfs` that does not answer changes nothing.
 
 This covers checkouts on the host only: a WSL distribution's git does not see the
 daemon's environment.

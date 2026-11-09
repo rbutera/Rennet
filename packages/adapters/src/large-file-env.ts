@@ -255,15 +255,21 @@ export class LargeFileSkipIndex {
 
   /**
    * Register a checkout's git dir. Writes the overrides file too, so the include resolves, in
-   * the form for whether Git LFS is installed on this host (see the module note).
+   * the form for whether Git LFS is installed on this host (see the module note) when the
+   * caller KNOWS that; an absent `lfsAvailable` leaves the written form alone.
    *
    * Answers `false`, writing nothing, for a path the index cannot hold
    * ({@link isIndexablePath}): the caller treats that checkout as unregistered.
    */
-  add(gitDir: string, options: { readonly lfsAvailable: boolean }): boolean {
+  add(gitDir: string, options: { readonly lfsAvailable?: boolean } = {}): boolean {
     if (!isIndexablePath(gitDir)) return false;
     const current = this.gitDirs();
-    this.setLfsAvailable(options.lfsAvailable);
+    // Only a DEFINITE answer moves the overrides. Unknown (a probe that could not tell)
+    // keeps whatever form is written: blanking LFS's own skip filter on a probe that merely
+    // timed out would commit the next large file an agent adds as an ordinary file. With
+    // nothing written yet, the blank form is the one git can always check out with.
+    if (options.lfsAvailable !== undefined) this.setLfsAvailable(options.lfsAvailable);
+    else if (!existsSync(this.#overridesPath)) this.setLfsAvailable(false);
     if (current.includes(gitDir)) return true;
     writeAtomically(
       this.#indexPath,
@@ -283,6 +289,16 @@ export class LargeFileSkipIndex {
       current = undefined;
     }
     if (current !== text) writeAtomically(this.#overridesPath, text);
+  }
+
+  /** Whether the overrides written now are Git LFS's own skip filter, which still cleans a
+   *  large file on add — `false` for the blank form, or when none is written. */
+  cleansOnAdd(): boolean {
+    try {
+      return readFileSync(this.#overridesPath, "utf8") === largeFileSkipOverridesText(true);
+    } catch {
+      return false;
+    }
   }
 
   /** Unregister every git dir `drop` selects. */
