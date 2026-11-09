@@ -44,7 +44,11 @@ interface Recorded {
 
 function surface(
   preparation: SidebarSession["preparation"],
-  options: { readonly review?: boolean; readonly install?: InstallResult } = {},
+  options: {
+    readonly review?: boolean;
+    readonly install?: InstallResult;
+    readonly workspaceNotes?: readonly string[];
+  } = {},
 ) {
   const recorded: Recorded = { installs: [], choices: [], retries: [] };
   const row = (): SidebarSession =>
@@ -57,6 +61,9 @@ function surface(
       claim: { branch: "feat/widget-lfs", prNumber: 7 },
       ...(options.review === true ? { reviewId: REVIEW.id } : {}),
       ...(preparation === undefined ? {} : { preparation }),
+      ...(options.workspaceNotes === undefined
+        ? {}
+        : { workspaceNotes: [...options.workspaceNotes] }),
     }) as SidebarSession;
   const settings = {
     ...emptySettings(),
@@ -350,5 +357,20 @@ describe("the large-file choice while preparation waits on it", () => {
       await act(() => user.tab());
       expect(dialog.contains(document.activeElement)).toBe(true);
     }
+  });
+});
+
+describe("workspace notes", () => {
+  it("shows a skip-mode checkout's note quietly beside the review, not as a failure", async () => {
+    const note = "Large files in this checkout are placeholders, because Git LFS isn't installed.";
+    surface(undefined, { review: true, workspaceNotes: [note] });
+    const notes = await waitFor(() => {
+      const found = document.querySelector('[data-slot="workspace-notes"]');
+      if (!found) throw new Error("no workspace notes");
+      return found;
+    });
+    expect(notes.textContent).toBe(note);
+    expect(notes.closest('[role="alert"]')).toBeNull();
+    expect(document.querySelector('[data-testid="preparation-failure"]')).toBeNull();
   });
 });
