@@ -395,7 +395,10 @@ export function largeFileGitInvocation(mode: LargeFileMode | undefined): LargeFi
       "-c",
       "filter.lfs.required=false",
     ],
-    env: { GIT_LFS_SKIP_SMUDGE: "1" },
+    // Git's own progress lines are allow-listed in English when a skip-mode checkout is
+    // judged against git-lfs's hook refusal, so pin git's message language for the call.
+    // `LANGUAGE` is cleared because GNU gettext would otherwise prefer it over `LC_ALL`.
+    env: { GIT_LFS_SKIP_SMUDGE: "1", LC_ALL: "C", LANGUAGE: "" },
   };
 }
 

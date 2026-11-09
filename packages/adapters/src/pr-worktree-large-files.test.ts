@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { classifyGitFailure } from "./git-failure";
 import { execaGit, type GitExec } from "./git-range-diff";
 import {
@@ -141,7 +141,7 @@ describe("largeFileGitInvocation", () => {
         "-c",
         "filter.lfs.required=false",
       ],
-      env: { GIT_LFS_SKIP_SMUDGE: "1" },
+      env: { GIT_LFS_SKIP_SMUDGE: "1", LC_ALL: "C", LANGUAGE: "" },
     });
   });
 });
@@ -172,7 +172,7 @@ describe("worktree adds under a large-file mode", () => {
         join(root, "b"),
         "abc123",
       ],
-      env: { GIT_LFS_SKIP_SMUDGE: "1" },
+      env: { GIT_LFS_SKIP_SMUDGE: "1", LC_ALL: "C", LANGUAGE: "" },
     });
   });
 
@@ -324,6 +324,29 @@ describe("skip under git-lfs's own post-checkout hook", () => {
       path: target,
       created: false,
     });
+  });
+
+  it("still tolerates the stock hook when the user's git speaks another language", async () => {
+    // A localized git prints its progress lines in that language ("Bereite
+    // Arbeitsverzeichnis vor …"); the skip call pins git's messages so the allow-list holds.
+    vi.stubEnv("LANG", "de_DE.UTF-8");
+    vi.stubEnv("LC_ALL", "de_DE.UTF-8");
+    vi.stubEnv("LANGUAGE", "de");
+    try {
+      const { root, headOid, worktrees, git } = fixture();
+      installHook(root, LFS_POST_CHECKOUT_HOOK);
+      const target = join(worktrees, "acme", "widget", "pr-de");
+
+      const result = await ensurePrWorktree(git, root, target, headOid, { largeFiles: "skip" });
+
+      expect(result).toEqual({
+        path: target,
+        created: true,
+        warning: LARGE_FILES_HOOK_SKIPPED_WARNING,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("checks a branch out with pointer files", async () => {
