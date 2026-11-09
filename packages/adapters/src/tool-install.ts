@@ -279,20 +279,16 @@ export async function runInstallPlan<P>(
         child.stderr?.setEncoding("utf8");
         child.stdout?.on("data", record("stdout"));
         child.stderr?.on("data", record("stderr"));
-        // `nodeChildProcess` is typed as the ChildProcess but execa hands back a promise of
-        // it; `Promise.resolve` reads either.
+        // execa 10 hands back the spawned process itself as `nodeChildProcess`: a plain
+        // ChildProcess, present even when the spawn failed (then it never exits).
+        const spawned = child.nodeChildProcess;
         const releasePipes = () =>
           setTimeout(() => {
             child.stdout?.destroy();
             child.stderr?.destroy();
           }, PIPE_DRAIN_MS).unref();
-        void Promise.resolve(child.nodeChildProcess).then(
-          (spawned) => {
-            if (spawned.exitCode !== null || spawned.signalCode !== null) releasePipes();
-            else spawned.once("exit", releasePipes);
-          },
-          () => undefined,
-        );
+        if (spawned.exitCode !== null || spawned.signalCode !== null) releasePipes();
+        else spawned.once("exit", releasePipes);
         const result = await child;
         exitCode = result.exitCode ?? null;
         failed = result.failed || exitCode !== 0;
