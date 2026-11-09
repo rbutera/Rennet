@@ -87,13 +87,22 @@
 
 ## 4. Integration and release
 
-- [ ] 4.1 Run the full `pnpm check` (nx format, architecture, licenses, lint, typecheck, test, build) and the desktop e2e suites touched above.
+- [x] 4.1 Run the full `pnpm check` (nx format, architecture, licenses, lint, typecheck, test, build) and the desktop e2e suites touched above.
   - Verify: all green locally and in CI on the PR.
+  - Done (9 Nov):
+    - `pnpm check` is green, apart from `rennet-adapters:dogfood-test`. That is the whole-repository watcher, which timed out under the parallel load and passes alone. This change does not touch it.
+    - Desktop e2e for the touched specs: board-lenses, first-run-welcome, board-drafting-live and new-chat-start.
+      - The two board-lenses expectations that this change corrected pass, and first-run-welcome passes at every window size.
+      - Three failures predate this change; each fails identically on main (`7f1cde40d`):
+        - board-lenses "review activity and code evidence remain usable across navigation", at "Expose the reviewed widget value";
+        - both new-chat-start #587 tests.
+      - CI does not run e2e.
 - [ ] 4.2 Manual smoke on macOS, launched from Finder:
   - open an LFS repo's PR with `git-lfs` hidden from PATH;
   - see the modal;
   - choose Skip: the review drafts;
   - change to Download in Settings, then Install for me on the failure block: Retry succeeds.
   - Verify: screenshots attached to the PR.
+  - Deferred to the owner after release. It needs a hands-on, unlocked desktop session, and the agent running this release had none. Unit and DOM tests cover each step of the flow.
 - [ ] 4.3 Merge to main and dispatch Auto Release with a patch bump.
   - Verify: release v1.2.2 is published with all jobs green.
