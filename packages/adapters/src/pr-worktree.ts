@@ -1009,6 +1009,13 @@ export async function ensurePrWorktree(
     readonly recordedSnapshot?: boolean;
     /** How the checkout treats Git LFS content. Absent ⇒ `download`. */
     readonly largeFiles?: LargeFileMode;
+    /**
+     * Called once the superseded snapshot at the path is known to be REPLACED, while it still
+     * exists and before anything is checked out. Git hands the replacement the same git dir,
+     * so whatever the daemon keys on that git dir (the skip-mode index) must already describe
+     * the new checkout's mode when git checks its files out. A throw stops the replacement.
+     */
+    readonly beforeReplace?: () => Promise<void>;
   },
 ): Promise<{ path: string; created: boolean; warning?: string }> {
   if (existsSync(join(worktreePath, ".git"))) {
@@ -1027,6 +1034,7 @@ export async function ensurePrWorktree(
     }
     // Superseded head, and Rennet's own detached snapshot: replaced forcibly in place — it
     // is a managed detached checkout, never the user's own working tree.
+    await options?.beforeReplace?.();
     await git(cloneRoot, ["worktree", "remove", "--force", worktreePath], { reject: false });
     await rm(worktreePath, { recursive: true, force: true });
   }

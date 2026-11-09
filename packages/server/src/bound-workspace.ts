@@ -149,6 +149,15 @@ export interface BoundWorkspaceDeps {
   readonly recordPrWorktree: (reviewId: string, path: string) => void;
   /** Fired for a worktree this call CREATED, so its `.rennet/setup` can run. */
   readonly onWorktreeCreated?: (worktreePath: string) => void;
+  /**
+   * Record the large-file mode a pull-request snapshot is about to be REPLACED under, while
+   * the superseded checkout still exists and before git checks anything out. Git hands the
+   * replacement the same git dir, so the skip-mode index every daemon child's git reads must
+   * already say the NEW mode: an entry left from a skip-mode checkout would otherwise turn
+   * a download-mode replacement into placeholders, and a skip-mode replacement must be
+   * covered from its first command. Absent ⇒ nothing is recorded before the replacement.
+   */
+  readonly markReplacedCheckout?: (checkout: string, mode: LargeFileMode) => Promise<void>;
   // No `siblingPush`. There was one, and it could not be reached: a session records
   // `workBranchPush` only after a submission, which needs a `workBranch`, which needs a
   // bind — and this function runs only when the session has no `boundRoot` at all, which
@@ -415,7 +424,7 @@ export async function repinBoundWorkspace(
   review: Review,
   recorded: string,
   deps: Pick<BoundWorkspaceDeps, "gitFor" | "snapshotRecordedAt"> &
-    Partial<Pick<BoundWorkspaceDeps, "placementFor">>,
+    Partial<Pick<BoundWorkspaceDeps, "placementFor" | "markReplacedCheckout">>,
 ): Promise<BoundWorkspace> {
   if (review.postTarget === undefined && review.retrospective !== true) {
     return { boundRoot: recorded };
@@ -429,6 +438,7 @@ export async function repinBoundWorkspace(
   // a branch binding or an unpinned review never asks.
   const placement = await deps.placementFor?.(review.repositoryRoot).catch(() => undefined);
   const largeFiles = placement === undefined ? "download" : checkoutLargeFileMode(placement);
+  const mark = deps.markReplacedCheckout;
   const { created, warning } = await ensurePrWorktree(
     deps.gitFor(review.repositoryRoot),
     review.repositoryRoot,
@@ -440,7 +450,11 @@ export async function repinBoundWorkspace(
     // definition: a session bound to a path the pull-request index no longer names is a
     // session whose snapshot Rennet has already let go of, and re-pinning it forcibly is
     // the deletion `ensurePrWorktree` refuses everywhere else.
-    { recordedSnapshot: deps.snapshotRecordedAt(recorded), largeFiles },
+    {
+      recordedSnapshot: deps.snapshotRecordedAt(recorded),
+      largeFiles,
+      ...(mark === undefined ? {} : { beforeReplace: () => mark(recorded, largeFiles) }),
+    },
   );
   // `largeFiles` only when the checkout was REPLACED: the caller records the new checkout's
   // mode then, and a re-pin that found the head already there changes nothing.
@@ -495,6 +509,7 @@ async function ensurePrSnapshotWorkspace(
         ));
   if (target === undefined) return { boundRoot: review.repositoryRoot };
   const largeFiles = checkoutLargeFileMode(placement);
+  const mark = deps.markReplacedCheckout;
   const { created, warning } = await ensurePrWorktree(git, review.repositoryRoot, target, headOid, {
     // Rennet's index names this exact PATH — for this review or an earlier one of the same
     // pull request, which is the successor case the replacement exists for. That is the
@@ -502,6 +517,7 @@ async function ensurePrSnapshotWorkspace(
     // has none, and whatever occupies it is somebody else's.
     recordedSnapshot: deps.snapshotRecordedAt(target),
     largeFiles,
+    ...(mark === undefined ? {} : { beforeReplace: () => mark(target, largeFiles) }),
   });
   if (indexed === undefined) deps.recordPrWorktree(review.id, target);
   if (created) deps.onWorktreeCreated?.(target);

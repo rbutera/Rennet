@@ -23,6 +23,7 @@ import {
 import type { SidebarSession } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRennetServer } from "./create-server";
+import { includeLargeFileSkipIndex } from "./daemon";
 import { createGitHubTokenStore } from "./github-token-store";
 
 /**
@@ -115,6 +116,85 @@ function lfsRepository(
   return { dataDir, repo, git, baseOid, headOid, installGitLfs, filterRuns };
 }
 
+/** The real `git-lfs` on this machine, or "" when there is none (the tests that need it skip). */
+const realGitLfs = (() => {
+  try {
+    return execFileSync(
+      "sh",
+      ["-c", 'PATH="$PATH:/opt/homebrew/bin:/usr/local/bin" command -v git-lfs'],
+      { encoding: "utf8" },
+    ).trim();
+  } catch {
+    return "";
+  }
+})();
+
+const LARGE = "a large widget model, stored by Git LFS\n";
+
+/** Undo every `process.env` change a real-LFS test made, after the server has shut down. */
+const envRestores: (() => void)[] = [];
+afterEach(() => {
+  for (const restore of envRestores.splice(0).reverse()) restore();
+});
+
+/**
+ * A pull request whose large file is REALLY stored by Git LFS: the repository's own config
+ * runs the real `git-lfs` filter, the feature commit's blob is a pointer, and the content is
+ * in the repository's LFS store — so a checkout that downloads gets the content back, and one
+ * that skips gets the pointer. Every worktree of the repository shares that store.
+ *
+ * The daemon's environment comes with it, exactly as `startDaemon` builds it: `git-lfs` on
+ * the PATH and the skip-mode index included through `GIT_CONFIG_*`, in THIS process's
+ * environment, which every git the in-process server runs inherits. Restored after the test.
+ */
+function realLfsRepository() {
+  const dataDir = realpathSync(mkdtempSync(join(tmpdir(), "rennet-reallfs-data-")));
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-reallfs-repo-")));
+  dirs.push(dataDir, repo);
+  const before = { ...process.env };
+  envRestores.push(() => {
+    for (const key of Object.keys(process.env)) {
+      if (!(key in before)) delete process.env[key];
+    }
+    Object.assign(process.env, before);
+  });
+  process.env.PATH = `${dirname(realGitLfs)}:${process.env.PATH ?? ""}`;
+  includeLargeFileSkipIndex(process.env, dataDir);
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+  git("init", "-q", "-b", "main");
+  git("config", "user.email", "rennet@example.test");
+  git("config", "user.name", "Rennet Test");
+  // The config `git lfs install` writes, in the repository so the user's own is not needed.
+  git("config", "filter.lfs.clean", "git-lfs clean -- %f");
+  git("config", "filter.lfs.smudge", "git-lfs smudge -- %f");
+  git("config", "filter.lfs.process", "git-lfs filter-process");
+  git("config", "filter.lfs.required", "true");
+  writeFileSync(join(repo, "README.md"), "acme widget\n");
+  git("add", "README.md");
+  git("commit", "-q", "-m", "base");
+  const baseOid = git("rev-parse", "HEAD");
+  git("checkout", "-q", "-b", "feature");
+  writeFileSync(join(repo, ".gitattributes"), "*.bin filter=lfs diff=lfs merge=lfs -text\n");
+  mkdirSync(join(repo, "assets"));
+  writeFileSync(join(repo, "assets", "model.bin"), LARGE);
+  git("add", "-A");
+  git("commit", "-q", "-m", "add a large widget model");
+  expect(git("cat-file", "-p", "HEAD:assets/model.bin")).toMatch(/^version https:/);
+  const headOid = git("rev-parse", "HEAD");
+  git("checkout", "-q", "main");
+  git("remote", "add", "origin", "git@github.com:acme/widget.git");
+  return {
+    dataDir,
+    repo,
+    git,
+    baseOid,
+    headOid,
+    installGitLfs: () => undefined,
+    filterRuns: () => 0,
+  };
+}
+
 /** GitHub's three answers for pull request #7 of acme/widget, from its pinned OIDs. */
 function gitHub(baseOid: string, headOid: string) {
   const json = (body: unknown, headers: Record<string, string> = {}) =>
@@ -183,6 +263,8 @@ async function serverFor(
     readonly env?: Record<string, string>;
     /** A project this data directory already has (a restarted daemon): not added again. */
     readonly projectId?: string;
+    /** Git LFS answers on this host from the start. */
+    readonly lfsInstalled?: boolean;
   } = {},
 ) {
   await createGitHubTokenStore(fixture.dataDir).setGitHubCredential({ token: "gho_acme_widget" });
@@ -195,7 +277,8 @@ async function serverFor(
     // What this machine has installed must not decide the answer.
     sourceControl: {
       detect: async () =>
-        brewBin !== undefined && existsSync(join(brewBin, "installed"))
+        serverOptions.lfsInstalled === true ||
+        (brewBin !== undefined && existsSync(join(brewBin, "installed")))
           ? [gitRow, { ...missingLfsRow, version: "3.7.1", status: "available" as const }]
           : [gitRow, missingLfsRow],
       ...(brewBin === undefined
@@ -521,25 +604,25 @@ describe("skip-mode registration follows the checkout Rennet created", () => {
    * and checking it out again at the same path, which git registers under the same git dir.
    */
   async function moveOffHeadAndRepin(
-    fixture: ReturnType<typeof lfsRepository>,
+    fixture: Pick<ReturnType<typeof lfsRepository>, "baseOid" | "headOid">,
     server: Awaited<ReturnType<typeof serverFor>>["server"],
     reviewId: string,
     boundRoot: string,
+    options: { readonly realLfs?: boolean } = {},
   ) {
+    // With the real Git LFS, the checkout's own filter runs: blanking it would make a
+    // downloaded file read as modified, and git would refuse to move.
+    const blank = [
+      "-c",
+      "filter.lfs.process=",
+      "-c",
+      "filter.lfs.smudge=",
+      "-c",
+      "filter.lfs.required=false",
+    ];
     execFileSync(
       "git",
-      [
-        "-c",
-        "filter.lfs.process=",
-        "-c",
-        "filter.lfs.smudge=",
-        "-c",
-        "filter.lfs.required=false",
-        "checkout",
-        "-q",
-        "--detach",
-        fixture.baseOid,
-      ],
+      [...(options.realLfs === true ? [] : blank), "checkout", "-q", "--detach", fixture.baseOid],
       { cwd: boundRoot },
     );
     // Any use of the binding re-pins it; the transcript read is the cheapest.
@@ -609,6 +692,78 @@ describe("skip-mode registration follows the checkout Rennet created", () => {
     expect(lfsRequiredUnderDaemonEnv(fixture.dataDir, boundRoot)).toBe("true");
     await server.dispatch("session.cancelPreparation", { sessionId });
   }, 60_000);
+
+  it.skipIf(realGitLfs === "")(
+    "skip, then download, under real Git LFS and the daemon's environment: the replacement downloads the large file",
+    async () => {
+      const fixture = realLfsRepository();
+      const { server, mint, waitFor, setMode } = await serverFor(fixture, { lfsInstalled: true });
+      await setMode("skip");
+      const sessionId = await mint();
+      const drafting = await waitFor(sessionId, (session) =>
+        expect(session?.preparation?.status).toBe("drafting"),
+      );
+      const store = new SessionStore(join(fixture.dataDir, "sessions"));
+      const boundRoot = store.load(sessionId)?.boundRoot ?? "";
+      const model = join(boundRoot, "assets", "model.bin");
+      expect(readFileSync(model, "utf8")).toMatch(/^version https:\/\/git-lfs\.github\.com/);
+      expect(registered(fixture.dataDir)).toEqual([gitDirOf(boundRoot)]);
+
+      await setMode("download");
+      await moveOffHeadAndRepin(fixture, server, drafting.reviewId ?? "", boundRoot, {
+        realLfs: true,
+      });
+      // The replacement got the SAME git dir. Had its skip-mode entry still been in the index
+      // while git checked the files out, every daemon child's git — the checkout's own
+      // included — would have run LFS's skip filter, and this would be the pointer again.
+      expect(readFileSync(model, "utf8")).toBe(LARGE);
+      expect(registered(fixture.dataDir)).toEqual([]);
+      await server.dispatch("session.cancelPreparation", { sessionId });
+    },
+    60_000,
+  );
+
+  it.skipIf(realGitLfs === "")(
+    "download, then skip, under real Git LFS: the replacement is skip mode from its first command",
+    async () => {
+      const fixture = realLfsRepository();
+      // What the checkout's own later commands see: a hook that drops git's per-call `-c`
+      // config (which its parent's skip flags would hand it) and reads the filter the way an
+      // agent's shell in the checkout would — through the daemon's environment.
+      const seen = join(fixture.dataDir, "post-checkout.log");
+      const hooks = join(fixture.repo, ".git", "hooks");
+      mkdirSync(hooks, { recursive: true });
+      writeFileSync(
+        join(hooks, "post-checkout"),
+        `#!/bin/sh\nenv -u GIT_CONFIG_PARAMETERS git config --get filter.lfs.process >> '${seen}'\n`,
+        { mode: 0o755 },
+      );
+      const { server, mint, waitFor, setMode } = await serverFor(fixture, { lfsInstalled: true });
+      await setMode("download");
+      const sessionId = await mint();
+      const drafting = await waitFor(sessionId, (session) =>
+        expect(session?.preparation?.status).toBe("drafting"),
+      );
+      const store = new SessionStore(join(fixture.dataDir, "sessions"));
+      const boundRoot = store.load(sessionId)?.boundRoot ?? "";
+      const model = join(boundRoot, "assets", "model.bin");
+      expect(readFileSync(model, "utf8")).toBe(LARGE);
+      expect(registered(fixture.dataDir)).toEqual([]);
+
+      await setMode("skip");
+      await moveOffHeadAndRepin(fixture, server, drafting.reviewId ?? "", boundRoot, {
+        realLfs: true,
+      });
+      expect(readFileSync(model, "utf8")).toMatch(/^version https:\/\/git-lfs\.github\.com/);
+      expect(registered(fixture.dataDir)).toEqual([gitDirOf(boundRoot)]);
+      // The replacement's own post-checkout hook already ran as skip mode: the checkout was
+      // registered BEFORE git checked it out, not after.
+      const lines = readFileSync(seen, "utf8").trim().split("\n");
+      expect(lines.at(-1)).toBe("git-lfs filter-process --skip");
+      await server.dispatch("session.cancelPreparation", { sessionId });
+    },
+    60_000,
+  );
 
   it("a later session that reuses the checkout keeps the mode it was created with", async () => {
     const fixture = lfsRepository();

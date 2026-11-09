@@ -2896,6 +2896,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       prWorktreeFor: (reviewId: string) => readPrWorktreeIndex()[reviewId]?.path,
       snapshotRecordedAt,
       recordPrWorktree,
+      markReplacedCheckout: (checkout: string, mode: LargeFileMode) =>
+        markReplacedCheckout(review.repositoryRoot, checkout, mode),
       // No `onWorktreeCreated` here: the bind supplies it, and runs a created checkout's
       // setup only once that checkout's large-file mode is registered.
       // No `siblingPush` is passed, and none is accepted any more. It was meant to narrow
@@ -3044,6 +3046,38 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         `rennet: could not record the large-file mode for ${checkout} — ${error instanceof Error ? error.message : String(error)}`,
       );
       return [];
+    }
+  }
+
+  /**
+   * Record the mode a checkout Rennet is about to REPLACE in place will be recreated under,
+   * BEFORE the replacement checks anything out (`ensurePrWorktree`'s `beforeReplace`). Git
+   * hands the replacement the superseded checkout's git dir, so its skip-mode entry would
+   * otherwise still apply while git checks the new files out: a download-mode replacement of
+   * a skip-mode snapshot came out as placeholders, because every daemon child's git — the
+   * replacement's own checkout included — reads the index. Under skip, registering first
+   * means the replacement's later commands (its hooks, its setup) run as skip mode too.
+   * `registerCreatedCheckout` still runs after the checkout, for the git dir git actually
+   * handed out and for the notes. Never fails the replacement: the reason reaches the log.
+   */
+  async function markReplacedCheckout(
+    repoRoot: string,
+    checkout: string,
+    mode: LargeFileMode,
+  ): Promise<void> {
+    if (locusForRepo(repoRoot).kind !== "host") return;
+    if (sameDirectory(checkout, repoRoot)) return;
+    try {
+      const gitDir = await absoluteGitDir(gitForRepo(repoRoot), checkout);
+      if (mode !== "skip") {
+        largeFileSkipIndex.remove((entry) => entry === gitDir);
+        return;
+      }
+      largeFileSkipIndex.add(gitDir, { lfsAvailable: await gitLfsAvailableOn(HOST_LOCUS) });
+    } catch (error) {
+      siblingLog(
+        `rennet: could not record the large-file mode for ${checkout} before replacing it — ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -3223,13 +3257,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ) {
         recordFrontDoor(review.id, { path: worktree });
       } else {
-        attemptedMode = checkoutLargeFileMode(placement);
+        const mode = checkoutLargeFileMode(placement);
+        attemptedMode = mode;
         const { created, warning } = await ensurePrWorktree(
           gitInLocus,
           root,
           worktree,
           pr.headOid,
-          { recordedSnapshot: snapshotRecordedAt(worktree), largeFiles: attemptedMode },
+          {
+            recordedSnapshot: snapshotRecordedAt(worktree),
+            largeFiles: attemptedMode,
+            beforeReplace: () => markReplacedCheckout(root, worktree, mode),
+          },
         );
         recordPrWorktree(review.id, worktree);
         // A checkout this call CREATED (or replaced) gets its large-file mode recorded before

@@ -176,6 +176,37 @@ describe("worktree adds under a large-file mode", () => {
     });
   });
 
+  it("records the replacement's mode before the superseded snapshot is removed, and only for a replacement", async () => {
+    const events: string[] = [];
+    const fake: GitExec = async (_root, args) => {
+      events.push(args.filter((arg) => !arg.startsWith("filter.lfs") && arg !== "-c").join(" "));
+      if (args[0] === "rev-parse") return "old-head\n";
+      return "";
+    };
+    const root = scratchDir("rennet-lfs-replace-");
+    const superseded = join(root, "pr-1");
+    mkdirSync(superseded);
+    writeFileSync(join(superseded, ".git"), "gitdir: elsewhere\n");
+    const beforeReplace = vi.fn(async () => {
+      events.push("beforeReplace");
+    });
+    await ensurePrWorktree(fake, root, superseded, "new-head", {
+      recordedSnapshot: true,
+      largeFiles: "skip",
+      beforeReplace,
+    });
+    expect(events).toEqual([
+      "rev-parse HEAD",
+      "symbolic-ref --quiet --short HEAD",
+      "beforeReplace",
+      `worktree remove --force ${superseded}`,
+      `worktree add --detach ${superseded} new-head`,
+    ]);
+    // A fresh path replaces nothing, so there is nothing to record ahead of the checkout.
+    await ensurePrWorktree(fake, root, join(root, "pr-2"), "new-head", { beforeReplace });
+    expect(beforeReplace).toHaveBeenCalledTimes(1);
+  });
+
   it("skip checks a pull request out with pointer files and leaves the user's config alone", async () => {
     const { root, headOid, worktrees, globalConfig, git } = fixture();
     const configBefore = readFileSync(globalConfig, "utf8");
