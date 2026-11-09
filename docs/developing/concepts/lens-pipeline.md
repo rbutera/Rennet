@@ -807,7 +807,8 @@ behind Details. A failed lens board does the same: a plain line, its reason behi
 Details. Continue does not exist while the boards are being written: the Cancel
 chip stands in its corner, and Continue appears there once the review is ready. The same session's sidebar row stays animated when the user
 navigates away. Completion becomes a check and then an unread dot until opened;
-failure retains its reason. Initial preparation and post-round regeneration
+failure keeps the failure block's plain sentence (an unclassified failure's raw reason
+stays behind the block's Details, never in the sidebar's tooltip). Initial preparation and post-round regeneration
 project their durable state into this presentation rather than relying on the
 currently mounted board.
 

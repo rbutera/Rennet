@@ -1,5 +1,6 @@
 import type { SidebarSession } from "@rennet/protocol";
 import { create } from "zustand";
+import { preparationFailureCopy } from "../preparation/failure-copy";
 
 export type ReviewActivityState =
   | { readonly kind: "running"; readonly runId: string }
@@ -28,9 +29,12 @@ export const useReviewActivityState = create<{
         const preparation = row.preparation;
         const activity = preparation === undefined ? row.reviewActivity : undefined;
         const runId = activity?.operationId ?? row.reviewId ?? row.id;
+        // A failed preparation is said the way its block says it (`failure-copy.ts`): a
+        // classified failure's own plain sentence, an unclassified one's plain headline —
+        // never the failing step's raw text in a tooltip or a screen reader's label.
         const failure =
           preparation?.status === "failed"
-            ? preparation.reason
+            ? preparationFailureCopy(preparation).headline
             : activity?.status === "failed"
               ? activity.reason
               : undefined;
