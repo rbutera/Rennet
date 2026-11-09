@@ -3,9 +3,14 @@ import { Button } from "@rennet/ui";
 import { useCallback, useEffect, useRef } from "react";
 import { useCommand, useMutation, useRefreshCommand } from "../data";
 import { useScopedHandle, useScopedState } from "../data/scoped-state";
+import { useForgetSettledInstalls } from "../data/tool-install";
 import { ActionFailureLine, useActionFailure } from "../preparation/action-failure";
 import { LargeFileChoice, largeFileFailureKey } from "../preparation/large-file-choice";
-import { PreparationFailure, retryFailureKey } from "../preparation/preparation-failure";
+import {
+  failureInstallOwner,
+  PreparationFailure,
+  retryFailureKey,
+} from "../preparation/preparation-failure";
 import { preparationPhase, preparationStopped } from "../preparation/preparation-phase";
 import { usePresenceShown } from "../preparation/preparation-presence";
 import { useProjectLocus } from "../preparation/session-locus";
@@ -66,12 +71,16 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
   useEffect(() => {
     if (phase !== "choosing") resetLargeFileQuestion();
   }, [phase, resetLargeFileQuestion]);
-  // A Retry's failure belongs to the stop it was for: once the review is going again, the
-  // next stop starts without it.
+  // A Retry's failure, and what the block's Install for me came to, belong to the stop they
+  // were for: once the review is going again, the next stop starts without them. A kept
+  // "Git LFS is installed" over a new stop asking for Git LFS offered no install at all.
   const retryFailure = useScopedHandle<string | undefined>(retryFailureKey(slug), undefined);
+  const forgetFailureInstall = useForgetSettledInstalls(failureInstallOwner(slug));
   useEffect(() => {
-    if (!preparationStopped(phase)) retryFailure.set(undefined);
-  }, [phase, retryFailure]);
+    if (preparationStopped(phase)) return;
+    retryFailure.set(undefined);
+    forgetFailureInstall();
+  }, [phase, retryFailure, forgetFailureInstall]);
   // Still going: the poll is what moves the rail, the presence and the seats. `choosing` is
   // polled too, so an answer given from another window resumes this one.
   const active = phase === "waiting" || phase === "choosing" || phase === "drafting";

@@ -233,6 +233,27 @@ describe("a stopped preparation is one actionable block", () => {
     await waitFor(() => expect(recorded.retries).toHaveLength(1));
   });
 
+  it("offers the install again when a Retry stops on the same missing tool", async () => {
+    // The install answered the stop it was pressed for. When the review, retried, stops again
+    // asking for Git LFS, that earlier "installed" is not an answer to this stop: kept, the
+    // block said "Git LFS is installed" with no button, and Retry failed in a loop.
+    const live: { current: SidebarSession["preparation"] } = { current: lfsMissing };
+    const { user, recorded } = surface(lfsMissing, { live });
+    const first = await block();
+    await user.click(within(first).getByRole("button", { name: "Install Git LFS for me" }));
+    await waitFor(() => expect(first.textContent).toContain("Git LFS is installed"));
+    await user.click(within(first).getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="preparation-failure"]')).toBeNull(),
+    );
+
+    live.current = lfsMissing;
+    const again = await block();
+    expect(again.textContent).not.toContain("Git LFS is installed");
+    await user.click(within(again).getByRole("button", { name: "Install Git LFS for me" }));
+    await waitFor(() => expect(recorded.installs).toHaveLength(2));
+  });
+
   it("announces the failure sentence alone, with the install's output as its own polite log", async () => {
     const pending: { release?: () => void } = {};
     const { user } = surface(lfsMissing, {

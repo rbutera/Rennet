@@ -36,8 +36,10 @@ import { useLfsAvailable, useProjectLocus } from "./session-locus";
 // Install for me sends nothing when it lands. Its verdict ("Git LFS is installed") shows in
 // the block and Retry becomes the primary action, so the next step is one obvious click by
 // the reviewer. Retrying on the reviewer's behalf raced Cancel and their own Retry. The
-// install is kept per session, so it survives the block unmounting. A Retry that did not go
-// through says so from the per-session slot, so a block remounted by the route still shows it.
+// install is kept per session, so it survives the block unmounting, and it answers this stop
+// only: once the session leaves it, the header forgets the verdict, so a later stop asking for
+// the same tool offers the install again. A Retry that did not go through says so from the
+// per-session slot, so a block remounted by the route still shows it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Stopped = Extract<SessionPreparation, { status: "failed" | "cancelled" }>;

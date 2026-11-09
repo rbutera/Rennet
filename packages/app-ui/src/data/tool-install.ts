@@ -478,3 +478,22 @@ export function useInstalledByOwner(options: {
   const { state } = useToolInstall(options);
   return state.phase === "done" && state.result.status === "installed";
 }
+
+/**
+ * Forget what `owner`'s FINISHED installs came to, so its button offers an install again.
+ *
+ * A verdict answers the stop it was pressed for. The preparation failure block calls this
+ * once the session has left that stop: a later stop asking for the same tool is a new
+ * question, and an old "installed" with no button would leave Retry failing in a loop. A run
+ * still in flight is left alone: its verdict, when it lands, is news about now.
+ */
+export function useForgetSettledInstalls(owner: string): () => void {
+  const { cache } = useBridgeContext();
+  return useCallback(() => {
+    const prefix = `tool-install:${owner}:`;
+    for (const [key, record] of runs.get(cache) ?? []) {
+      if (!key.startsWith(prefix) || record.commandId !== null) continue;
+      scopedHandle<ToolInstallState>(cache, key, IDLE).set(IDLE);
+    }
+  }, [cache, owner]);
+}

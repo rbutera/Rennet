@@ -215,7 +215,9 @@ across a remount, a dismissed dialog or a dropped connection to the daemon; unti
 machine it installs on is known, the button waits; where no installer exists it shows the
 command and a link instead. When it lands it sends nothing on your behalf: the large-file
 question returns to its two choices with Download available, and the failure block makes
-Retry its primary action. You click the next step.
+Retry its primary action. You click the next step. The block's verdict belongs to the
+failure it answered: if the retried review stops again for the same tool, the block offers
+the install again rather than repeating "installed".
 
 After a dropped connection the button asks the daemon again under the same command id as a
 *rejoin*, which never starts an installer: a run still going is re-joined, with its output

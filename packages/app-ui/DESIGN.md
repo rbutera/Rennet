@@ -264,7 +264,8 @@ the failure mode is a surface that quietly lies about it.
   large-file dialog, Git LFS installed returns the dialog to the two choices with "Git LFS
   is installed" and Download available, and the reviewer clicks Download. In the failure
   block, the verdict ("Git LFS is installed") shows in place of the button and Retry
-  becomes the primary action. Automatic follow-ups (answering Download, retrying) raced
+  becomes the primary action. That verdict answers the stop it was pressed for: once the
+  review is going again, a later stop asking for the same tool offers the install afresh. Automatic follow-ups (answering Download, retrying) raced
   Cancel and Retry, so a cancelled review could resume itself; there are none. If the
   connection drops and the daemon, once back, no longer knows the install (it restarted),
   the button says plainly that Rennet lost track of it and offers Check again, which
