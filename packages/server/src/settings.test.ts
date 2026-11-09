@@ -2515,6 +2515,30 @@ describe("source-control projection — Git and Git LFS rows (2.6)", () => {
     ]);
   });
 
+  it("one read asks each repository about Git LFS once, however many projects or rows name it", async () => {
+    const asked: string[] = [];
+    const { deps } = makeDeps({
+      // Two projects on one host include the same two repositories, and none uses Git LFS,
+      // so nothing short-circuits: every repository the host has must be asked.
+      listProjects: () => [
+        project({ kind: "workspace", repoCount: 2, includedRepoPaths: ["/orbital", "/widget"] }),
+        project({ id: "b", name: "widget", path: "/widget", openPath: "/widget" }),
+      ],
+      detectForgesOn: async () => [gh],
+      detectSourceControlOn: async () => [git, lfs(false)],
+      repoUsesLfs: async (root) => {
+        asked.push(root);
+        return false;
+      },
+    });
+    const composition = createSettingsComposition(deps);
+    await composition.forgeHosts();
+    expect([...asked].sort()).toEqual(["/orbital", "/widget"]);
+    asked.length = 0;
+    await composition.get();
+    expect([...asked].sort()).toEqual(["/orbital", "/widget"]);
+  });
+
   it("no LFS probe wired ⇒ the row says nothing about LFS, never a guessed no", async () => {
     const { deps } = makeDeps();
     const row = (await createSettingsComposition(deps).get()).projects[0];

@@ -1081,6 +1081,8 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     /** The operation's facts reader. Defaults to a fresh one, which is exactly right for
      *  a single-row resolution and shares nothing across operations. */
     readFacts: (repoPath: string) => Promise<WorktreeRepoFacts | undefined> = factsReader(),
+    /** The operation's Git LFS reader, on the same terms as `readFacts`. */
+    readUsesLfs: (repoPath: string) => Promise<boolean | undefined> = lfsReader(),
   ): Promise<SettingsProject> => {
     const configState = deps.loadConfigState(target.repoKey);
     const configMalformed = configState.status === "malformed";
@@ -1116,28 +1118,57 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       ...(preview ? { worktreePreview: preview } : {}),
       // Whether THIS repository uses Git LFS, asked of the row's own repository. A read that
       // fails says nothing rather than "no".
-      ...(await rowUsesLfs(target.repoPath)),
+      ...(await rowUsesLfs(target.repoPath, readUsesLfs)),
+    };
+  };
+
+  /**
+   * Whether a repository uses Git LFS, asked AT MOST ONCE per repository per operation.
+   * Each answer is a git read of `.gitattributes` (two, when the default branch says no), so
+   * a read that asked per row and again per host — and again for a repository two projects
+   * both include — paid for the same answer several times over. `undefined` when not asked
+   * (no probe wired) or the read failed: never a guessed "no".
+   */
+  const lfsReader = (): ((repoPath: string) => Promise<boolean | undefined>) => {
+    const answers = new Map<string, Promise<boolean | undefined>>();
+    return (repoPath) => {
+      const cached = answers.get(repoPath);
+      if (cached !== undefined) return cached;
+      const pending = deps.repoUsesLfs
+        ? deps.repoUsesLfs(repoPath).catch(() => undefined)
+        : Promise.resolve(undefined);
+      answers.set(repoPath, pending);
+      return pending;
     };
   };
 
   /** `{ usesLfs }` for one repository, or nothing when it was not (or could not be) asked. */
-  const rowUsesLfs = async (repoPath: string): Promise<{ usesLfs?: boolean }> => {
-    if (!deps.repoUsesLfs) return {};
-    const usesLfs = await deps.repoUsesLfs(repoPath).catch(() => undefined);
+  const rowUsesLfs = async (
+    repoPath: string,
+    readUsesLfs: (repoPath: string) => Promise<boolean | undefined>,
+  ): Promise<{ usesLfs?: boolean }> => {
+    const usesLfs = await readUsesLfs(repoPath);
     return usesLfs === undefined ? {} : { usesLfs };
   };
 
   /**
    * Whether any repository of a project on `source` uses Git LFS — the `required` fact on
    * that host's Git LFS row. Every repository of every project there is asked by its own
-   * path; the first `true` answers.
+   * path, each at most once through the operation's reader; the first `true` answers.
    */
-  const hostUsesLfs = async (projects: readonly Project[], source: ProjectSource) => {
+  const hostUsesLfs = async (
+    projects: readonly Project[],
+    source: ProjectSource,
+    readUsesLfs: (repoPath: string) => Promise<boolean | undefined>,
+  ) => {
     if (!deps.repoUsesLfs) return false;
+    const asked = new Set<string>();
     for (const project of projects) {
       if (project.source !== source) continue;
       for (const target of await targetsFor(project).catch(() => [])) {
-        if (await deps.repoUsesLfs(target.repoPath).catch(() => false)) return true;
+        if (asked.has(target.repoPath)) continue;
+        asked.add(target.repoPath);
+        if ((await readUsesLfs(target.repoPath)) === true) return true;
       }
     }
     return false;
@@ -1261,6 +1292,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       // repositories open spawned sixty gits in one breath, and on a WSL daemon sixty
       // distro round trips. Four in flight keeps the win and bounds the burst.
       const readFacts = factsReader();
+      const readUsesLfs = lfsReader();
       for (const project of allProjects) {
         const targets = await targetsFor(project);
         const multiRepo = targets.length > 1;
@@ -1268,7 +1300,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         for (const target of targets) {
           if (emittedRepoPaths.has(target.repoPath)) continue;
           emittedRepoPaths.add(target.repoPath);
-          rows.push(() => resolveRow(project, target, multiRepo, repoKeys, readFacts));
+          rows.push(() => resolveRow(project, target, multiRepo, repoKeys, readFacts, readUsesLfs));
         }
       }
       // Results land at their own index, so the view's row order is the push order still.
@@ -1395,6 +1427,8 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     forgeHosts: async (): Promise<ForgeHostDetection[]> => {
       const hosts: ForgeHostDetection[] = [];
       const projects = deps.listProjects();
+      // One Git LFS reader for every host of this read: a repository is asked once.
+      const readUsesLfs = lfsReader();
       for (const host of daemonHostSections(projects)) {
         // A detection that REJECTS is a host that could not be asked, exactly like a dep that
         // resolves null — either way nothing was observed there, so nothing is claimed.
@@ -1408,7 +1442,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         const sourceControl = deps.detectSourceControlOn
           ? await deps
               .detectSourceControlOn(host.source, {
-                lfsRequired: await hostUsesLfs(projects, host.source),
+                lfsRequired: await hostUsesLfs(projects, host.source, readUsesLfs),
               })
               .catch(() => null)
           : null;
