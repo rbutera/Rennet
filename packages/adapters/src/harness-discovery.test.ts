@@ -1,9 +1,12 @@
-import { isAbsolute, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import {
   compareVersions,
   type DiscoveryDeps,
   defaultCodexDiscoveryDeps,
+  defaultDiscoveryDeps,
   discoverClaude,
   discoverCodex,
   type VersionRange,
@@ -429,4 +432,29 @@ describe("compareVersions", () => {
     expect(compareVersions("2.1.221", "2.1.220")).toBeGreaterThan(0);
     expect(compareVersions("2.1", "2.1.0")).toBe(0);
   });
+});
+
+describe("defaultDiscoveryDeps", () => {
+  it.skipIf(process.platform === "win32")(
+    "defaultDiscoveryDeps harvests the login-shell PATH between markers, ignoring the shell's banner",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "rennet-harness-shell-"));
+      try {
+        const shell = join(dir, "acme-shell");
+        writeFileSync(
+          shell,
+          '#!/bin/sh\necho "Welcome to acme-box"\nPATH=/from/login/shell:/usr/bin:/bin exec /bin/sh -c "$2"\n',
+        );
+        chmodSync(shell, 0o755);
+        vi.stubEnv("SHELL", shell);
+        // The old unmarked `printf %s "$PATH"` read returned the banner glued to the value.
+        expect(await defaultDiscoveryDeps().loginShellPath()).toBe(
+          "/from/login/shell:/usr/bin:/bin",
+        );
+      } finally {
+        vi.unstubAllEnvs();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });

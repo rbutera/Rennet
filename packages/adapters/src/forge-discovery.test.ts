@@ -1,3 +1,6 @@
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createForgeCommandRunner,
@@ -369,6 +372,29 @@ describe("forge-discovery (forge CLI detection)", () => {
     expect(githubForge.binary).toBe("gh");
     expect(gitlabForge.binary).toBe("glab");
   });
+
+  it.skipIf(process.platform === "win32")(
+    "defaultForgeDetectionDeps harvests the login-shell PATH between markers, ignoring the shell's banner",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "rennet-forge-shell-"));
+      try {
+        const shell = join(dir, "acme-shell");
+        writeFileSync(
+          shell,
+          '#!/bin/sh\necho "Welcome to acme-box"\nPATH=/from/login/shell:/usr/bin:/bin exec /bin/sh -c "$2"\n',
+        );
+        chmodSync(shell, 0o755);
+        vi.stubEnv("SHELL", shell);
+        // The old unmarked `printf %s "$PATH"` read returned the banner glued to the value.
+        expect(await defaultForgeDetectionDeps().loginShellPath()).toBe(
+          "/from/login/shell:/usr/bin:/bin",
+        );
+      } finally {
+        vi.unstubAllEnvs();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("resolveGitHubCliToken", () => {
