@@ -629,6 +629,21 @@ export {
   type OverlayRetentionPolicy,
   SnapshotOverlayStore,
 } from "./snapshot-overlay-store";
+export {
+  type DetectedSourceControlTool,
+  type DetectSourceControlOptions,
+  defaultSourceControlDetectionDeps,
+  detectGit,
+  detectGitLfs,
+  detectSourceControlTool,
+  detectSourceControlTools,
+  gitattributesUseLfs,
+  parseGitLfsVersion,
+  type RepoUsesLfsOptions,
+  repoUsesLfs,
+  type SourceControlDetectionDeps,
+  type SourceControlToolStatus,
+} from "./source-control-discovery";
 export { SqliteReviewStore } from "./sqlite-review-store";
 export {
   readSuperpowersSpec,
