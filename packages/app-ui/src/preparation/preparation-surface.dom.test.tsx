@@ -47,6 +47,8 @@ function surface(
   options: {
     readonly review?: boolean;
     readonly install?: InstallResult;
+    /** Holds `tools.install` open until it resolves, so the running state can be seen. */
+    readonly installGate?: Promise<void>;
     readonly workspaceNotes?: readonly string[];
   } = {},
 ) {
@@ -83,8 +85,9 @@ function surface(
       recorded.choices.push(input);
       return { session: row() };
     },
-    "tools.install": (input: CommandInput<"tools.install">) => {
+    "tools.install": async (input: CommandInput<"tools.install">) => {
       recorded.installs.push(input);
+      await options.installGate;
       return {
         result: options.install ?? {
           status: "installed",
@@ -165,6 +168,31 @@ describe("a stopped preparation is one actionable block", () => {
     // pressed one button to get unstuck, not two.
     await waitFor(() => expect(recorded.retries).toHaveLength(1));
     expect(failure.textContent).toContain("Git LFS is installed");
+  });
+
+  it("announces the failure sentence alone, with the install's output as its own polite log", async () => {
+    const pending: { release?: () => void } = {};
+    const { user } = surface(lfsMissing, {
+      installGate: new Promise<void>((resolve) => {
+        pending.release = resolve;
+      }),
+    });
+    const failure = await block();
+    const alerts = within(failure).getAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.textContent).toBe("Git LFS is needed to check out this pull request.");
+    expect(failure.getAttribute("role")).toBeNull();
+
+    await user.click(within(failure).getByRole("button", { name: "Install Git LFS for me" }));
+    const log = await waitFor(() => {
+      const found = failure.querySelector<HTMLElement>('[data-slot="install-output"]');
+      if (!found) throw new Error("no install output");
+      return found;
+    });
+    expect(log.getAttribute("role")).toBe("log");
+    expect(log.getAttribute("aria-live")).toBe("polite");
+    expect(log.closest('[role="alert"]')).toBeNull();
+    act(() => pending.release?.());
   });
 
   it("does NOT retry when the install failed, and says so plainly", async () => {

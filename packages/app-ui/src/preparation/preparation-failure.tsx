@@ -55,13 +55,17 @@ export function PreparationFailure({
         data-status={preparation.status}
         data-failure-kind={failed ? (preparation.kind ?? "unknown") : undefined}
         data-action={action}
-        role={failed ? "alert" : "status"}
         className="mx-auto flex w-full max-w-[760px] flex-col gap-4 px-8 py-6"
       >
+        {/* The live region is the SENTENCE alone. On the whole block it re-announced every
+            line an install streamed into the drawer below as part of the alert; that drawer
+            is its own polite log (`install-for-me.tsx`), outside this region. */}
         {copy ? (
-          <p className="font-medium text-base text-ink">{copy.headline}</p>
+          <p role="alert" className="font-medium text-base text-ink">
+            {copy.headline}
+          </p>
         ) : (
-          <div className="flex flex-col gap-1">
+          <div role="status" className="flex flex-col gap-1">
             <p className="font-medium text-base text-ink">Cancelled</p>
             <p className="text-ink-soft text-sm">Retry when you’re ready.</p>
           </div>
