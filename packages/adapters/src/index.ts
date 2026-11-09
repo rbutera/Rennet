@@ -663,6 +663,18 @@ export {
   type T3SettledTurn,
 } from "./t3-seat-turn";
 export {
+  INSTALL_OUTPUT_CAP,
+  type InstallOutputStream,
+  type InstallPlan,
+  type InstallPlanDeps,
+  type InstallRunResult,
+  type InstallStep,
+  type RunInstallOptions,
+  resolveInstallPlan,
+  runInstallPlan,
+  TOOL_DOCS_URL,
+} from "./tool-install";
+export {
   defaultTranscriptStoreDir,
   TRANSCRIPT_STORE_VERSION,
   TranscriptStore,

@@ -1,0 +1,256 @@
+import { constants } from "node:fs";
+import { access } from "node:fs/promises";
+import { delimiter as hostDelimiter, posix as posixPath } from "node:path";
+import { execa } from "execa";
+import type { SourceControlToolId } from "./git-failure";
+
+/**
+ * Install a missing source-control tool when the person asks (source-control-tooling
+ * spec, design decision 3: "Install for me").
+ *
+ * Two halves. `resolveInstallPlan` decides what would run: on macOS with Homebrew on the
+ * resolved PATH, the Homebrew commands; anywhere else, the manual command and a link.
+ * `runInstallPlan` runs a Homebrew plan step by step, streams every chunk of output to the
+ * caller as it arrives, stops at the first failing step, and re-probes the tool afterwards
+ * so the result carries the tool's real state rather than the installer's opinion of it.
+ *
+ * No confirmation step lives here (Rule Zero): pressing the button is the request. Homebrew
+ * installs as the user, so nothing is elevated.
+ */
+
+/** One process an install plan runs. `file` is absolute, or a name resolved on the PATH
+ *  the runner gives it. */
+export interface InstallStep {
+  readonly file: string;
+  readonly args: readonly string[];
+}
+
+export type InstallPlan =
+  | {
+      readonly plan: "brew";
+      readonly tool: SourceControlToolId;
+      readonly steps: readonly InstallStep[];
+      /** What runs, as one line a person can read and copy. */
+      readonly command: string;
+      /** Homebrew's own bin directory, put first on the PATH for every step so a later
+       *  step (`git lfs install`) finds what an earlier one installed. */
+      readonly pathPrefix: string;
+    }
+  | {
+      readonly plan: "manual";
+      readonly tool: SourceControlToolId;
+      /** The command to run by hand on this platform. */
+      readonly command: string;
+      readonly docsUrl: string;
+    };
+
+export interface InstallPlanDeps {
+  readonly platform?: NodeJS.Platform;
+  /** The PATH to look for `brew` on. Default: this process's (the daemon's resolved) PATH. */
+  readonly envPath?: string;
+  /** Where Homebrew installs itself, checked even when not on the PATH. */
+  readonly brewDirectories?: readonly string[];
+  isExecutable?(path: string): Promise<boolean>;
+}
+
+export const TOOL_DOCS_URL: Readonly<Record<SourceControlToolId, string>> = {
+  git: "https://git-scm.com/downloads",
+  "git-lfs": "https://git-lfs.com",
+};
+
+const TOOL_LABEL: Readonly<Record<SourceControlToolId, string>> = {
+  git: "Git",
+  "git-lfs": "Git LFS",
+};
+
+const DEFAULT_BREW_DIRECTORIES = ["/opt/homebrew/bin", "/usr/local/bin"] as const;
+
+async function defaultIsExecutable(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function manualCommand(tool: SourceControlToolId, platform: NodeJS.Platform): string {
+  if (tool === "git") {
+    if (platform === "darwin") return "xcode-select --install";
+    if (platform === "win32") return "winget install --id Git.Git";
+    return "sudo apt-get install git";
+  }
+  if (platform === "darwin") return "brew install git-lfs && git lfs install";
+  if (platform === "win32") return "winget install --id GitHub.GitLFS && git lfs install";
+  return "sudo apt-get install git-lfs && git lfs install";
+}
+
+/** The first executable `brew` on the PATH or in Homebrew's own directories. */
+async function findBrew(deps: InstallPlanDeps): Promise<string | null> {
+  const isExecutable = deps.isExecutable ?? defaultIsExecutable;
+  const directories = [
+    ...(deps.envPath ?? process.env.PATH ?? "").split(hostDelimiter),
+    ...(deps.brewDirectories ?? DEFAULT_BREW_DIRECTORIES),
+  ].filter((directory, index, all) => directory.length > 0 && all.indexOf(directory) === index);
+  for (const directory of directories) {
+    const candidate = posixPath.join(directory, "brew");
+    if (await isExecutable(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * What installing `tool` would run here. Homebrew on macOS only: Windows, WSL and Linux
+ * get the manual command and the docs link (design non-goal: no installers there).
+ */
+export async function resolveInstallPlan(
+  tool: SourceControlToolId,
+  deps: InstallPlanDeps = {},
+): Promise<InstallPlan> {
+  const platform = deps.platform ?? process.platform;
+  const brew = platform === "darwin" ? await findBrew(deps) : null;
+  if (brew === null) {
+    return {
+      plan: "manual",
+      tool,
+      command: manualCommand(tool, platform),
+      docsUrl: TOOL_DOCS_URL[tool],
+    };
+  }
+  const pathPrefix = posixPath.dirname(brew);
+  if (tool === "git") {
+    return {
+      plan: "brew",
+      tool,
+      steps: [{ file: brew, args: ["install", "git"] }],
+      command: "brew install git",
+      pathPrefix,
+    };
+  }
+  return {
+    plan: "brew",
+    tool,
+    steps: [
+      { file: brew, args: ["install", "git-lfs"] },
+      { file: "git", args: ["lfs", "install"] },
+    ],
+    command: "brew install git-lfs && git lfs install",
+    pathPrefix,
+  };
+}
+
+export type InstallOutputStream = "stdout" | "stderr";
+
+export interface RunInstallOptions<P> {
+  /** Every chunk of output, as it arrives. */
+  readonly onOutput?: (chunk: string, stream: InstallOutputStream) => void;
+  /** Asked once the plan has run (or not run), whatever happened. */
+  readonly reprobe: () => Promise<P>;
+  /** Cancels the running step. A cancelled install is reported as failed. */
+  readonly signal?: AbortSignal;
+  /** Extra environment layered over the inherited one. Its PATH, when given, replaces the
+   *  inherited PATH after the plan's prefix. */
+  readonly env?: Readonly<Record<string, string>>;
+}
+
+export type InstallRunResult<P> =
+  | {
+      readonly status: "installed";
+      readonly plan: InstallPlan;
+      readonly output: string;
+      readonly probe: P;
+    }
+  | {
+      readonly status: "failed";
+      readonly plan: InstallPlan;
+      /** One plain sentence; the output is the detail. */
+      readonly message: string;
+      /** The step that failed, as a person would type it. */
+      readonly failedCommand: string;
+      readonly exitCode: number | null;
+      readonly output: string;
+      readonly probe: P;
+    }
+  | {
+      readonly status: "manual";
+      readonly plan: InstallPlan;
+      readonly probe: P;
+    };
+
+/** How much installer output the result keeps. The tail, because the verdict is last. */
+export const INSTALL_OUTPUT_CAP = 64_000;
+
+function capOutput(text: string): string {
+  if (text.length <= INSTALL_OUTPUT_CAP) return text;
+  const omitted = text.length - INSTALL_OUTPUT_CAP;
+  return `… ${omitted} characters of earlier output omitted …\n${text.slice(-INSTALL_OUTPUT_CAP)}`;
+}
+
+function displayStep(step: InstallStep): string {
+  const name = posixPath.basename(step.file);
+  return [name, ...step.args].join(" ");
+}
+
+/**
+ * Run `plan`, streaming output through `options.onOutput`, then re-probe. A manual plan
+ * runs nothing and still re-probes, since the person may have installed it by hand.
+ */
+export async function runInstallPlan<P>(
+  plan: InstallPlan,
+  options: RunInstallOptions<P>,
+): Promise<InstallRunResult<P>> {
+  if (plan.plan === "manual") return { status: "manual", plan, probe: await options.reprobe() };
+
+  const inheritedPath = options.env?.PATH ?? process.env.PATH ?? "";
+  const env = {
+    ...options.env,
+    PATH: [plan.pathPrefix, inheritedPath].filter((part) => part.length > 0).join(hostDelimiter),
+  };
+  let output = "";
+  const record = (stream: InstallOutputStream) => (chunk: Buffer | string) => {
+    const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    output += text;
+    if (output.length > INSTALL_OUTPUT_CAP * 2) output = output.slice(-INSTALL_OUTPUT_CAP);
+    options.onOutput?.(text, stream);
+  };
+
+  for (const step of plan.steps) {
+    const line = `$ ${displayStep(step)}\n`;
+    output += line;
+    options.onOutput?.(line, "stdout");
+    let exitCode: number | null = null;
+    let failed = false;
+    try {
+      const child = execa(step.file, [...step.args], {
+        env,
+        reject: false,
+        shell: false,
+        stdin: "ignore",
+        buffer: false,
+        ...(options.signal === undefined ? {} : { cancelSignal: options.signal }),
+      });
+      child.stdout?.on("data", record("stdout"));
+      child.stderr?.on("data", record("stderr"));
+      const result = await child;
+      exitCode = result.exitCode ?? null;
+      failed = result.failed || exitCode !== 0;
+      // No exit code means the step never ran (not found, cancelled): say why.
+      if (result.failed && exitCode === null) record("stderr")(`${result.shortMessage}\n`);
+    } catch (error) {
+      failed = true;
+      record("stderr")(`${error instanceof Error ? error.message : String(error)}\n`);
+    }
+    if (failed) {
+      return {
+        status: "failed",
+        plan,
+        message: `${TOOL_LABEL[plan.tool]} couldn't be installed.`,
+        failedCommand: displayStep(step),
+        exitCode,
+        output: capOutput(output),
+        probe: await options.reprobe(),
+      };
+    }
+  }
+  return { status: "installed", plan, output: capOutput(output), probe: await options.reprobe() };
+}
