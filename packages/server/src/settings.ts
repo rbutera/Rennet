@@ -13,9 +13,11 @@ import {
   type WorktreeRepoIdentity,
 } from "@rennet/adapters";
 import {
+  BUILTIN_LARGE_FILES,
   type CouncilOverrideReader,
   detectLocus,
   escapePath,
+  type LargeFilesChoice,
   REVIEW_ROLE_JOB_IDS,
   type ResolvedTracker,
   type ReviewRoleOverrides,
@@ -41,8 +43,10 @@ import type {
   DaemonSettings,
   DetectedForge,
   DetectedHarness,
+  DetectedSourceControlTool,
   ForgeHostDetection,
   HarnessHostDetection,
+  LargeFileMode,
   PairedDevice,
   Project,
   ProjectMarkChoice,
@@ -123,6 +127,7 @@ export interface SettingsCompositionDeps {
           worktreePattern?: string;
           prWorktreePattern?: string;
           workspace?: string;
+          largeFiles?: string;
           tracker?: {
             kind?: string;
             projectKey?: string;
@@ -222,6 +227,22 @@ export interface SettingsCompositionDeps {
    */
   detectForgesOn?(source: ProjectSource): Promise<DetectedForge[] | null>;
   /**
+   * Ask ONE host for its `git` and `git-lfs` (source-control-tooling spec), with the same
+   * honesty as `detectForgesOn`: `null` when that host cannot be asked from here. `lfsRequired`
+   * says whether a project on that host uses Git LFS, so the Git LFS row can say whether it is
+   * needed. Absent dep ⇒ the hosts carry no source-control rows at all.
+   */
+  detectSourceControlOn?(
+    source: ProjectSource,
+    options: { readonly lfsRequired: boolean },
+  ): Promise<readonly DetectedSourceControlTool[] | null>;
+  /**
+   * Whether the repository at `repoRoot` uses Git LFS (its `.gitattributes` routes a path
+   * through `filter=lfs`). Read per REPOSITORY, never per project: a workspace's repos answer
+   * for themselves. Absent dep ⇒ rows carry no `usesLfs`, which reads as "not looked at".
+   */
+  repoUsesLfs?(repoRoot: string): Promise<boolean>;
+  /**
    * UPDATE one host's daemon (C17 cluster 6, #534) — the effect behind the Update Daemon
    * button. Same contract as `reconnectDaemon`: it resolves the host's post-update answer
    * (`null` ⇒ it did not come back), and it MAY THROW, with the message shown to the viewer
@@ -300,6 +321,12 @@ export interface SettingsComposition {
    * key that path escapes to — because refusing here would refuse the bind.
    */
   resolveWorktreePlacement(repoRoot: string): Promise<ResolvedWorktreePlacement>;
+  /**
+   * Record the project's answer to the large-file question (`checkout.largeFiles`) on the
+   * repo rung of the repository at `repoRoot`, the rung `resolveWorktreePlacement` reads it
+   * back from. Throws when that repository's config is malformed (nothing is written).
+   */
+  writeLargeFiles(repoRoot: string, mode: LargeFileMode): Promise<void>;
   /**
    * Per-host daemon status (C17, #485) for exactly the hosts `get().daemonHosts` enumerates
    * — the SAME enumeration, so the surface can never show a card with no status or a status
@@ -583,6 +610,8 @@ const PROJECT_PREF: Record<
     /** A filesystem LOCATION: expanded and made absolute against the data dir before it
      *  is persisted, which the caller does because only it holds the data dir. */
     readonly expandsRoot?: boolean;
+    /** A value that means "unset" for this key: writing it drops the entry, like a blank. */
+    readonly resetsOn?: string;
   }
 > = {
   glyph: { field: "glyph", validate: SETTINGS_REGISTRY.projectGlyph.validate },
@@ -615,6 +644,13 @@ const PROJECT_PREF: Record<
   // The workspace vocabulary is enforced by the SAME validator the binding resolves by,
   // so `workspace: "solo"` is refused at the write instead of silently reading `share`.
   workspace: { field: "workspace", validate: SETTINGS_REGISTRY.workspace.validate },
+  // The large-file choice (`checkout.largeFiles`). `ask` is the builtin, not an answer, so
+  // writing it is a RESET: the entry is dropped and the next checkout asks again.
+  largeFiles: {
+    field: "largeFiles",
+    validate: SETTINGS_REGISTRY.largeFiles.validate,
+    resetsOn: BUILTIN_LARGE_FILES,
+  },
   // The tracker vocabulary is enforced by the SAME validator retrieval resolves through,
   // so `kind: "jra"` is refused at the write instead of resolving to nothing later.
   trackerKind: { field: "trackerKind", validate: SETTINGS_REGISTRY.trackerKind.validate },
@@ -713,6 +749,13 @@ function trackerKindOffer(value: string | undefined): TrackerKind | undefined {
 function checkedPattern(kind: "branch" | "pull-request", pattern: string): string {
   assertWorktreePattern(kind, pattern);
   return pattern;
+}
+
+/** A STORED large-file choice as a ladder offer: only an answer (`download`/`skip`) is
+ *  offered. A hand-edited `largeFiles: "lazy"`, or a stored `ask`, falls back to the builtin
+ *  `ask` instead of failing the settings read. */
+function largeFilesOffer(value: string | undefined): LargeFilesChoice | undefined {
+  return value === "download" || value === "skip" ? value : undefined;
 }
 
 /** A STORED workspace mode as a ladder offer, on the same terms as the two above: a
@@ -842,6 +885,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       worktreePattern?: string;
       prWorktreePattern?: string;
       workspace?: string;
+      largeFiles?: string;
       tracker?: { kind?: string; projectKey?: string; baseUrl?: string; tokenEnv?: string };
     } | null,
     /**
@@ -916,6 +960,13 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         resolve<WorkspaceMode>(SETTINGS_REGISTRY.workspace, {
           global: workspaceOffer(globalWorktrees.workspace),
           repo: workspaceOffer(config?.workspace),
+        }),
+      ),
+      // `checkout.largeFiles`: the project's own answer, or the builtin `ask`. Repo rung only
+      // — the choice is made in the project's own modal, so no host answer exists to inherit.
+      largeFiles: layered(
+        resolve<LargeFilesChoice>(SETTINGS_REGISTRY.largeFiles, {
+          repo: largeFilesOffer(config?.largeFiles),
         }),
       ),
       // ONE law for the whole section, the SAME one retrieval resolves through
@@ -1030,6 +1081,8 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     /** The operation's facts reader. Defaults to a fresh one, which is exactly right for
      *  a single-row resolution and shares nothing across operations. */
     readFacts: (repoPath: string) => Promise<WorktreeRepoFacts | undefined> = factsReader(),
+    /** The operation's Git LFS reader, on the same terms as `readFacts`. */
+    readUsesLfs: (repoPath: string) => Promise<boolean | undefined> = lfsReader(),
   ): Promise<SettingsProject> => {
     const configState = deps.loadConfigState(target.repoKey);
     const configMalformed = configState.status === "malformed";
@@ -1063,7 +1116,62 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       // rest of the row already follows.
       prefs,
       ...(preview ? { worktreePreview: preview } : {}),
+      // Whether THIS repository uses Git LFS, asked of the row's own repository. A read that
+      // fails says nothing rather than "no".
+      ...(await rowUsesLfs(target.repoPath, readUsesLfs)),
     };
+  };
+
+  /**
+   * Whether a repository uses Git LFS, asked AT MOST ONCE per repository per operation.
+   * Each answer is a git read of `.gitattributes` (two, when the default branch says no), so
+   * a read that asked per row and again per host — and again for a repository two projects
+   * both include — paid for the same answer several times over. `undefined` when not asked
+   * (no probe wired) or the read failed: never a guessed "no".
+   */
+  const lfsReader = (): ((repoPath: string) => Promise<boolean | undefined>) => {
+    const answers = new Map<string, Promise<boolean | undefined>>();
+    return (repoPath) => {
+      const cached = answers.get(repoPath);
+      if (cached !== undefined) return cached;
+      const pending = deps.repoUsesLfs
+        ? deps.repoUsesLfs(repoPath).catch(() => undefined)
+        : Promise.resolve(undefined);
+      answers.set(repoPath, pending);
+      return pending;
+    };
+  };
+
+  /** `{ usesLfs }` for one repository, or nothing when it was not (or could not be) asked. */
+  const rowUsesLfs = async (
+    repoPath: string,
+    readUsesLfs: (repoPath: string) => Promise<boolean | undefined>,
+  ): Promise<{ usesLfs?: boolean }> => {
+    const usesLfs = await readUsesLfs(repoPath);
+    return usesLfs === undefined ? {} : { usesLfs };
+  };
+
+  /**
+   * Whether any repository of a project on `source` uses Git LFS — the `required` fact on
+   * that host's Git LFS row. Every repository of every project there is asked by its own
+   * path, each at most once through the operation's reader; the first `true` answers.
+   */
+  const hostUsesLfs = async (
+    projects: readonly Project[],
+    source: ProjectSource,
+    readUsesLfs: (repoPath: string) => Promise<boolean | undefined>,
+  ) => {
+    if (!deps.repoUsesLfs) return false;
+    const asked = new Set<string>();
+    for (const project of projects) {
+      if (project.source !== source) continue;
+      for (const target of await targetsFor(project).catch(() => [])) {
+        if (asked.has(target.repoPath)) continue;
+        asked.add(target.repoPath);
+        if ((await readUsesLfs(target.repoPath)) === true) return true;
+      }
+    }
+    return false;
   };
 
   // Re-resolve the LIVE target for a repo-scoped write: the project must still exist
@@ -1184,6 +1292,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       // repositories open spawned sixty gits in one breath, and on a WSL daemon sixty
       // distro round trips. Four in flight keeps the win and bounds the burst.
       const readFacts = factsReader();
+      const readUsesLfs = lfsReader();
       for (const project of allProjects) {
         const targets = await targetsFor(project);
         const multiRepo = targets.length > 1;
@@ -1191,7 +1300,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         for (const target of targets) {
           if (emittedRepoPaths.has(target.repoPath)) continue;
           emittedRepoPaths.add(target.repoPath);
-          rows.push(() => resolveRow(project, target, multiRepo, repoKeys, readFacts));
+          rows.push(() => resolveRow(project, target, multiRepo, repoKeys, readFacts, readUsesLfs));
         }
       }
       // Results land at their own index, so the view's row order is the push order still.
@@ -1245,7 +1354,24 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         pattern: prefs.worktreePattern.value,
         prPattern: prefs.prWorktreePattern.value,
         workspace: prefs.workspace.value as WorkspaceMode,
+        largeFiles: (prefs.largeFiles?.value ?? BUILTIN_LARGE_FILES) as LargeFilesChoice,
       };
+    },
+
+    writeLargeFiles: async (repoRoot: string, mode: LargeFileMode): Promise<void> => {
+      // The same target resolution the placement read takes, so the answer lands on exactly
+      // the repo rung the next checkout reads. A malformed config REFUSES (the store throws),
+      // and the caller reports that rather than a choice that went nowhere.
+      const target = (await resolveRepoTarget(repoRoot)) ?? {
+        repoPath: repoRoot,
+        repoKey: escapePath(repoRoot),
+        repoRoot,
+      };
+      deps.writeRepoValue({
+        repoKey: target.repoKey,
+        field: "largeFiles",
+        value: SETTINGS_REGISTRY.largeFiles.validate(mode),
+      });
     },
 
     daemonStatus: async (): Promise<DaemonHostStatus[]> => {
@@ -1300,15 +1426,32 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
 
     forgeHosts: async (): Promise<ForgeHostDetection[]> => {
       const hosts: ForgeHostDetection[] = [];
-      for (const host of daemonHostSections(deps.listProjects())) {
+      const projects = deps.listProjects();
+      // One Git LFS reader for every host of this read: a repository is asked once.
+      const readUsesLfs = lfsReader();
+      for (const host of daemonHostSections(projects)) {
         // A detection that REJECTS is a host that could not be asked, exactly like a dep that
         // resolves null — either way nothing was observed there, so nothing is claimed.
         const detected = await deps.detectForgesOn?.(host.source).catch(() => null);
-        hosts.push(
-          detected
-            ? { source: host.source, asked: true, detected }
-            : { source: host.source, asked: false, detected: [] },
-        );
+        if (!detected) {
+          hosts.push({ source: host.source, asked: false, detected: [] });
+          continue;
+        }
+        // `git` and `git-lfs` ride the same host read (source-control-tooling spec). Git LFS
+        // is REQUIRED on a host when any repository of a project there uses it.
+        const sourceControl = deps.detectSourceControlOn
+          ? await deps
+              .detectSourceControlOn(host.source, {
+                lfsRequired: await hostUsesLfs(projects, host.source, readUsesLfs),
+              })
+              .catch(() => null)
+          : null;
+        hosts.push({
+          source: host.source,
+          asked: true,
+          detected,
+          ...(sourceControl ? { sourceControl: [...sourceControl] } : {}),
+        });
       }
       return hosts;
     },
@@ -1576,7 +1719,9 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       // declaration the RESOLVER reads by, so the write and the read cannot disagree about
       // what a legal value is.
       const checked =
-        input.value === null || input.value === "" ? null : pref.validate(input.value);
+        input.value === null || input.value === "" || input.value === pref.resetsOn
+          ? null
+          : pref.validate(input.value);
       // A location is stored EXPANDED AND ABSOLUTE (D1): `~/trees` becomes this user's
       // home, a relative value resolves against the data dir, and `~someone/…` is refused
       // with its reason rather than persisted as a literal `~someone` directory.

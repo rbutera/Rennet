@@ -4,7 +4,7 @@ import { useState } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { BridgeProvider } from "../data";
 import { useRennetStore } from "../store";
-import { act, mount, waitFor } from "../test/dom";
+import { act, mount, waitFor, within } from "../test/dom";
 import { fixtureBoardRead } from "../test/fixtures/boards";
 import { MemoryBridge } from "../test/memory-bridge";
 import { useLensBoards } from "./board-data";
@@ -211,7 +211,45 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
     if (!failedTab) throw new Error("failed Sequence lens is not selectable");
     await user.click(failedTab);
 
-    expect(container.querySelector("[data-kind=board-failed]")?.textContent).toContain(reason);
+    // A plain headline, and the daemon's exact words one click away behind Details — never
+    // on the page until asked for.
+    const failed = container.querySelector<HTMLElement>("[data-kind=board-failed]");
+    if (!failed) throw new Error("no failed board");
+    expect(failed.textContent).toContain("This lens failed to generate.");
+    expect(failed.textContent).not.toContain(reason);
+    await user.click(within(failed).getByText("Details"));
+    expect(failed.textContent).toContain(reason);
+  });
+
+  it("says no coding agent is installed, not the daemon's seat text, when that is why", async () => {
+    // The e2e sighting: "lens-draft-flagged resolved to no runnable review seat (no claude
+    // harness; no codex harness)" glued onto the headline.
+    const reason =
+      "lens-draft-flagged resolved to no runnable review seat (no claude harness; no codex harness)";
+    const { container, user } = mount(
+      <BridgeProvider
+        bridge={
+          new MemoryBridge({
+            "board.read": (input) =>
+              input.lens === "sequence"
+                ? { board: null, failure: reason }
+                : fixtureBoardRead(input),
+          })
+        }
+      >
+        <BoardHarness generation="gen1" generations={["gen1"]} initialLens="design" />
+      </BridgeProvider>,
+    );
+    await settled(container);
+    const failedTab = container.querySelector<HTMLButtonElement>("[data-lens=sequence]");
+    if (!failedTab) throw new Error("failed Sequence lens is not selectable");
+    await user.click(failedTab);
+    const failed = container.querySelector<HTMLElement>("[data-kind=board-failed]");
+    if (!failed) throw new Error("no failed board");
+    expect(failed.querySelector("p")?.textContent).toBe(
+      "No coding agent is installed, so Rennet can't draft this lens. Install Claude Code or Codex.",
+    );
+    expect(failed.textContent).not.toContain("runnable review seat");
   });
 
   it.each([
@@ -254,9 +292,11 @@ describe("LensBoardView — board document, switchers, drill-down", () => {
     if (!failedTab) throw new Error("failed Noise lens is not selectable");
     await user.click(failedTab);
 
-    const failed = container.querySelector("[data-kind=board-failed]");
-    expect(failed?.getAttribute("data-classification")).toBe(classification);
-    expect(failed?.textContent).toContain(reason);
+    const failed = container.querySelector<HTMLElement>("[data-kind=board-failed]");
+    if (!failed) throw new Error("no failed board");
+    expect(failed.getAttribute("data-classification")).toBe(classification);
+    await user.click(within(failed).getByText("Details"));
+    expect(failed.textContent).toContain(reason);
     const promise = "Another drafting attempt can still produce this board";
     expect(failed?.textContent?.includes(promise)).toBe(saysAnotherAttempt);
   });

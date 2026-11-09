@@ -19,13 +19,17 @@ import { homedir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  type DetectedSourceControlTool as AdapterSourceControlTool,
   AskLogStore,
+  absoluteGitDir,
   applyVisibilitySwitch,
   BoardMetaStore,
   CLAUDE_TESTED_RANGE,
+  type ClassifiedGitFailure,
   type ClaudeHarnessResult,
   type CodexAvailability,
   captureRangePatchset,
+  classifyGitFailure,
   cleanupWorktree,
   createClaudeCiRefinementTurn,
   createClaudeHarness,
@@ -52,6 +56,7 @@ import {
   defaultWorktreePlacement,
   deriveProjectDraft,
   detectedLogoExists,
+  detectSourceControlTools,
   discoverClaude,
   discoverCodex,
   discoverProject,
@@ -77,9 +82,14 @@ import {
   type GitLabForgeCommandRunner,
   type GitLabPrSubmissionCommandRunner,
   gitForRepoFactory,
+  type InstallPlanDeps,
   instrumentCodexExecutor,
   isGitHubNetworkError,
+  LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE,
+  LARGE_FILES_NOT_REGISTERED_NOTE,
+  LargeFileSkipIndex,
   type ListWorkspacesOptions,
+  largeFileSkipIndexPath,
   listDir,
   listWorkspaces,
   loadConventionCatalogue,
@@ -113,12 +123,15 @@ import {
   repoKeyForRoot,
   repoKeyOf,
   repositoryIdentity,
+  repoUsesLfs,
   resolveForgeRemote,
   resolveGitHubAuth,
+  resolveInstallPlan,
   resolvePrimaryBase,
   resolveTrackerConfig,
   detectForges as runForgeDetection,
   runGitHubDeviceFlow,
+  runInstallPlan,
   runPrWorktreeSetup,
   runRelatedContextRetrieval,
   SessionStore,
@@ -129,11 +142,13 @@ import {
   saveConventionCatalogue,
   scoutSettingsOffers,
   snapshotStoreFor,
+  sourceControlDetectionDepsFor,
   TranscriptStore,
   type TurnMetric,
   validateGitHubToken,
   type WorkspaceSessionRef,
   type WorktreeClaim,
+  type WorktreePlacement,
   type WorktreeRecord,
   type WorktreeRepoFacts,
   withRepoPref,
@@ -164,6 +179,7 @@ import {
   type HarnessTurnResult,
   HOST_LOCUS,
   handoffDispositionsFromProjection,
+  type LargeFilesChoice,
   type LintContext,
   type Locus,
   LocusDistroMismatchError,
@@ -194,6 +210,7 @@ import type {
   CouncilHarnessId,
   DetectedForge,
   DetectedHarness,
+  DetectedSourceControlTool,
   DossierItem,
   DraftBoard,
   FlaggedReview,
@@ -201,6 +218,7 @@ import type {
   Generation,
   GitHubAuthStatus,
   GitHubConnectPoll,
+  LargeFileMode,
   LensBoard,
   LensKind,
   LensLane,
@@ -208,6 +226,7 @@ import type {
   Patchset,
   Project,
   ProjectProcessEvent,
+  ProjectProgressEvent,
   ProjectSource,
   Review,
   RoundEvent,
@@ -215,6 +234,9 @@ import type {
   RoundReportHandoff,
   SessionModel,
   SessionPreparation,
+  SourceControlToolId,
+  ToolInstallOutput,
+  ToolInstallResult,
 } from "@rennet/protocol";
 import {
   canonicalize,
@@ -240,10 +262,13 @@ import {
 import { seatBoardServer } from "./board/seat-address";
 import { type BoardsRuntime, createBoardsRuntime } from "./boards/boards-runtime";
 import {
+  bindWouldCreateCheckout,
+  checkoutLargeFileMode,
   comparablePath,
   decideBoundWorkspace,
   inRepoSpelling,
   repinBoundWorkspace,
+  sameDirectory,
 } from "./bound-workspace";
 import { attachCiSignal } from "./ci-signal";
 import {
@@ -1243,6 +1268,44 @@ export function createCompositionBoardsForReview(input: {
   };
 }
 
+/**
+ * A checkout the bind could not create, already classified (review-preparation-reliability
+ * D5): the message is the plain sentence, never git's words, and `classified` carries the
+ * kind, the recovery action and the raw output for the preparation's failure block.
+ */
+export class ClassifiedWorkspaceError extends Error {
+  readonly classified: ClassifiedGitFailure;
+  constructor(classified: ClassifiedGitFailure) {
+    super(classified.message);
+    this.name = "ClassifiedWorkspaceError";
+    this.classified = classified;
+  }
+}
+
+/**
+ * A bind refused because the large-file question is still open for its review
+ * (large-file-checkout spec): the repository uses Git LFS, its project has not chosen, and
+ * the bind would CREATE a checkout. Only a preparation can ask the question, so a bind
+ * reached any other way — the chat thread, a handoff, a transcript read, any utility turn —
+ * must not check anything out under a mode nobody chose. Its message is plain words; the
+ * answer (`session.chooseLargeFileMode`, or the setting) lets the next bind proceed.
+ */
+export class LargeFileChoicePendingError extends Error {
+  /**
+   * `inSession`: whether a session's preparation owns the review. Only a preparation can put
+   * the question to the reviewer, so a review opened outside one (`review.openPr`, a capture
+   * with no session) is pointed at the setting that answers it instead.
+   */
+  constructor(inSession = true) {
+    super(
+      inSession
+        ? "This review is waiting for you to choose whether to download or skip large files."
+        : "Choose whether to download or skip large files for this project in Settings → Projects.",
+    );
+    this.name = "LargeFileChoicePendingError";
+  }
+}
+
 export interface RennetServerOptions {
   /**
    * The per-user data directory (Electron passes app.getPath("userData")). The SQLite store,
@@ -1256,7 +1319,7 @@ export interface RennetServerOptions {
   /** The repository-chooser fallback (Electron's directory dialog); used only when RENNET_TEST_REPO is unset. */
   readonly chooseRepositoryFallback?: () => Promise<string | null>;
   /** Broadcast a background-rehydration progress event to every client (Electron: every open window). */
-  readonly broadcastProgress?: (commandId: string, event: ProjectProcessEvent) => void;
+  readonly broadcastProgress?: (commandId: string, event: ProjectProgressEvent) => void;
   /** Open a path in the OS (Electron's shell.openPath), the editor-launch fallback; resolves whether it opened. */
   readonly openPath?: (absPath: string) => Promise<boolean>;
   /** The outbound HTTP transport for GitHub egress (the daemon's global fetch). */
@@ -1297,6 +1360,19 @@ export interface RennetServerOptions {
   readonly testHarnessPort?: HarnessPort;
   /** Test-composition seam for the Codex utility executor (the council's Codex seats). */
   readonly testCodexExecutor?: CodexExecutor;
+  /**
+   * Source-control tooling seams (review-preparation-reliability). The production daemon
+   * supplies neither: `detect` defaults to the real per-locus `git`/`git-lfs` probes, and
+   * `installPlanDeps` to the daemon's own PATH and Homebrew's directories. A test supplies
+   * them so the answer does not depend on what the machine running it has installed.
+   */
+  readonly sourceControl?: {
+    readonly detect?: (
+      locus: Locus,
+      options: { readonly lfsRequired?: boolean },
+    ) => Promise<readonly AdapterSourceControlTool[]>;
+    readonly installPlanDeps?: InstallPlanDeps;
+  };
   /**
    * Test-composition seam for the T3 SIDECAR's seat runtime. Board seats have no other
    * backend (session-bound-workspace 5.7), so a hermetic proof of the board pipeline
@@ -1357,8 +1433,12 @@ export interface RennetServer {
   readonly wsPort: number;
   /** The host the WS listener bound (`127.0.0.1` by default, or the configured `daemon.listen.host`, #380). */
   readonly wsHost: string;
-  /** Quiesce live turns, close the watcher, close rehydration, close the store, close the WS listener. Idempotent. */
-  readonly shutdown: () => void;
+  /**
+   * Quiesce live turns, close the watcher, close rehydration, close the store, close the WS
+   * listener, and abort every running `tools.install`. Idempotent. Settles once every aborted
+   * installer has ended; the rest of the shutdown is synchronous or fire-and-forget as before.
+   */
+  readonly shutdown: () => Promise<void>;
   /**
    * The boards runtime for a review project (B4) — one embedded board service per
    * project root, its appends broadcast on the WS push path (raw to loopback,
@@ -2035,6 +2115,459 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     }).catch(() => null);
   }
 
+  // `git` and `git-lfs` on one execution locus (source-control-tooling spec), probed with the
+  // daemon's own resolved environment — the one its checkouts run under. The test seam
+  // answers instead when a composition supplies one.
+  //
+  // Every HOST probe also tells the skip-mode overrides what it saw (`observeHostGitLfs`), so
+  // the settings detection, the large-file question's own probe and Install for me's re-probe
+  // all keep them in step with the machine, not only the install.
+  async function detectSourceControlOnLocus(
+    locus: Locus,
+    detectOptions: { readonly lfsRequired?: boolean } = {},
+  ): Promise<readonly AdapterSourceControlTool[]> {
+    const tools = options.sourceControl?.detect
+      ? await options.sourceControl.detect(locus, detectOptions)
+      : await detectSourceControlTools(await sourceControlDetectionDepsFor(locus), detectOptions);
+    if (locus.kind === "host") {
+      observeHostGitLfs(tools.find((tool) => tool.id === "git-lfs")?.status);
+    }
+    return tools;
+  }
+
+  /** The wire row for one detected tool: the same states, and no host path. */
+  function sourceControlRow(tool: AdapterSourceControlTool): DetectedSourceControlTool {
+    return {
+      id: tool.id,
+      version: tool.version,
+      status: tool.status,
+      ...(tool.required === undefined ? {} : { required: tool.required }),
+      detail: tool.detail,
+    };
+  }
+
+  /** The locus a settings host `source` names, or `null` for one this daemon cannot probe. */
+  function locusOfSource(source: ProjectSource): Locus | null {
+    if (source === "local") return HOST_LOCUS;
+    if (source.startsWith("wsl:")) return { kind: "wsl", distro: source.slice("wsl:".length) };
+    return null;
+  }
+
+  // Per-host `git`/`git-lfs` for the Source Control rows (2.6), with the same honesty as the
+  // forge probe: a host this daemon cannot enter reads unasked (`null`), never this machine's.
+  async function detectSourceControlOn(
+    source: ProjectSource,
+    detectOptions: { readonly lfsRequired: boolean },
+  ): Promise<DetectedSourceControlTool[] | null> {
+    const locus = locusOfSource(source);
+    if (locus === null) return null;
+    const tools = await detectSourceControlOnLocus(locus, detectOptions).catch(() => null);
+    return tools === null ? null : tools.map(sourceControlRow);
+  }
+
+  /** Whether Git LFS answers on `locus` — what the large-file question offers Install by. */
+  async function gitLfsAvailableOn(locus: Locus): Promise<boolean> {
+    return (await gitLfsKnownOn(locus)) === true;
+  }
+
+  /**
+   * Whether Git LFS is installed on `locus`, only when the probe could TELL: `true` when it
+   * answers, `false` on a definite `not-installed`, `undefined` when the probe was unreachable,
+   * timed out or threw. The skip-mode overrides move only on a definite answer.
+   */
+  async function gitLfsKnownOn(locus: Locus): Promise<boolean | undefined> {
+    const tools = await detectSourceControlOnLocus(locus).catch(() => undefined);
+    const status = tools?.find((tool) => tool.id === "git-lfs")?.status;
+    if (status === "available") return true;
+    if (status === "not-installed") return false;
+    return undefined;
+  }
+
+  /**
+   * Whether the repository at `root` uses Git LFS, for the settings row and the host's Git
+   * LFS row (2.6): its `.gitattributes` at the default branch the remote names, or in the
+   * working tree. Either one routing a path through `filter=lfs` is a yes — a checkout of
+   * either tree would run the filter.
+   */
+  async function repositoryUsesLfs(root: string): Promise<boolean> {
+    if (await repoUsesLfs(root, { ref: "origin/HEAD", git: gitForRepo(root) })) return true;
+    return repoUsesLfs(root);
+  }
+
+  /**
+   * The running `tools.install` runs, ONE per tool and locus. A second Install for me for the
+   * same tool on the same machine — a second window, or a double click — JOINS the run that is
+   * already going instead of starting a second Homebrew: it hears the output so far and the
+   * rest as it streams, under its own command id, and gets the same result. Any command id of
+   * a run cancels it, and shutting the server down aborts every run and waits for each to end,
+   * so no installer outlives the daemon that started it.
+   */
+  interface ToolInstallRun {
+    readonly controller: AbortController;
+    readonly commandIds: Set<string>;
+    /** What has streamed so far, for a command that joins late. Capped: exactly the last
+     *  `TOOL_INSTALL_REPLAY_CAP` characters are kept, the oldest chunk trimmed partially. */
+    readonly streamed: { stream: "stdout" | "stderr"; chunk: string }[];
+    streamedBytes: number;
+    /** The plan's command once it is resolved, carried on every event so a reviewer sees what
+     *  is running while it runs (source-control-tooling: "the command SHALL be shown"). */
+    command?: string;
+    readonly result: Promise<ToolInstallResult>;
+  }
+  const toolInstallRuns = new Map<string, ToolInstallRun>();
+  /** Install retries waiting for a cancelled run to die, by their command id. */
+  const pendingInstallRetries = new Map<string, AbortController>();
+  /** The client's live drawer keeps exactly this many characters of output (`tool-install.ts`
+   *  `LIVE_OUTPUT_CAP`). The replay keeps the same tail, so a `replace` snapshot after a
+   *  reconnect never shows the reviewer LESS than they already had. */
+  const TOOL_INSTALL_REPLAY_CAP = 64_000;
+  let toolInstallsClosed = false;
+  const toolInstallKey = (tool: SourceControlToolId, locus: Locus): string =>
+    `${tool}@${locus.kind === "wsl" ? `wsl:${locus.distro}` : "host"}`;
+
+  /**
+   * Every `tools.install` command still waiting on its verdict, by command id — whether it
+   * started a run, joined one, or queued behind a dying one. The SAME command id sent again
+   * (a client whose connection dropped mid-install asking again) is that command, not a new
+   * install: it re-joins this promise and hears the output so far as one snapshot.
+   */
+  type ToolInstallVerdict = ToolInstallResult;
+  const toolInstallsByCommandId = new Map<string, Promise<ToolInstallVerdict>>();
+  /**
+   * The verdicts of FINISHED installs, by every command id that was waiting on one, kept for
+   * a while so a client that lost its connection before the answer reached it can still ask.
+   * Without this a finished run left no trace, and the same command id asked again ran the
+   * installer a second time. Bounded in time and size: a client reconnects in seconds, and a
+   * command id older than this is answered as a fresh request (as after a daemon restart).
+   */
+  const finishedToolInstalls = new Map<
+    string,
+    {
+      readonly outcome:
+        | { readonly ok: true; readonly result: ToolInstallVerdict }
+        | { readonly ok: false; readonly error: unknown };
+      readonly at: number;
+    }
+  >();
+  const FINISHED_TOOL_INSTALL_TTL_MS = 10 * 60_000;
+  const FINISHED_TOOL_INSTALL_CAP = 32;
+
+  function finishedToolInstall(commandId: string) {
+    const entry = finishedToolInstalls.get(commandId);
+    if (entry === undefined) return undefined;
+    if (Date.now() - entry.at > FINISHED_TOOL_INSTALL_TTL_MS) {
+      finishedToolInstalls.delete(commandId);
+      return undefined;
+    }
+    return entry;
+  }
+
+  function retainToolInstall(
+    commandId: string,
+    outcome: NonNullable<ReturnType<typeof finishedToolInstall>>["outcome"],
+  ): void {
+    const now = Date.now();
+    finishedToolInstalls.delete(commandId);
+    finishedToolInstalls.set(commandId, { outcome, at: now });
+    // Oldest first (insertion order): drop what has expired, then what is over the cap.
+    for (const [id, entry] of finishedToolInstalls) {
+      const expired = now - entry.at > FINISHED_TOOL_INSTALL_TTL_MS;
+      if (!expired && finishedToolInstalls.size <= FINISHED_TOOL_INSTALL_CAP) break;
+      finishedToolInstalls.delete(id);
+    }
+  }
+
+  function emitToolInstallOutput(
+    commandId: string,
+    tool: SourceControlToolId,
+    stream: "stdout" | "stderr",
+    chunk: string,
+    command?: string,
+    replace?: true,
+  ): void {
+    const event = {
+      kind: "tool-install-output",
+      tool,
+      stream,
+      chunk,
+      ...(command === undefined ? {} : { command }),
+      ...(replace === undefined ? {} : { replace }),
+    } as const;
+    options.broadcastProgress?.(commandId, event);
+    wsListener?.broadcastProgress(commandId, event);
+  }
+
+  /**
+   * Append `chunk` to the run's replay and trim it to exactly the last
+   * `TOOL_INSTALL_REPLAY_CAP` characters. Whole chunks go first; the oldest survivor is cut
+   * partially, so the tail is the same one the client's drawer keeps — trimming only whole
+   * chunks kept less than the client showed, and a reconnect's snapshot shrank its drawer.
+   */
+  function keepReplayTail(run: ToolInstallRun, stream: "stdout" | "stderr", chunk: string): void {
+    run.streamed.push({ stream, chunk });
+    run.streamedBytes += chunk.length;
+    while (run.streamedBytes > TOOL_INSTALL_REPLAY_CAP) {
+      const oldest = run.streamed[0];
+      if (oldest === undefined) break;
+      const excess = run.streamedBytes - TOOL_INSTALL_REPLAY_CAP;
+      if (oldest.chunk.length <= excess) {
+        run.streamed.shift();
+        run.streamedBytes -= oldest.chunk.length;
+      } else {
+        oldest.chunk = oldest.chunk.slice(excess);
+        run.streamedBytes -= excess;
+      }
+    }
+  }
+
+  /**
+   * Send `commandId` the run's output so far as ONE snapshot that replaces whatever its
+   * listener holds: a command joining late has heard nothing, and one re-joining after a
+   * dropped connection has heard part of it, so appending would lose or repeat the gap.
+   */
+  function replayToolInstall(commandId: string, tool: SourceControlToolId, run: ToolInstallRun) {
+    emitToolInstallOutput(
+      commandId,
+      tool,
+      "stdout",
+      run.streamed.map((entry) => entry.chunk).join(""),
+      run.command,
+      true,
+    );
+  }
+
+  /**
+   * Install a missing source-control tool on one locus (source-control-tooling spec, 2.4):
+   * resolve the platform's plan, run it with every chunk of output streamed as a
+   * `tool-install-output` event under `commandId`, and re-probe. A WSL distro gets the
+   * manual plan for Linux (no installer runs there, design non-goal).
+   *
+   * A successful install clears every recorded front-door checkout failure, so the next bind
+   * attempts the checkout instead of reporting the failure the install just fixed.
+   *
+   * A command id is ONE request, however often it arrives: one still waiting re-joins its
+   * own answer (with a snapshot of the output so far), and one that has finished gets its
+   * retained verdict back — the installer never runs twice for it.
+   *
+   * `rejoin` is a client asking after a dropped connection. It only ever joins or reads back:
+   * a command id the daemon knows nothing of (it restarted, or the verdict aged out of the
+   * retained set) answers `{ outcome: "unknown" }` and starts NOTHING. Without `rejoin` an
+   * unknown id is a fresh request, exactly as before, so an older client is unaffected.
+   */
+  function installSourceControlTool(input: {
+    readonly tool: SourceControlToolId;
+    readonly locus: Locus;
+    readonly commandId: string;
+    readonly rejoin?: true | undefined;
+  }): Promise<ToolInstallOutput> {
+    const finished = finishedToolInstall(input.commandId);
+    if (finished !== undefined) {
+      return finished.outcome.ok
+        ? Promise.resolve({ result: finished.outcome.result })
+        : Promise.reject(finished.outcome.error);
+    }
+    const waiting = toolInstallsByCommandId.get(input.commandId);
+    if (waiting !== undefined) {
+      for (const run of toolInstallRuns.values()) {
+        if (run.commandIds.has(input.commandId))
+          replayToolInstall(input.commandId, input.tool, run);
+      }
+      return waiting.then((result) => ({ result }));
+    }
+    if (input.rejoin === true) return Promise.resolve({ outcome: "unknown" });
+    const verdict = startOrJoinToolInstall(input);
+    toolInstallsByCommandId.set(input.commandId, verdict);
+    void verdict
+      .then(
+        (result) => retainToolInstall(input.commandId, { ok: true, result }),
+        (error: unknown) => retainToolInstall(input.commandId, { ok: false, error }),
+      )
+      .finally(() => {
+        if (toolInstallsByCommandId.get(input.commandId) === verdict) {
+          toolInstallsByCommandId.delete(input.commandId);
+        }
+      });
+    return verdict.then((result) => ({ result }));
+  }
+
+  function startOrJoinToolInstall(input: {
+    readonly tool: SourceControlToolId;
+    readonly locus: Locus;
+    readonly commandId: string;
+  }): Promise<ToolInstallVerdict> {
+    const key = toolInstallKey(input.tool, input.locus);
+    const running = toolInstallRuns.get(key);
+    // A run that was CANCELLED is only dying (its installer gets SIGKILL after a grace): never
+    // join it, or a reviewer who pressed Install for me again just hears the cancellation.
+    // Wait for it to end, then start a fresh one — joining any fresh run another caller
+    // started meanwhile, since this calls back in.
+    if (running?.controller.signal.aborted === true && !toolInstallsClosed) {
+      // The retry is registered while it waits, so cancelling it (by its own command id) is
+      // honoured before any new installer starts; it then answers with the dying run's
+      // cancelled result rather than installing anyway.
+      const waiter = new AbortController();
+      pendingInstallRetries.set(input.commandId, waiter);
+      return running.result
+        .catch(() => undefined)
+        .then((dyingResult) => {
+          pendingInstallRetries.delete(input.commandId);
+          if (toolInstallRuns.get(key) === running) toolInstallRuns.delete(key);
+          if (waiter.signal.aborted) {
+            // Cancelled while waiting: start no installer, whatever the dying run did (it may
+            // have rejected). An already-aborted run answers cancelled without spawning.
+            if (dyingResult !== undefined) return dyingResult;
+            const cancelled = new AbortController();
+            cancelled.abort("Cancelled by reviewer.");
+            return runSourceControlInstall(input, cancelled.signal, (stream, chunk) =>
+              emitToolInstallOutput(input.commandId, input.tool, stream, chunk),
+            );
+          }
+          return startOrJoinToolInstall(input);
+        });
+    }
+    if (running !== undefined) {
+      if (!running.commandIds.has(input.commandId)) {
+        running.commandIds.add(input.commandId);
+        replayToolInstall(input.commandId, input.tool, running);
+      }
+      return running.result;
+    }
+    const controller = new AbortController();
+    // A server already shutting down starts nothing: the run is cancelled before its first step.
+    if (toolInstallsClosed) controller.abort("Rennet is shutting down.");
+    const commandIds = new Set([input.commandId]);
+    const streamed: ToolInstallRun["streamed"] = [];
+    const run: ToolInstallRun = {
+      controller,
+      commandIds,
+      streamed,
+      streamedBytes: 0,
+      result: Promise.resolve().then(() =>
+        runSourceControlInstall(
+          input,
+          controller.signal,
+          (stream, chunk) => {
+            keepReplayTail(run, stream, chunk);
+            for (const commandId of commandIds) {
+              emitToolInstallOutput(commandId, input.tool, stream, chunk, run.command);
+            }
+          },
+          (command) => {
+            // Said once, before the installer prints anything: what is about to run.
+            run.command = command;
+            for (const commandId of commandIds) {
+              emitToolInstallOutput(commandId, input.tool, "stdout", "", command);
+            }
+          },
+        ),
+      ),
+    };
+    toolInstallRuns.set(key, run);
+    void run.result
+      .finally(() => {
+        if (toolInstallRuns.get(key) === run) toolInstallRuns.delete(key);
+      })
+      .catch(() => undefined);
+    return run.result;
+  }
+
+  async function runSourceControlInstall(
+    input: { readonly tool: SourceControlToolId; readonly locus: Locus },
+    signal: AbortSignal,
+    onOutput: (stream: "stdout" | "stderr", chunk: string) => void,
+    onCommand?: (command: string) => void,
+  ): Promise<ToolInstallResult> {
+    const plan = await resolveInstallPlan(input.tool, {
+      ...options.sourceControl?.installPlanDeps,
+      ...(input.locus.kind === "wsl" ? { platform: "linux" as const } : {}),
+    });
+    // A manual plan runs nothing, so there is nothing to show "while it runs": its command
+    // arrives with the result.
+    if (plan.plan !== "manual" && !signal.aborted) onCommand?.(plan.command);
+    const result = await runInstallPlan(plan, {
+      onOutput: (chunk, stream) => onOutput(stream, chunk),
+      reprobe: async () => {
+        const tools = await detectSourceControlOnLocus(input.locus);
+        const tool = tools.find((entry) => entry.id === input.tool);
+        if (tool === undefined) {
+          throw new Error(`${input.tool} could not be checked after the install.`);
+        }
+        return sourceControlRow(tool);
+      },
+      signal,
+    });
+    if (result.status === "installed") {
+      for (const reviewId of [...frontDoorWorktrees.keys()]) clearFrontDoorFailure(reviewId);
+      // Git LFS on the host: skip-mode checkouts clean large files on add again.
+      if (
+        input.tool === "git-lfs" &&
+        input.locus.kind === "host" &&
+        result.probe.status === "available"
+      ) {
+        largeFilesNowCleanOnAdd();
+      }
+    }
+    if (result.status === "manual") {
+      if (result.plan.plan !== "manual") throw new Error("a manual result carries a manual plan");
+      return {
+        status: "manual" as const,
+        command: result.plan.command,
+        docsUrl: result.plan.docsUrl,
+        probe: result.probe,
+      };
+    }
+    if (result.status === "installed") {
+      return {
+        status: "installed" as const,
+        command: result.plan.command,
+        output: result.output,
+        probe: result.probe,
+      };
+    }
+    return {
+      status: "failed" as const,
+      command: result.plan.command,
+      message: result.message,
+      failedCommand: result.failedCommand,
+      exitCode: result.exitCode,
+      ...(result.cancelled === true ? { cancelled: true as const } : {}),
+      output: result.output,
+      probe: result.probe,
+    };
+  }
+
+  /** Stop the `tools.install` run `commandId` names (any command that started or joined it).
+   *  `cancelled: false` when none is running; a command that has already FINISHED is left as
+   *  it was and its retained verdict comes back, so a cancel that arrives late (after a
+   *  dropped connection) learns what actually happened instead of guessing. */
+  function cancelSourceControlInstall(commandId: string): {
+    readonly cancelled: boolean;
+    readonly result?: ToolInstallVerdict;
+  } {
+    const waiting = pendingInstallRetries.get(commandId);
+    if (waiting !== undefined) {
+      waiting.abort("Cancelled by reviewer.");
+      return { cancelled: true };
+    }
+    for (const run of toolInstallRuns.values()) {
+      if (!run.commandIds.has(commandId)) continue;
+      run.controller.abort("Cancelled by reviewer.");
+      return { cancelled: true };
+    }
+    const finished = finishedToolInstall(commandId);
+    if (finished?.outcome.ok === true) return { cancelled: false, result: finished.outcome.result };
+    return { cancelled: false };
+  }
+
+  /** Abort every running install and wait for each to end: its process group is gone (or
+   *  SIGKILLed) and its result settled. Later installs are cancelled before they start. */
+  function stopToolInstalls(): Promise<void> {
+    toolInstallsClosed = true;
+    const runs = [...toolInstallRuns.values()];
+    for (const run of runs) run.controller.abort("Rennet is shutting down.");
+    return Promise.allSettled(runs.map((run) => run.result)).then(() => undefined);
+  }
+
   /**
    * UPDATE one host's daemon (C17 cluster 6, #534) — the effect behind Update Daemon, offered
    * only where `daemon.status` reported a real `updateAvailable`. Exactly one host kind has an
@@ -2430,6 +2963,106 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       (entry) => comparablePath(entry.path) === wanted,
     );
   }
+
+  /**
+   * What the pull-request front door left for the bind, per review id
+   * (review-preparation-reliability 2.5). The front door runs first and outside any session,
+   * and its outcome used to reach only the log, so the bind retried blind and failed later
+   * with raw text, stage `capture`. Now it leaves:
+   *
+   *   • `path` — the checkout path it computed and did NOT create: it failed there, or the
+   *     large-file question was still open and it deferred. The bind creates exactly there.
+   *   • `failure` — its classified failure and the large-file mode it ran under. The bind
+   *     REUSES it once, instead of repeating the same checkout: unless the mode has changed
+   *     since (or an install cleared it), the session fails with this classified failure at
+   *     stage `workspace`. Consumed on that first use, so the reviewer's Retry tries for real.
+   *   • `notes` — what a checkout returns only on the call that CREATED it (git-lfs's hook
+   *     refused, or the skip-mode checkout runs without Git LFS). The bind finds the checkout
+   *     already there, so without this the notes would be lost; the bind records them on
+   *     the session.
+   *
+   * In memory, on purpose: a front door and the bind that follows it run in one daemon life.
+   * After a restart the bind simply attempts the checkout itself, which is the old behaviour.
+   *
+   * ITS LIFE IS THE GAP BETWEEN THE FRONT DOOR AND THE FIRST BIND, and no longer: a later
+   * front door for the same review REPLACES the entry (so a success clears an older
+   * failure), the bind deletes it once it has recorded a binding, a session that is already
+   * bound deletes it on its next use, and archiving the session deletes it. Cancelling drops
+   * its failure, so the reviewer's Retry attempts the checkout for real, and keeps the path
+   * and notes that Retry still needs. An entry no bind ever consumes — a review opened with no
+   * session — expires after `FRONT_DOOR_TTL_MS`, and the map never holds more than
+   * `FRONT_DOOR_CAP` entries.
+   */
+  interface FrontDoorWorktree {
+    readonly path?: string;
+    readonly failure?: {
+      readonly classified: ClassifiedGitFailure;
+      readonly largeFiles: LargeFileMode;
+    };
+    readonly notes?: readonly string[];
+  }
+  const frontDoorWorktrees = new Map<string, FrontDoorWorktree & { readonly at: number }>();
+  const FRONT_DOOR_TTL_MS = 60 * 60 * 1000;
+  const FRONT_DOOR_CAP = 256;
+  /** Record what the front door left for a review, REPLACING anything it left before. */
+  function recordFrontDoor(reviewId: string, entry: FrontDoorWorktree): void {
+    const now = Date.now();
+    frontDoorWorktrees.delete(reviewId);
+    for (const [key, value] of frontDoorWorktrees) {
+      if (now - value.at > FRONT_DOOR_TTL_MS) frontDoorWorktrees.delete(key);
+    }
+    // Insertion order is age order: the oldest go first.
+    while (frontDoorWorktrees.size >= FRONT_DOOR_CAP) {
+      const oldest = frontDoorWorktrees.keys().next().value;
+      if (oldest === undefined) break;
+      frontDoorWorktrees.delete(oldest);
+    }
+    frontDoorWorktrees.set(reviewId, { ...entry, at: now });
+  }
+  /** What the front door left for a review, unless it has expired. */
+  function frontDoorFor(reviewId: string): FrontDoorWorktree | undefined {
+    const entry = frontDoorWorktrees.get(reviewId);
+    if (entry === undefined) return undefined;
+    if (Date.now() - entry.at > FRONT_DOOR_TTL_MS) {
+      frontDoorWorktrees.delete(reviewId);
+      return undefined;
+    }
+    return entry;
+  }
+  /** Drop a review's recorded front-door failure, keeping its path and notes. */
+  function clearFrontDoorFailure(reviewId: string): void {
+    const entry = frontDoorWorktrees.get(reviewId);
+    if (entry?.failure === undefined) return;
+    frontDoorWorktrees.set(reviewId, {
+      at: entry.at,
+      ...(entry.path === undefined ? {} : { path: entry.path }),
+      ...(entry.notes === undefined ? {} : { notes: entry.notes }),
+    });
+  }
+
+  /**
+   * The skip-mode checkouts every daemon child runs git in as skip mode (review-preparation-
+   * reliability, large-file-checkout): the index file the daemon's own environment includes
+   * through `GIT_CONFIG_*` (`daemon.ts` adds the include at startup). A bind registers its
+   * checkout here when the project skips large files, so a lens seat, the chat thread, the
+   * round worker and Rennet's own git all leave pointer files alone in it, without one byte
+   * of the user's git config changing.
+   */
+  const largeFileSkipIndex = new LargeFileSkipIndex(largeFileSkipIndexPath(dataDir));
+  /** Set once the server shuts down: nothing late rewrites the overrides or session notes. */
+  let largeFileStateClosed = false;
+  // A checkout removed while this daemon was not running (by hand, or by an older build)
+  // leaves its entry behind; git would hand the next worktree added there the same git dir.
+  // Never fatal: a data directory that cannot be written leaves the entries for the next
+  // checkout's prune, and the daemon starts.
+  try {
+    largeFileSkipIndex.prune();
+  } catch (error) {
+    // `console` directly: the sibling log is composed further down this factory.
+    console.warn(
+      `rennet: could not prune the skip-mode index — ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   /**
    * The ONE workspace a session is bound to (session-bound-workspace D1), decided once from
    * the review target and then only re-pinned:
@@ -2470,7 +3103,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     return binding;
   }
 
-  async function resolveBoundWorkspace(review: Review, sessionId: string): Promise<string> {
+  function workspaceDepsFor(review: Review) {
     // WHO IS WORKING IN THIS REPOSITORY'S WORKTREES, from the same factory the daemon-start
     // sweep and the sibling collection ask (D4/D5). Built LAZILY and at most once per bind:
     // it walks the filesystem through `comparablePath` for every live session's bound root,
@@ -2484,7 +3117,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // ladder the Worktrees card shows, read by repository root. `settingsComposition` is
       // constructed further down this factory; a bind only ever happens on a dispatched
       // command, long after construction, so the reference is live by the time it is read.
-      placementFor: (repoRoot: string) => settingsComposition.resolveWorktreePlacement(repoRoot),
+      //
+      // …with this SESSION's large-file mode over the project's, when the session was told one
+      // (`rennet review --large-files`, or an answer not remembered for the project).
+      placementFor: async (repoRoot: string) => {
+        const placement = await settingsComposition.resolveWorktreePlacement(repoRoot);
+        const override = sessionLargeFilesFor(review);
+        return override === undefined ? placement : { ...placement, largeFiles: override };
+      },
       worktreeFacts: worktreeFactsFor,
       // The claim, asked of the sessions that are live AT THE BIND — not at daemon start.
       // A session archived a minute ago has released its workspace, and the whole point of
@@ -2501,10 +3141,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       prWorktreeFor: (reviewId: string) => readPrWorktreeIndex()[reviewId]?.path,
       snapshotRecordedAt,
       recordPrWorktree,
-      // Fire and forget, exactly as the pull-request front door runs it: a slow install
-      // must never delay the capture, and a failed one is honest status rather than a wall.
-      onWorktreeCreated: (worktree: string) =>
-        void runPrWorktreeSetup(worktree).catch(() => undefined),
+      markReplacedCheckout: (checkout: string, mode: LargeFileMode) =>
+        markReplacedCheckout(review.repositoryRoot, checkout, mode),
+      checkoutModeOf: async (checkout: string): Promise<LargeFileMode> => {
+        if (locusForRepo(review.repositoryRoot).kind !== "host") return "download";
+        const gitDir = await absoluteGitDir(gitForRepo(review.repositoryRoot), checkout);
+        return largeFileSkipIndex.has(gitDir) ? "skip" : "download";
+      },
+      // No `onWorktreeCreated` here: the bind supplies it, and runs a created checkout's
+      // setup only once that checkout's large-file mode is registered.
       // No `siblingPush` is passed, and none is accepted any more. It was meant to narrow
       // the re-fork's reachability question to the remote a session had pushed to, and it
       // could never arrive: `workBranchPush` is written by a submission, a submission needs
@@ -2512,17 +3157,297 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // only for a session with no `boundRoot` — which `clearBoundWorkspace` erases along
       // with both of the others. The re-fork therefore asks every remote-tracking ref of
       // the branch, which is a superset of the one a push would have named.
+      // The path the pull-request front door computed and did not create (2.5): a deferred
+      // or failed front-door checkout is created by the bind at exactly that path.
+      pendingPrWorktreeFor: (reviewId: string) => frontDoorFor(reviewId)?.path,
+    };
+    return workspaceDeps;
+  }
+
+  /** The large-file mode the session owning `review` was told for itself, if any. */
+  function sessionLargeFilesFor(review: Review): LargeFileMode | undefined {
+    return sessionStore.load(sessionIdForReview(review))?.largeFiles;
+  }
+
+  async function resolveBoundWorkspace(review: Review, sessionId: string): Promise<string> {
+    // Setup for a checkout this bind CREATED runs only after the checkout's large-file mode is
+    // registered, so the setup's own git commands already run there as that mode says.
+    const createdCheckouts: string[] = [];
+    const workspaceDeps = {
+      ...workspaceDepsFor(review),
+      onWorktreeCreated: (worktree: string) => {
+        createdCheckouts.push(worktree);
+      },
     };
     const recorded = sessionStore.load(sessionId)?.boundRoot;
     // A recorded binding is RE-PINNED, never re-decided: a landed round advances the reviewed
     // head, and a pull-request snapshot's workspace is a detached checkout at the old one.
-    if (recorded !== undefined) return repinBoundWorkspace(review, recorded, workspaceDeps);
+    if (recorded !== undefined) {
+      // Bound already: nothing the front door left can matter to this session any more.
+      frontDoorWorktrees.delete(review.id);
+      const repinned = await repinBoundWorkspace(review, recorded, workspaceDeps);
+      // A re-pin that REPLACED the checkout created a new one under the project's current
+      // mode: register that, and say what the new checkout's notes are.
+      if (repinned.largeFiles !== undefined) {
+        const notes = await registerCreatedCheckout(
+          review.repositoryRoot,
+          repinned.boundRoot,
+          repinned.largeFiles,
+        );
+        sessionStore.setWorkspaceNotes(sessionId, [
+          ...(repinned.warning === undefined ? [] : [repinned.warning]),
+          ...notes,
+        ]);
+      }
+      return repinned.boundRoot;
+    }
+    // THE LARGE-FILE QUESTION IS NOT THE BIND'S TO ANSWER. While it is open, no path —
+    // the preparation included — creates a checkout: the preparation turns this refusal into
+    // its `awaiting` state, and every other path reports it in plain words.
+    if (await largeFileAnswerOwed(review, workspaceDeps)) {
+      // Only a session's PREPARATION can ask. A review opened outside one (`review.openPr`,
+      // a capture) has, at most, the bare session its open minted, with no preparation.
+      throw new LargeFileChoicePendingError(
+        sessionStore.load(sessionId)?.preparation !== undefined,
+      );
+    }
+    // THE FRONT DOOR AND THE BIND AGREE (2.5). A checkout the front door already tried and
+    // could not create fails the same way here, classified, instead of being repeated blind —
+    // unless the large-file mode changed since (the reviewer's answer is the reason to try
+    // again). Consumed on this first use: the reviewer's own Retry attempts the checkout.
+    const frontDoor = frontDoorFor(review.id);
+    if (frontDoor?.failure !== undefined) {
+      const failure = frontDoor.failure;
+      clearFrontDoorFailure(review.id);
+      const placement = await workspaceDeps
+        .placementFor(review.repositoryRoot)
+        .catch(() => undefined);
+      const mode = placement === undefined ? "download" : checkoutLargeFileMode(placement);
+      if (mode === failure.largeFiles) throw new ClassifiedWorkspaceError(failure.classified);
+    }
     const bound = await decideBoundWorkspace(review, workspaceDeps);
+    // The large-file mode BEFORE the record, and only for a checkout THIS bind created (or put
+    // back on its branch): `bound.largeFiles` says so. A checkout found already there keeps
+    // the mode it was created with, and the reviewer's own checkout is never Rennet's to mark.
+    // No turn can run in the checkout until the binding is recorded, so by then every daemon
+    // child already runs git there as its mode says. (Recording last also keeps the record
+    // the final act of the bind, which concurrent readers joining this bind rely on.)
+    const notes =
+      bound.largeFiles === undefined
+        ? []
+        : await registerCreatedCheckout(review.repositoryRoot, bound.boundRoot, bound.largeFiles);
+    for (const worktree of createdCheckouts) {
+      // Fire and forget, exactly as the pull-request front door runs it: a slow install
+      // must never delay the capture, and a failed one is honest status rather than a wall.
+      void runPrWorktreeSetup(worktree).catch(() => undefined);
+    }
+    // The notes a checkout carries come only from the call that CREATED it: this bind, or the
+    // front door that created the checkout this bind found.
+    const allNotes = [
+      ...(bound.warning === undefined ? [] : [bound.warning]),
+      ...notes,
+      ...(bound.largeFiles === undefined ? (frontDoor?.notes ?? []) : []),
+    ];
+    frontDoorWorktrees.delete(review.id);
     // Both halves of the one decision, recorded together (D4). `workBranch` is absent
     // whenever the work commits on the reviewed branch itself, which the readers treat as
     // exactly that rather than as "unknown".
-    sessionStore.setBoundRoot(sessionId, bound.boundRoot, bound.workBranch);
+    sessionStore.setBoundRoot(
+      sessionId,
+      bound.boundRoot,
+      bound.workBranch,
+      allNotes.length === 0 ? undefined : allNotes,
+    );
     return bound.boundRoot;
+  }
+
+  /**
+   * Record the large-file mode of a checkout Rennet just CREATED or REPLACED — the only time a
+   * checkout's mode is decided — in the skip-mode index every daemon child's git reads:
+   * registered under `skip`, so every later git command there leaves large files alone;
+   * unregistered under `download`, because git reuses a removed worktree's git dir and an
+   * entry left from an earlier checkout at the same name must not apply to this one.
+   *
+   * Never the repository root: that is the reviewer's own checkout, which Rennet never
+   * places. Host loci only — a WSL distro's git does not see the daemon's environment. Never
+   * fails a bind: a checkout that could not be registered still exists, and the reason
+   * reaches the log. Answers the notes the session shows about it: that a changed large file
+   * is committed without Git LFS (skip mode on a host without it), or that the checkout
+   * could not be marked at all.
+   */
+  async function registerCreatedCheckout(
+    repoRoot: string,
+    checkout: string,
+    mode: LargeFileMode,
+  ): Promise<string[]> {
+    if (locusForRepo(repoRoot).kind !== "host") return [];
+    if (sameDirectory(checkout, repoRoot)) return [];
+    try {
+      const gitDir = await absoluteGitDir(gitForRepo(repoRoot), checkout);
+      largeFileSkipIndex.prune();
+      if (mode !== "skip") {
+        largeFileSkipIndex.remove((entry) => entry === gitDir);
+        return [];
+      }
+      const lfsAvailable = await gitLfsKnownOn(HOST_LOCUS);
+      if (!largeFileSkipIndex.add(gitDir, lfsAvailable === undefined ? {} : { lfsAvailable })) {
+        siblingLog(
+          `rennet: could not mark ${JSON.stringify(checkout)} as skipping large files — its git directory's path has a control character`,
+        );
+        return [LARGE_FILES_NOT_REGISTERED_NOTE];
+      }
+      // The note follows the form the overrides are IN, which an unknown probe left alone.
+      return largeFileSkipIndex.cleansOnAdd() ? [] : [LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE];
+    } catch (error) {
+      siblingLog(
+        `rennet: could not record the large-file mode for ${checkout} — ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Record the mode a checkout Rennet is about to REPLACE in place will be recreated under,
+   * BEFORE the replacement checks anything out (`ensurePrWorktree`'s `beforeReplace`). Git
+   * hands the replacement the superseded checkout's git dir, so its skip-mode entry would
+   * otherwise still apply while git checks the new files out: a download-mode replacement of
+   * a skip-mode snapshot came out as placeholders, because every daemon child's git — the
+   * replacement's own checkout included — reads the index. Under skip, registering first
+   * means the replacement's later commands (its hooks, its setup) run as skip mode too.
+   * `registerCreatedCheckout` still runs after the checkout, for the git dir git actually
+   * handed out and for the notes. Never fails the replacement: the reason reaches the log.
+   */
+  async function markReplacedCheckout(
+    repoRoot: string,
+    checkout: string,
+    mode: LargeFileMode,
+  ): Promise<void> {
+    if (locusForRepo(repoRoot).kind !== "host") return;
+    if (sameDirectory(checkout, repoRoot)) return;
+    try {
+      const gitDir = await absoluteGitDir(gitForRepo(repoRoot), checkout);
+      if (mode !== "skip") {
+        largeFileSkipIndex.remove((entry) => entry === gitDir);
+        return;
+      }
+      const lfsAvailable = await gitLfsKnownOn(HOST_LOCUS);
+      largeFileSkipIndex.add(gitDir, lfsAvailable === undefined ? {} : { lfsAvailable });
+    } catch (error) {
+      siblingLog(
+        `rennet: could not record the large-file mode for ${checkout} before replacing it — ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Whether the large-file question is owed for this review's first bind: the project has
+   * not answered (`ask`), the tree being checked out routes files through Git LFS, and the
+   * bind would actually CREATE a checkout — a branch review of the reviewer's own checkout
+   * under `share` checks nothing out, so it is never asked.
+   */
+  async function largeFileAnswerOwed(
+    review: Review,
+    workspaceDeps: ReturnType<typeof workspaceDepsFor>,
+  ): Promise<boolean> {
+    const patchset = review.patchsets.find((entry) => entry.id === review.activePatchsetId);
+    if (patchset === undefined) return false;
+    const placement = await workspaceDeps
+      .placementFor(review.repositoryRoot)
+      .catch(() => undefined);
+    if ((placement?.largeFiles ?? "ask") !== "ask") return false;
+    if (
+      !(await repoUsesLfs(review.repositoryRoot, {
+        ref: patchset.repository.headOid,
+        git: gitForRepo(review.repositoryRoot),
+      }))
+    ) {
+      return false;
+    }
+    return bindWouldCreateCheckout(review, workspaceDeps);
+  }
+
+  /**
+   * What a HOST probe saw of Git LFS, applied to the skip-mode overrides (every probe reports
+   * here through `detectSourceControlOnLocus`, and the daemon probes once at start when it
+   * has skip-mode checkouts): `available` upgrades them, a definite `not-installed`
+   * downgrades them, and anything else — unreachable, no row at all — changes nothing.
+   */
+  function observeHostGitLfs(status: string | undefined): void {
+    if (status === "available") largeFilesNowCleanOnAdd();
+    else if (status === "not-installed") largeFilesNowCommittedWithoutLfs();
+  }
+
+  /**
+   * Git LFS answers on this host: every registered skip-mode checkout gets LFS's own skip
+   * filter, which cleans a large file on add again, and every session — older ones included —
+   * stops saying its large files are committed without it. A no-op once the server has shut
+   * down: an install or probe that settles after that writes nothing.
+   */
+  function largeFilesNowCleanOnAdd(): void {
+    if (largeFileStateClosed) return;
+    try {
+      if (largeFileSkipIndex.gitDirs().length > 0 && !largeFileSkipIndex.cleansOnAdd()) {
+        largeFileSkipIndex.setLfsAvailable(true);
+      }
+      for (const session of sessionStore.list()) {
+        const notes = session.workspaceNotes ?? [];
+        if (!notes.includes(LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE)) continue;
+        sessionStore.setWorkspaceNotes(
+          session.id,
+          notes.filter((note) => note !== LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE),
+        );
+      }
+    } catch (error) {
+      siblingLog(
+        `rennet: could not switch skip-mode checkouts to Git LFS's own filter — ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
+   * Git LFS is DEFINITELY not installed on this host any more, while the overrides are still
+   * its own skip filter — which would fail every git command that touches a large file. They
+   * go back to the blank form, and every session bound to a registered checkout says what
+   * that costs. Only on that change: a session whose checkout was created without Git LFS
+   * already carries the note.
+   */
+  function largeFilesNowCommittedWithoutLfs(): void {
+    if (largeFileStateClosed) return;
+    try {
+      const gitDirs = largeFileSkipIndex.gitDirs();
+      if (gitDirs.length === 0 || !largeFileSkipIndex.cleansOnAdd()) return;
+      largeFileSkipIndex.setLfsAvailable(false);
+      const checkouts = gitDirs.flatMap((gitDir) => {
+        const checkout = checkoutOfGitDir(gitDir);
+        return checkout === undefined ? [] : [checkout];
+      });
+      for (const session of sessionStore.list()) {
+        const bound = session.boundRoot;
+        if (bound === undefined) continue;
+        if (!checkouts.some((checkout) => sameDirectory(checkout, bound))) continue;
+        const notes = session.workspaceNotes ?? [];
+        if (notes.includes(LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE)) continue;
+        sessionStore.setWorkspaceNotes(session.id, [
+          ...notes,
+          LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE,
+        ]);
+      }
+    } catch (error) {
+      siblingLog(
+        `rennet: could not switch skip-mode checkouts to the form for a host without Git LFS — ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /** The checkout a linked worktree's git dir belongs to, from the `gitdir` file git keeps
+   *  there (`<checkout>/.git`); `undefined` when it cannot be read. */
+  function checkoutOfGitDir(gitDir: string): string | undefined {
+    try {
+      const dotGit = readFileSync(join(gitDir, "gitdir"), "utf8").trim();
+      return dotGit.length === 0 ? undefined : dirname(dotGit);
+    } catch {
+      return undefined;
+    }
   }
 
   /**
@@ -2554,6 +3479,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     repoPath: string | undefined,
     retrospective: boolean,
     forge: ForgePort,
+    /** The large-file mode the session this pull request is opened FOR was told, if any. */
+    sessionLargeFiles?: LargeFileMode,
   ): Promise<Review> {
     const root = await resolvePrRepoRoot(prRef, repoPath);
     const locus = locusForRepo(root);
@@ -2607,6 +3534,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // A worktree per reviewed PR at the pinned head (an executable past for the
     // agent to run tests in). A superseded head replaces the old checkout. Failure
     // here never blocks the review — the diff and conversation need no checkout.
+    let frontDoorPath: string | undefined;
+    let attemptedMode: LargeFileMode | undefined;
     try {
       // THE RESOLVED PLACEMENT, not the builtin (workspace-settings D1/D2). This creation
       // site ran first and the later `decideBoundWorkspace` reused the path it had already
@@ -2615,9 +3544,21 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // binding never had a chance to place it. One placement read, both callers. A
       // settings read that fails takes the builtin, which is what this line always used:
       // a pull-request review must not be refused over where its checkout goes.
-      const placement = await settingsComposition
-        .resolveWorktreePlacement(root)
-        .catch(() => defaultWorktreePlacement(dataDir));
+      const resolvedPlacement: { readonly largeFiles?: LargeFilesChoice } & WorktreePlacement =
+        await settingsComposition
+          .resolveWorktreePlacement(root)
+          .catch(() => defaultWorktreePlacement(dataDir));
+      // The session this pull request is being opened for may carry its own large-file mode
+      // (`rennet review --large-files`, or an answer not remembered for the project): it wins
+      // over the project's here as at the bind. PASSED IN by the preparation that opens it,
+      // because the review this call just created is not attached to that session until the
+      // call returns — asking the store by review would find no session and miss the mode.
+      // A review opened again for a session that already owns it finds it in the store.
+      const sessionMode = sessionLargeFiles ?? sessionLargeFilesFor(review);
+      const placement =
+        sessionMode === undefined
+          ? resolvedPlacement
+          : { ...resolvedPlacement, largeFiles: sessionMode };
       const worktree = prWorktreePath(
         placement.root,
         placement.prPattern,
@@ -2635,14 +3576,47 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // is Rennet's to replace; without it `ensurePrWorktree` refuses rather than deleting
       // whatever the reviewer has at a path two patterns happened to collide on. The
       // shared helper, so this reading and the binding's cannot drift apart.
-      const { created } = await ensurePrWorktree(gitInLocus, root, worktree, pr.headOid, {
-        recordedSnapshot: snapshotRecordedAt(worktree),
-      });
-      recordPrWorktree(review.id, worktree);
-      if (created) {
-        // Fire-and-forget; the runner itself records a failed verdict, and an
-        // unexpected crash must not become an unhandled rejection.
-        void runPrWorktreeSetup(worktree).catch(() => undefined);
+      frontDoorPath = worktree;
+      // THE LARGE-FILE QUESTION (large-file-checkout spec). A repository whose pull request
+      // routes files through Git LFS, in a project that has not answered yet, is not checked
+      // out here: the session's preparation asks first, and its bind creates the checkout at
+      // this same path under the answer. Read at the pull request's own head — that is the
+      // tree being checked out.
+      if (
+        (placement.largeFiles ?? "ask") === "ask" &&
+        (await repoUsesLfs(root, { ref: pr.headOid, git: gitInLocus }))
+      ) {
+        recordFrontDoor(review.id, { path: worktree });
+      } else {
+        const mode = checkoutLargeFileMode(placement);
+        attemptedMode = mode;
+        const { created, warning } = await ensurePrWorktree(
+          gitInLocus,
+          root,
+          worktree,
+          pr.headOid,
+          {
+            recordedSnapshot: snapshotRecordedAt(worktree),
+            largeFiles: attemptedMode,
+            beforeReplace: () => markReplacedCheckout(root, worktree, mode),
+          },
+        );
+        recordPrWorktree(review.id, worktree);
+        // A checkout this call CREATED (or replaced) gets its large-file mode recorded before
+        // anything runs in it — the setup below included.
+        const notes = created ? await registerCreatedCheckout(root, worktree, attemptedMode) : [];
+        // Returned only by this, the creating call: kept for the bind to record (see
+        // `frontDoorWorktrees`), or they are gone by the time a session binds.
+        const kept = [...(warning === undefined ? [] : [warning]), ...notes];
+        // A success REPLACES whatever an earlier front door left: an older failure for this
+        // review is history now, and a bind must not report it.
+        if (kept.length > 0) recordFrontDoor(review.id, { notes: kept });
+        else frontDoorWorktrees.delete(review.id);
+        if (created) {
+          // Fire-and-forget; the runner itself records a failed verdict, and an
+          // unexpected crash must not become an unhandled rejection.
+          void runPrWorktreeSetup(worktree).catch(() => undefined);
+        }
       }
     } catch (error) {
       // No worktree: `review.prWorktree` honestly returns null — AND THE REASON REACHES
@@ -2654,6 +3628,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       siblingLog(
         `rennet: no pull-request worktree for ${prRef.repo.owner}/${prRef.repo.name}#${prRef.number} — ${error instanceof Error ? error.message : String(error)}`,
       );
+      // …AND IT REACHES THE SESSION (2.5): classified, for the bind to report rather than
+      // repeat. The raw text is the failure's detail, never its message.
+      recordFrontDoor(review.id, {
+        ...(frontDoorPath === undefined ? {} : { path: frontDoorPath }),
+        failure: {
+          classified: classifyGitFailure(error, { subject: "pull request" }),
+          largeFiles: attemptedMode ?? "download",
+        },
+      });
     }
     return review;
   }
@@ -2663,6 +3646,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     ref: string,
     repoPath: string | undefined,
     retrospective: boolean,
+    sessionLargeFiles?: LargeFileMode,
   ): Promise<Review> {
     const prRef = parseGitHubPrRef(ref);
     if (!prRef) {
@@ -2674,13 +3658,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       repoPath,
       retrospective,
       new GitHubForgeAdapter({ octokit: await resolveGitHubOctokit() }),
+      sessionLargeFiles,
     );
   }
 
   const projectPullRequestOpeners = createForgeRegistry<ProjectPullRequestOpener<Review>>([
     {
       forge: "github",
-      implementation: ({ commandId, repository, number, repoPath, retrospective }) =>
+      implementation: ({ commandId, repository, number, repoPath, retrospective, largeFiles }) =>
         resolveGitHubOctokit().then((octokit) =>
           openPullRequestRef(
             commandId,
@@ -2688,12 +3673,20 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             repoPath,
             retrospective,
             new GitHubForgeAdapter({ octokit }),
+            largeFiles,
           ),
         ),
     },
     {
       forge: "gitlab",
-      implementation: async ({ commandId, repository, number, repoPath, retrospective }) => {
+      implementation: async ({
+        commandId,
+        repository,
+        number,
+        repoPath,
+        retrospective,
+        largeFiles,
+      }) => {
         const root = await resolvePrRepoRoot({ repo: repository, number }, repoPath);
         return openPullRequestRef(
           commandId,
@@ -2701,6 +3694,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           root,
           retrospective,
           gitLabForgeAdapterForRoot(root),
+          largeFiles,
         );
       },
     },
@@ -3386,7 +4380,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // repository is a UNC path the git inside the distro does not own.
     });
     siblingLog(`rennet: ${collection.reason}`);
-    if (collection.worktreeRemoved) sessionStore.clearBoundWorkspace(sessionId);
+    if (collection.worktreeRemoved) {
+      sessionStore.clearBoundWorkspace(sessionId);
+      // Its git dir went with it; git reuses the name for the next worktree added there.
+      largeFileSkipIndex.prune();
+    }
   };
   // Deferred while a round is in flight: `session.archive` awaits the session's
   // preparation, but nothing tracks a round, so an immediate purge deletes the directory
@@ -3547,7 +4545,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     dataDir,
     liveBoundRoots,
     gitFor: gitForRepo,
-  }).catch(() => undefined);
+  })
+    .then(() => largeFileSkipIndex.prune())
+    .catch(() => undefined);
   /**
    * Drop ONE repository's unreachable worktree registrations — **only the ones RENNET
    * PLACED, and only when the repository holds no other unreachable registration at all.**
@@ -3819,12 +4819,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // Durable rounds ledger (C15 2.2): one record per round, reconciled — the regeneration
   // round's real generation + frozen-predecessor id supersedes the dispatch placeholder.
   const roundRecordStore = new RoundRecordStore(join(dataDir, "rounds"));
+  /** What a session that claims nothing is called: the branch its attached review read,
+   *  else its project's name. Only consulted for a row with no rename and no claim. */
+  const unclaimedSessionTitle = (session: SessionModel): string | undefined => {
+    if (session.title !== undefined || session.claim !== undefined) return undefined;
+    const review =
+      session.reviewId === undefined ? undefined : service.reviewById(session.reviewId);
+    const branch = review?.patchsets.find((patchset) => patchset.id === review.activePatchsetId)
+      ?.repository.headRef;
+    return branch ?? projectStore.list().find((project) => project.id === session.projectId)?.name;
+  };
   const sidebarSessionFor = (session: SessionModel) => {
     const operation = roundOperationStore.read(session.id);
     return sidebarSessionOf(
       session,
       roundRecordStore.read(session.id),
       operation?.reviewId === session.reviewId ? operation : undefined,
+      unclaimedSessionTitle(session),
     );
   };
   // The live round-progress channel (C15 3.1): an append-only `RoundEvent` log per review,
@@ -3907,7 +4918,27 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // fallback: this is the read the CHAT and the HANDOFF thread are created from, and a
     // thread's cwd is fixed at creation. Getting the clone here is not a degraded answer, it
     // is a second thread for the same session rooted in the wrong tree.
-    const root = await bindWorkspaceFor(review);
+    // A bind that fails reaches the dock and the handoff as a sentence, never as git's
+    // stderr: the large-file question in its own words, anything else classified, with
+    // git's words left in the log.
+    let root: string;
+    try {
+      root = await bindWorkspaceFor(review);
+    } catch (error) {
+      if (error instanceof LargeFileChoicePendingError) throw error;
+      if (error instanceof ClassifiedWorkspaceError) throw error;
+      siblingLog(
+        `rennet: review ${review.id} could not bind its workspace — ${error instanceof Error ? error.message : String(error)}`,
+      );
+      throw new ClassifiedWorkspaceError(
+        classifyGitFailure(error, {
+          subject:
+            review.postTarget !== undefined || review.retrospective === true
+              ? "pull request"
+              : "branch",
+        }),
+      );
+    }
     const branch =
       review.postTarget === undefined && review.retrospective !== true
         ? review.patchsets.find((entry) => entry.id === review.activePatchsetId)?.repository.headRef
@@ -5135,13 +6166,22 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     preparationIsCurrent(sessionId, controller)
       ? sessionStore.setPreparation(sessionId, preparation)
       : sessionStore.load(sessionId);
+  /**
+   * The stage each running preparation is in, by its controller. The durable record cannot say
+   * it: the workspace stage runs under `capturing` (a fresh run) or `drafting` (a resumed
+   * one), so a cancel that read the stage off the record called a cancelled checkout a
+   * cancelled capture, or a cancelled board.
+   */
+  const preparationStages = new WeakMap<AbortController, "capture" | "workspace" | "boards">();
 
   async function runSessionPreparation(
     sessionId: string,
     request: PreparationRequest,
     controller: AbortController,
   ): Promise<void> {
-    let stage: "capture" | "boards" = request.reviewId === undefined ? "capture" : "boards";
+    let stage: "capture" | "workspace" | "boards" =
+      request.reviewId === undefined ? "capture" : "boards";
+    preparationStages.set(controller, stage);
     let review: Review | null =
       request.reviewId === undefined ? null : service.reviewById(request.reviewId);
     let lanes = initialPreparationLanes();
@@ -5189,6 +6229,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             target.base ?? project?.primaryBranch ?? "HEAD",
           );
         } else {
+          // THIS session's own large-file mode, handed to the front door explicitly: the review
+          // it is about to create is attached to the session only after it returns.
+          const sessionLargeFiles = sessionStore.load(sessionId)?.largeFiles;
           review =
             target.forgeRepository === undefined
               ? await openPullRequest(
@@ -5196,6 +6239,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                   `${target.repository ?? ""}#${target.prNumber}`,
                   root,
                   false,
+                  sessionLargeFiles,
                 )
               : await openProjectPullRequest(projectPullRequestOpeners, {
                   commandId: request.commandId,
@@ -5203,6 +6247,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                   number: target.prNumber,
                   repoPath: root,
                   retrospective: false,
+                  ...(sessionLargeFiles === undefined ? {} : { largeFiles: sessionLargeFiles }),
                 });
         }
         await waitForPreparationDelay(
@@ -5219,27 +6264,35 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           sessionStore.save({ ...current, repositoryRoot: review.repositoryRoot });
         }
         sessionStore.attachReview(sessionId, review.id);
-        // The binding is decided HERE, once, the moment the review names a target
-        // (session-bound-workspace D1) — not at the first seat, so the reviewer can see which
-        // workspace the session owns before anything drafts in it. A worktree that cannot be
-        // created FAILS the preparation with its reason rather than binding the session to the
-        // clone: retrying the preparation retries the bind, and every later use binds lazily
-        // through `holdingReviewContext` if this one never ran.
-        await bindWorkspaceFor(review);
-        if (controller.signal.aborted) {
-          sessionStore.setPreparation(sessionId, {
-            status: "cancelled",
-            stage: "boards",
-            reviewId: review.id,
-            lanes,
-          });
-          return;
-        }
       }
 
       if (review === null) throw new Error("The captured review could not be loaded.");
+      // THE WORKSPACE STAGE (review-preparation-reliability D4/D5). The binding is decided
+      // HERE, once, the moment the review names a target (session-bound-workspace D1) — not at
+      // the first seat, so the reviewer can see which workspace the session owns before
+      // anything drafts in it. It runs on a resumed or retried preparation too, so an answer
+      // to the large-file question, or a Retry after a failed checkout, binds before drafting.
+      // A worktree that cannot be created FAILS the preparation, classified, at stage
+      // `workspace`, rather than binding the session to the clone: retrying the preparation
+      // retries the bind, and every later use binds lazily through `holdingReviewContext`.
+      stage = "workspace";
+      preparationStages.set(controller, stage);
+      const workspace = await prepareWorkspace(sessionId, review, controller);
+      if (workspace === "awaiting") return;
+      if (controller.signal.aborted) {
+        // Through the current-run guard like every other write of this run: an abort is a
+        // cancel (which recorded its own `cancelled`) or a newer run taking over (whose state
+        // this must not overwrite). Either way the record is not this run's to write now.
+        setCurrentPreparation(sessionId, controller, {
+          status: "cancelled",
+          stage: "workspace",
+          reviewId: review.id,
+        });
+        return;
+      }
       const draftingReview = review;
       stage = "boards";
+      preparationStages.set(controller, stage);
       setCurrentPreparation(sessionId, controller, {
         status: "drafting",
         reviewId: draftingReview.id,
@@ -5281,6 +6334,22 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         setCurrentPreparation(sessionId, controller, undefined);
         return;
       }
+      // A checkout failure is reported CLASSIFIED (D5): the plain sentence as the reason,
+      // the recovery action, the missing tool, and git's own words only as the detail.
+      if (error instanceof ClassifiedWorkspaceError) {
+        const failure = error.classified;
+        setCurrentPreparation(sessionId, controller, {
+          status: "failed",
+          stage: "workspace",
+          reason: failure.message,
+          kind: failure.kind,
+          action: failure.action,
+          ...(failure.tool === undefined ? {} : { tool: failure.tool }),
+          ...(failure.detail.length === 0 ? {} : { detail: failure.detail }),
+          ...(review === null ? {} : { reviewId: review.id }),
+        });
+        return;
+      }
       const reason = error instanceof Error ? error.message : String(error);
       setCurrentPreparation(sessionId, controller, {
         status: "failed",
@@ -5294,6 +6363,47 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         sessionPreparations.delete(sessionId);
       }
     }
+  }
+
+  /**
+   * The workspace stage of a preparation: bind, and ask the large-file question when the bind
+   * says it is owed, with any other failed bind classified (review-preparation-reliability
+   * 2.3).
+   *
+   * The bind itself decides whether the question is owed (`largeFileAnswerOwed`), so the
+   * preparation and every lazy path agree: no checkout is created under a mode nobody chose.
+   * When it is, preparation stops in `awaiting` and returns; `session.chooseLargeFileMode`
+   * records the answer and resumes it.
+   */
+  async function prepareWorkspace(
+    sessionId: string,
+    review: Review,
+    controller: AbortController,
+  ): Promise<"bound" | "awaiting"> {
+    try {
+      await bindWorkspaceFor(review);
+    } catch (error) {
+      if (error instanceof LargeFileChoicePendingError) {
+        const lfsAvailable = await gitLfsAvailableOn(locusForRepo(review.repositoryRoot));
+        setCurrentPreparation(sessionId, controller, {
+          status: "awaiting",
+          kind: "large-file-choice",
+          lfsAvailable,
+          reviewId: review.id,
+        });
+        return "awaiting";
+      }
+      if (error instanceof ClassifiedWorkspaceError) throw error;
+      throw new ClassifiedWorkspaceError(
+        classifyGitFailure(error, {
+          subject:
+            review.postTarget !== undefined || review.retrospective === true
+              ? "pull request"
+              : "branch",
+        }),
+      );
+    }
+    return "bound";
   }
 
   function beginSessionPreparation(
@@ -5321,36 +6431,157 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   function cancelSessionPreparation(sessionId: string): SessionModel | undefined {
     const session = sessionStore.load(sessionId);
     const preparation = session?.preparation;
+    // A failure the front door left is not what the reviewer's Retry should be told: drop
+    // it, keeping the path and notes that Retry's bind still needs.
+    const cancelledReviewId =
+      (preparation !== undefined && "reviewId" in preparation ? preparation.reviewId : undefined) ??
+      session?.reviewId;
+    if (cancelledReviewId !== undefined) clearFrontDoorFailure(cancelledReviewId);
+    // Waiting on the large-file answer: nothing is running, so cancelling is only the record.
+    if (session !== undefined && preparation?.status === "awaiting") {
+      return sessionStore.setPreparation(sessionId, {
+        status: "cancelled",
+        stage: "workspace",
+        reviewId: preparation.reviewId,
+      });
+    }
     if (
       session === undefined ||
       (preparation?.status !== "capturing" && preparation?.status !== "drafting")
     ) {
       return session;
     }
-    sessionPreparations.get(sessionId)?.abort("Cancelled by reviewer.");
+    const controller = sessionPreparations.get(sessionId);
+    // The stage the RUN is in, which the record cannot say: a checkout being created runs
+    // under `capturing` or `drafting`, and cancelling it is cancelling the workspace stage.
+    const running = controller === undefined ? undefined : preparationStages.get(controller);
+    controller?.abort("Cancelled by reviewer.");
+    const stage = running ?? (preparation.status === "capturing" ? "capture" : "boards");
+    const reviewId = preparation.status === "drafting" ? preparation.reviewId : session.reviewId;
     return sessionStore.setPreparation(sessionId, {
       status: "cancelled",
-      stage: preparation.status === "capturing" ? "capture" : "boards",
-      ...(preparation.status === "drafting"
-        ? { reviewId: preparation.reviewId, lanes: preparation.lanes }
+      stage,
+      ...(reviewId === undefined ? {} : { reviewId }),
+      ...(stage === "boards" && preparation.status === "drafting"
+        ? { lanes: preparation.lanes }
         : {}),
     });
   }
 
-  async function retrySessionPreparation(
+  /**
+   * The answer to the large-file question (large-file-checkout spec, 2.4): record it as the
+   * project's `checkout.largeFiles` on the repo rung of the session's repository, then
+   * resume the session's preparation, which binds under the answer.
+   *
+   * Resumed only when preparation stopped FOR it — `awaiting`, or `failed` with a recovery
+   * the answer serves (choosing a mode, or installing Git LFS, which Skip sidesteps). Never
+   * from `cancelled`: the reviewer stopped that review, and only their Retry starts it again
+   * (no surface offers the choice there). A preparation still running keeps running and the
+   * answer applies to its next checkout; a session with no preparation left is a settled
+   * review, which an answer must never send back to drafting.
+   *
+   * Any recorded front-door failure for the review is cleared: a new mode is exactly the
+   * reason to try the checkout again rather than report the failure it may have fixed.
+   */
+  async function chooseLargeFileMode(
     sessionId: string,
+    mode: LargeFileMode,
     commandId: string,
+    remember = true,
   ): Promise<SessionModel | undefined> {
-    await sessionPreparationRuns.get(sessionId)?.catch(() => undefined);
     const session = sessionStore.load(sessionId);
     if (session === undefined) return undefined;
     const preparation = session.preparation;
-    if (preparation?.status === "capturing" || preparation?.status === "drafting") return session;
+    const reviewId =
+      (preparation !== undefined && "reviewId" in preparation ? preparation.reviewId : undefined) ??
+      session.reviewId;
+    const review = reviewId === undefined ? null : service.reviewById(reviewId);
+    const repoRoot = review?.repositoryRoot ?? repositoryRootForSession(session);
+    if (repoRoot === undefined) {
+      throw new Error("This session has no repository to record the large-file choice for.");
+    }
+    if (remember) {
+      await settingsComposition.writeLargeFiles(repoRoot, mode);
+      // The project's answer is the one that applies now: drop any mode this session was told
+      // for itself, so the two cannot disagree.
+      const current = sessionStore.load(sessionId);
+      if (current?.largeFiles !== undefined) {
+        const rest = { ...current };
+        delete rest.largeFiles;
+        sessionStore.save(rest);
+      }
+    } else {
+      // This session only: the project keeps no answer, and its next review asks.
+      const current = sessionStore.load(sessionId);
+      if (current !== undefined) sessionStore.save({ ...current, largeFiles: mode });
+    }
+    if (reviewId !== undefined) clearFrontDoorFailure(reviewId);
+    return resumeStoppedPreparation(sessionId, commandId, answersLargeFileQuestion);
+  }
+
+  /** Whether a stopped preparation is one a large-file answer resumes: it was waiting on the
+   *  question, or failed with a recovery the answer serves. Never a cancelled one. */
+  function answersLargeFileQuestion(preparation: SessionPreparation): boolean {
+    if (preparation.status === "awaiting") return true;
+    if (preparation.status !== "failed") return false;
+    return (
+      preparation.action === "choose-large-files" ||
+      (preparation.action === "install" && preparation.tool === "git-lfs")
+    );
+  }
+
+  /**
+   * Resume a preparation that STOPPED — `awaiting`, `failed` or `cancelled`, narrowed by
+   * `resumes` — and nothing else, decided at the moment of acting rather than from a read taken before an await. A
+   * preparation that is running (the answer arrived twice, or after another resume) is left
+   * alone, and so is a session whose preparation finished: an answer never sends a settled
+   * review back to drafting. A cancelled run still winding down is waited for first.
+   */
+  async function resumeStoppedPreparation(
+    sessionId: string,
+    commandId: string,
+    resumes: (preparation: SessionPreparation) => boolean = () => true,
+  ): Promise<SessionModel | undefined> {
+    const isRunning = (): boolean => {
+      const controller = sessionPreparations.get(sessionId);
+      return controller !== undefined && !controller.signal.aborted;
+    };
+    if (isRunning()) return sessionStore.load(sessionId);
+    await sessionPreparationRuns.get(sessionId)?.catch(() => undefined);
+    // Re-read after the wait, and begin in the same synchronous run as the read: two answers
+    // racing here see each other's run, never each other's stale record.
+    if (isRunning()) return sessionStore.load(sessionId);
+    const session = sessionStore.load(sessionId);
+    if (session === undefined) return undefined;
+    const preparation = session.preparation;
+    const status = preparation?.status;
+    if (status !== "awaiting" && status !== "failed" && status !== "cancelled") return session;
+    if (preparation === undefined || !resumes(preparation)) return session;
+    return beginSessionPreparation(session, preparationRequestFor(session, commandId));
+  }
+
+  /**
+   * Retry runs a preparation again only when it STOPPED, exactly as an answer to the
+   * large-file question does (`resumeStoppedPreparation`). A preparation that finished leaves
+   * no `preparation` behind, and that is a settled review: a late Retry — a second window,
+   * a click that crossed the settle — must never send it back to drafting.
+   */
+  function retrySessionPreparation(
+    sessionId: string,
+    commandId: string,
+  ): Promise<SessionModel | undefined> {
+    return resumeStoppedPreparation(sessionId, commandId);
+  }
+
+  /** The request that runs a session's preparation again: its claim, and the review it
+   *  already captured, when it has one. */
+  function preparationRequestFor(session: SessionModel, commandId: string): PreparationRequest {
+    const preparation = session.preparation;
     const retryReviewId =
       preparation !== undefined && "reviewId" in preparation
         ? preparation.reviewId
         : session.reviewId;
-    return beginSessionPreparation(session, {
+    return {
       projectId: session.projectId,
       commandId,
       ...(session.claim === undefined
@@ -5365,7 +6596,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             },
           }),
       ...(retryReviewId === undefined ? {} : { reviewId: retryReviewId }),
-    });
+    };
   }
 
   const readLensBoardForReview = async (reviewId: string, generation: string, lens: LensKind) => {
@@ -5429,6 +6660,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     detectHarnessesOn,
     // …and which forge CLIs it has (C17 amendment B), so a WSL card shows its own state.
     detectForgesOn,
+    // …and its `git` and `git-lfs` (source-control-tooling spec), probed the way checkouts run.
+    detectSourceControlOn,
+    // Whether one repository uses Git LFS, for its row and its host's Git LFS row.
+    repoUsesLfs: repositoryUsesLfs,
     // The real per-host daemon update behind Update Daemon (C17 cluster 6, #534). A host
     // kind with no mechanism throws its reason, so the card never reads a fake success.
     updateDaemonOn: updateDaemonForHost,
@@ -5513,7 +6748,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // the sweep now also logs its counts, so a repeat could not hide the same way twice.
   void sweepOrphanedSiblings(
     async (repoRoot) => (await settingsComposition.resolveWorktreePlacement(repoRoot)).root,
-  ).catch(() => undefined);
+  )
+    // A collected sibling's skip-mode entry goes with it: git reuses its git dir's name.
+    .then(() => largeFileSkipIndex.prune())
+    .catch(() => undefined);
 
   dispatch = createDispatch({
     t3Sidecar,
@@ -5810,7 +7048,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // Mint first and return immediately. The durable preparation snapshot owns the capture
       // and first-generation work after navigation, including cancellation, retry, restart
       // recovery, and the exact lens events emitted by the server pipeline.
-      start: async ({ projectId, commandId, replacesSessionId, target }) => {
+      start: async ({ projectId, commandId, replacesSessionId, target, largeFiles }) => {
         const legacyPrRef =
           target?.prNumber === undefined || target.forgeRepository !== undefined
             ? null
@@ -5854,7 +7092,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
                   resolvedRoot,
                 );
         if (!entered.reattached) sessionStore.save(entered.session);
-        const current = sessionStore.load(entered.session.id) ?? entered.session;
+        const loaded = sessionStore.load(entered.session.id) ?? entered.session;
+        // This session's own large-file mode, recorded before its preparation starts so the
+        // front door and the bind both read it. A session already bound keeps the mode its
+        // checkout was created with.
+        if (largeFiles !== undefined && loaded.boundRoot === undefined) {
+          sessionStore.save({ ...loaded, largeFiles });
+        }
+        const current = sessionStore.load(entered.session.id) ?? loaded;
         const prepared =
           entered.reattached &&
           (current.reviewId !== undefined ||
@@ -5879,6 +7124,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         const session = await retrySessionPreparation(sessionId, commandId);
         return session && sidebarSessionFor(session);
       },
+      chooseLargeFileMode: async (sessionId, mode, commandId, remember) => {
+        const session = await chooseLargeFileMode(sessionId, mode, commandId, remember);
+        return session && sidebarSessionFor(session);
+      },
       rename: (sessionId, title) => {
         const session = sessionStore.rename(sessionId, title);
         return session && sidebarSessionFor(session);
@@ -5896,6 +7145,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         if (archived) {
           cancelSessionPreparation(sessionId);
           await sessionPreparationRuns.get(sessionId)?.catch(() => undefined);
+          // Whatever the front door left for this session's review has no bind to wait for.
+          const archivedReviewId = sessionStore.load(sessionId)?.reviewId;
+          if (archivedReviewId !== undefined) frontDoorWorktrees.delete(archivedReviewId);
         }
         // D5's collection, BEFORE the record is archived: the rule reads the session's
         // recorded work branch and its repository, and both are still on the live record
@@ -6254,13 +7506,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       const project = projectStore.list().find((entry) => entry.id === projectId);
       const projectRoot = project ? project.openPath || project.path : null;
       if (!projectRoot) return { ok: false };
-      return cleanupWorktree(
+      const cleaned = await cleanupWorktree(
         {
           git: gitForRepo(projectRoot),
           resolveProjectRoot: async () => projectRoot,
         },
         { projectId, worktreeId },
       );
+      // A removed worktree's skip-mode entry goes with it: git reuses its git dir's name.
+      largeFileSkipIndex.prune();
+      return cleaned;
     },
     // The workspace inventory (workspace-settings D6): every workspace Rennet knows for
     // ONE repository, and the removal of one idle Rennet-made row.
@@ -6285,7 +7540,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           ...(await inventoryOptions(repoPath)),
           measureSizes: false,
         });
-        return removeWorkspace(gitForRepo(repoPath), repoPath, { id, rows });
+        const removed = await removeWorkspace(gitForRepo(repoPath), repoPath, { id, rows });
+        // A removed worktree's skip-mode entry goes with it: git reuses its git dir's name.
+        largeFileSkipIndex.prune();
+        return removed;
       },
     },
     // The Flagged lens (issue #138): the automated review layer's findings. This is
@@ -6436,6 +7694,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // The benchmarks panel's read side (#731 9.6) — newest runs, capped by the caller.
     listBenchmarks: (limit) => benchmarkStore.read(limit),
     settings: settingsComposition,
+    // Install for me (source-control-tooling spec): the installer runs and streams here.
+    tools: {
+      install: installSourceControlTool,
+      cancelInstall: cancelSourceControlInstall,
+    },
     // The project mark's three verbs (#900, ADR 0004). Detection reuses the scout runtime's
     // own seat, so there is still exactly one harness path for the scout; the upload's pref
     // write goes through the settings composition above, not a second writer.
@@ -6541,16 +7804,28 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     console.error("Durable round recovery failed", error);
   });
 
+  // The skip-mode overrides follow the machine across restarts (large-file-checkout): Git LFS
+  // installed or removed while the daemon was down is seen by one host probe at start, but
+  // only when there is a skip-mode checkout for it to matter to.
+  if (largeFileSkipIndex.gitDirs().length > 0) {
+    void detectSourceControlOnLocus(HOST_LOCUS).catch(() => undefined);
+  }
+
   let didShutdown = false;
-  const shutdown = (): void => {
+  let shutdownSettled: Promise<void> = Promise.resolve();
+  const shutdown = (): Promise<void> => {
     // An in-flight device-flow poll must not outlive the server.
     deviceFlow?.controller.abort();
     deviceFlow = null;
     // The old before-quit order (#251 criterion 4): signal in-flight turns, close the
     // watcher, close rehydration, close the store. Idempotent — Electron can fire quit twice.
     // The WS listener closes last, dropping every client socket.
-    if (didShutdown) return;
+    if (didShutdown) return shutdownSettled;
     didShutdown = true;
+    largeFileStateClosed = true;
+    // Installers first: each is aborted now, and the returned promise settles once every one
+    // has ended, so a caller that waits (the daemon does) never leaves Homebrew running.
+    shutdownSettled = stopToolInstalls();
     t3Sidecar.stopSync();
     for (const controller of sessionPreparations.values()) {
       controller.abort("Rennet is shutting down.");
@@ -6575,6 +7850,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         // Same: a listener that never started must not stop the shutdown sequence.
       });
     void wsListener?.close();
+    return shutdownSettled;
   };
   return {
     dispatch,

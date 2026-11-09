@@ -1014,6 +1014,55 @@ describe("ProjectsPage — the served per-project rung (C18 group A)", () => {
     cleanup();
   });
 
+  // `checkout.largeFiles` (large-file-checkout spec): Settings shows the remembered choice and
+  // lets the reviewer change it, on the row of the repository that uses Git LFS — and only
+  // there. Two repos, one of them LFS, because a card keyed by the project would offer (or
+  // write) the choice on the wrong repository and a one-repo fixture could not tell.
+  it("worktrees: the large-file choice shows on the repo that uses Git LFS and writes its row", async () => {
+    const { writes, view } = mountServedPrefsWith(P1_PREFS, {
+      second: { ...SECOND_REPO, usesLfs: true },
+    });
+    const ledger = await view.findByLabelText("Large Files in Review Checkouts for acme/ledger");
+    // A structural row label, so Title Case like its neighbours ("Project Key", "Review
+    // Context"): DESIGN.md's casing rule.
+    expect(view.getByText("Large Files in Review Checkouts")).toBeTruthy();
+    expect(view.queryByLabelText("Large Files in Review Checkouts for acme/checkout")).toBeNull();
+    // Nothing recorded yet reads as the question still being asked.
+    expect(
+      within(ledger).getByRole("button", { name: "Ask each time" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+
+    fireEvent.click(within(ledger).getByRole("button", { name: "Skip" }));
+    await waitFor(() => expect(writes.length).toBe(1));
+    expect(writes).toEqual([
+      { projectId: "p1", repoPath: SECOND_REPO.repoPath, key: "largeFiles", value: "skip" },
+    ]);
+    cleanup();
+  });
+
+  it("worktrees: a recorded large-file choice stays changeable, and Ask each time resets it", async () => {
+    const { writes, view } = mountServedPrefsWith({
+      ...P1_PREFS,
+      largeFiles: { value: "download", layer: "repo" },
+    });
+    // Shown although the row does not say it uses Git LFS: a recorded choice must not
+    // become unreachable because an engine did not look.
+    const control = await view.findByLabelText("Large Files in Review Checkouts for acme/checkout");
+    expect(
+      within(control).getByRole("button", { name: "Download" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    fireEvent.click(within(control).getByRole("button", { name: "Ask each time" }));
+    await waitFor(() => expect(writes.length).toBe(1));
+    // "Ask" is no recorded choice: the write RESETS the repo entry rather than storing "ask".
+    expect(writes[0]).toEqual({
+      projectId: "p1",
+      repoPath: P1_ROW.repoPath,
+      key: "largeFiles",
+      value: null,
+    });
+    cleanup();
+  });
+
   // The THREE TEXT FIELDS write the REPO rung too, addressed by the row that owns them —
   // not the host's `daemon-settings.json`. Typed on the SECOND repository, because a card
   // that wrote the first row's `repoPath` for every field is the exact defect the many-repos

@@ -1,13 +1,13 @@
 // The process entry the desktop shell spawns (detached, via ELECTRON_RUN_AS_NODE) and
 // `rennet serve` runs in the foreground. Kept thin so daemon.ts stays a pure, importable
-// module: this file is the only place `runDaemon` executes on load, and it is never
+// module: this file is the only place `startDaemon` executes on load, and it is never
 // imported by a test or another module. Bundled to `dist/server/index.cjs` (#379).
 import { setDefaultResultOrder } from "node:dns";
 import { existsSync } from "node:fs";
 import { setDefaultAutoSelectFamily, setDefaultAutoSelectFamilyAttemptTimeout } from "node:net";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveDaemonConfig, runDaemon } from "./daemon";
+import { resolveDaemonConfig, startDaemon } from "./daemon";
 import { resolveSidecarBundle } from "./t3/sidecar";
 
 // Thread-pool headroom (field bug, lancelot 2026-08-20): the daemon's libuv pool
@@ -62,8 +62,10 @@ try {
   process.exitCode = 2;
 }
 
+// PATH is hydrated from the user's login shell inside `startDaemon`, before the server
+// starts (daemon-process-environment), so a Dock launch's bare launchd PATH never reaches git.
 if (config) {
-  void runDaemon({
+  void startDaemon({
     ...config,
     uiDist: config.uiDist ?? defaultUiDist(),
     t3BundlePath: config.t3BundlePath ?? resolveSidecarBundle(process.env),

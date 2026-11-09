@@ -1,5 +1,7 @@
+import type { SidebarSession } from "@rennet/protocol";
 import { useRoute } from "wouter";
 import { useCommand } from "../data";
+import { preparationPhase, preparationStopped } from "../preparation/preparation-phase";
 import { reviewIdOf, useSlugResolution } from "../routes/slug";
 import { ROUTES } from "../routes/url";
 
@@ -67,14 +69,51 @@ function useRouteSlug(): string {
  */
 export type ChatDockTarget =
   | { readonly kind: "resolving" }
-  | { readonly kind: "review"; readonly reviewId: string }
-  | { readonly kind: "no-review" };
+  /**
+   * A review is attached. `preparing` says its preparation is still under way (capture
+   * finished, the large-file question open, or drafting), so a thread that is not bound
+   * YET is a wait, not an absence: the review is attached before the workspace is bound,
+   * and the thread binds with the workspace.
+   *
+   * `stopped` says the preparation failed or was cancelled. A thread that never bound is
+   * then neither a wait nor something the pane should explain: the failure block over the
+   * workspace owns the message, so the dock shows the title alone. Handing the `unavailable`
+   * answer to the T3 mount printed "This review has no thread, and none is being opened" —
+   * Rai's complaint, word for word.
+   */
+  | {
+      readonly kind: "review";
+      readonly reviewId: string;
+      readonly preparing: boolean;
+      readonly stopped: boolean;
+    }
+  /**
+   * No review is attached. `preparing` says one is on its way — capture is running, the
+   * large-file question is open, or drafting has begun before the thread exists — so the
+   * dock shows the thread's skeleton (review-preparation-reliability D6). Otherwise the
+   * dock shows nothing: a stopped preparation's failure block owns the message, and a
+   * session that was never prepared has no thread to describe.
+   */
+  | { readonly kind: "no-review"; readonly preparing: boolean };
 
 export function useRouteChatTarget(): ChatDockTarget {
-  const resolution = useSlugResolution(useRouteSlug());
+  const slug = useRouteSlug();
+  const resolution = useSlugResolution(slug);
+  const row = useSessionRow(slug);
   if (resolution.status === "pending") return { kind: "resolving" };
   const reviewId = reviewIdOf(resolution);
-  return reviewId === undefined ? { kind: "no-review" } : { kind: "review", reviewId };
+  const phase = preparationPhase(row?.preparation);
+  const preparing = phase === "waiting" || phase === "choosing" || phase === "drafting";
+  if (reviewId !== undefined) {
+    return { kind: "review", reviewId, preparing, stopped: preparationStopped(phase) };
+  }
+  return { kind: "no-review", preparing };
+}
+
+/** The route's session row, off the one shared `session.list` read. */
+function useSessionRow(slug: string): SidebarSession | undefined {
+  const { data } = useCommand("session.list", {}, { enabled: slug !== "" });
+  return data?.sessions.find((candidate) => candidate.id === slug);
 }
 
 /**
@@ -82,12 +121,19 @@ export function useRouteChatTarget(): ChatDockTarget {
  * the top bar to the dock when the dock opens (C20 state 2), so the dock has to be able to
  * render it without the transcript that used to carry it. `session.transcript` is that
  * read; its `rows` are the coding turns, which the T3 view no longer renders here.
+ *
+ * Until that read answers — and for the whole of a preparation, when there is no review to
+ * ask about — the trail is the SESSION's own title: the branch or pull request the reviewer
+ * opened, off the same `session.list` row the sidebar shows. It used to fall back to the
+ * literal "New review", which put a placeholder where the reviewer's own branch belonged
+ * (review-preparation-reliability: "'New review' … that's really bad UX").
  */
 export function useChatTrail(reviewId: string | undefined): ChatTrail {
+  const row = useSessionRow(useRouteSlug());
   const { data } = useCommand(
     "session.transcript",
     { reviewId: reviewId ?? "" },
     { enabled: reviewId !== undefined },
   );
-  return data?.trail ?? { title: "New review" };
+  return data?.trail ?? { title: row?.title ?? "" };
 }

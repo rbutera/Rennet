@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import { parseUnifiedDiffFiles } from "@rennet/adapters";
 import {
@@ -62,8 +63,12 @@ export function sessionTrailForReview(review: Review, workspace?: string): Sessi
       ? "teammate-pr"
       : "your-pr"
     : "your-branch";
-  const title = branch ?? (review.postTarget ? `PR #${review.postTarget.number}` : "New review");
   const projectName = basename(review.repositoryRoot) || undefined;
+  // A review of a detached checkout has no branch and no PR: it is the project as a whole,
+  // so it is named by the project, never by a "New review" placeholder.
+  const title =
+    branch ??
+    (review.postTarget ? `PR #${review.postTarget.number}` : (projectName ?? "New review"));
   // The workspace every turn of this session runs in (session-bound-workspace): shown beside
   // the branch so the reviewer can see WHICH checkout a seat read. Absent when nothing has
   // bound one, rather than guessing the repository root.
@@ -98,6 +103,14 @@ export function sidebarSessionOf(
   session: SessionModel,
   roundRecords: readonly RoundRecord[] = [],
   operation?: Pick<RoundOperation, "operationId" | "state">,
+  /**
+   * The title for a session with no rename and no claim — the Current Checkout row, which
+   * claims nothing. The composition root passes the attached review's branch, else the
+   * project's name, so the row (and the chat dock that reads it) names the checkout rather
+   * than the "New review" placeholder (review-preparation-reliability: "'New review' …
+   * really bad UX"). Absent keeps the placeholder for a caller that knows neither.
+   */
+  fallbackTitle?: string,
 ): SidebarSession {
   const completedRoundNumber = latestCompletedRoundNumber(roundRecords);
   const reviewActivity: SidebarSession["reviewActivity"] =
@@ -116,7 +129,7 @@ export function sidebarSessionOf(
   return {
     id: session.id,
     projectId: session.projectId,
-    title: session.title ?? session.claim?.branch ?? "New review",
+    title: session.title ?? session.claim?.branch ?? fallbackTitle ?? "New review",
     target: session.claim?.prNumber === undefined ? "your-branch" : "your-pr",
     ...(session.pinned ? { pinned: true } : {}),
     ...(session.archivedAt === undefined ? {} : { archived: true }),
@@ -140,6 +153,9 @@ export function sidebarSessionOf(
     // field. WHERE those commits have got to is not on the row: "pushed" and "behind" are
     // ref questions, and `session.workBranchState` asks git when the surface asks.
     ...(session.workBranch === undefined ? {} : { workBranch: session.workBranch }),
+    // Quiet facts about the bound checkout (review-preparation-reliability): plain sentences
+    // with no host path in them, shown beside the review.
+    ...(session.workspaceNotes === undefined ? {} : { workspaceNotes: session.workspaceNotes }),
     ...(reviewActivity === undefined ? {} : { reviewActivity }),
     ...(completedRoundNumber === undefined
       ? {}
@@ -183,7 +199,14 @@ export function sessionHandlers(rt: DispatchRuntime) {
       // construction: no store wired, or a session
       // with no captured turns yet, returns `[]` — capability present, never fabricated content.
       const rows = rt.deps.transcriptRowsForReview?.(input.reviewId) ?? [];
-      const workspace = (await rt.deps.boundWorkspaceForReview?.(input.reviewId))?.root;
+      // The trail names the bound workspace when there is one. A bind that cannot happen yet —
+      // the large-file question is still open — or that failed leaves the trail on the
+      // repository: a transcript read is never the thing that checks a review out, and never
+      // fails over one.
+      const workspace = await rt.deps
+        .boundWorkspaceForReview?.(input.reviewId)
+        .then((bound) => bound?.root)
+        .catch(() => undefined);
       return parseCommandOutput(name, {
         trail: sessionTrailForReview(review, workspace),
         rows: [...rows],
@@ -236,6 +259,7 @@ export function sessionHandlers(rt: DispatchRuntime) {
         ...(input.replacesSessionId === undefined
           ? {}
           : { replacesSessionId: input.replacesSessionId }),
+        ...(input.largeFiles === undefined ? {} : { largeFiles: input.largeFiles }),
         ...(input.branch === undefined
           ? {}
           : {
@@ -271,6 +295,20 @@ export function sessionHandlers(rt: DispatchRuntime) {
       const input = parseCommandInput(name, rawInput);
       const session =
         (await rt.deps.sessions?.retryPreparation(input.sessionId, input.commandId)) ?? null;
+      return parseCommandOutput(name, { session });
+    },
+    "session.chooseLargeFileMode": async (rawInput) => {
+      const name = "session.chooseLargeFileMode" as const;
+      // The reviewer's answer to the large-file question. A plain settings write plus a
+      // resume — the answer IS the request, there is nothing to confirm (Rule Zero).
+      const input = parseCommandInput(name, rawInput);
+      const session =
+        (await rt.deps.sessions?.chooseLargeFileMode(
+          input.sessionId,
+          input.mode,
+          input.commandId ?? randomUUID(),
+          input.remember ?? true,
+        )) ?? null;
       return parseCommandOutput(name, { session });
     },
     "session.rename": async (rawInput) => {

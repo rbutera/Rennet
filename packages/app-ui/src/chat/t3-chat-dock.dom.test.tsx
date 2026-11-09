@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import type { Review, SettingsProject } from "@rennet/protocol";
+import type { Review, SettingsProject, SidebarSession } from "@rennet/protocol";
 import type { ComponentType } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { RennetRouterApp } from "../routes/app";
@@ -139,19 +139,18 @@ function mountDock(
 }
 
 /**
- * A CHAT-ONLY SESSION — the New Chat route as the daemon actually publishes it (#872).
+ * A SESSION WITH NO REVIEW YET — the New Chat route as the daemon actually publishes it
+ * (#872), here a pull request whose capture has not attached a review.
  *
  * The fixture is written from the daemon's side, not the dock's: `session.list` carries a
- * real session with NO `reviewId`, and `review.load` throws the daemon's own literal
- * "Review not found" for it (the sentence `routes/slug.ts` matches on). That is the shape
- * `/s/<slug>` has for a New Chat mint before its capture attaches and for a session that
- * never gets one, and it is a SESSION route — so the dock is open, not hidden.
+ * real session with NO `reviewId` and the title the daemon composes for it (the claimed
+ * branch), and `review.load` throws the daemon's own literal "Review not found" for it (the
+ * sentence `routes/slug.ts` matches on). It is a SESSION route — so the dock is open.
  *
  * A fixture that simply omitted the review would have resolved to `not-found` and passed
- * this test while the real route (a session that exists and holds no review) still showed
- * the sidecar-starting line.
+ * these tests while the real route (a session that exists and holds no review) did not.
  */
-function mountChatOnly() {
+function mountUnattached(preparation: SidebarSession["preparation"]) {
   const asks: unknown[] = [];
   const bridge = new MemoryBridge({
     ...frontDoorHandlers(),
@@ -159,14 +158,18 @@ function mountChatOnly() {
     "session.list": () => ({
       sessions: [
         {
-          id: "chat-only",
+          id: "pr-session",
           projectId: "p1",
-          title: "New review",
-          target: "your-branch",
+          title: "feat/widget-lfs",
+          target: "your-pr",
           createdAt: 1,
+          claim: { branch: "feat/widget-lfs", prNumber: 42 },
+          ...(preparation === undefined ? {} : { preparation }),
         },
       ],
     }),
+    "session.cancelPreparation": () => ({ session: null }),
+    "session.retryPreparation": () => ({ session: null }),
     "review.load": () => {
       throw new Error("Review not found");
     },
@@ -184,10 +187,106 @@ function mountChatOnly() {
     useRennetStore.getState().uiActions.setSidebarOpen(false);
     useRennetStore.getState().uiActions.setChatOpen(true);
   });
-  const history = memoryHistory("/s/chat-only");
+  const history = memoryHistory("/s/pr-session");
   const view = mount(<RennetRouterApp bridge={bridge} history={history} />);
   return { ...view, asks };
 }
+
+/**
+ * A pull request whose review is ATTACHED and whose preparation is in `preparation`, with a
+ * slot that prints what the T3 mount was handed — so an `unavailable` answer reaching the
+ * mount shows up as "UNAVAILABLE", the stand-in for T3's own "This review has no thread"
+ * sentence. `setPreparation` moves the row; the workspace header's poll carries it in.
+ */
+function mountAttached(
+  initial: SidebarSession["preparation"],
+  options: { readonly bound?: boolean } = {},
+) {
+  let preparation = initial;
+  const asks: unknown[] = [];
+  const bridge = new MemoryBridge({
+    ...frontDoorHandlers(),
+    "settings.get": () => ({ ...emptySettings(), projects: [projectRow()] }),
+    "forge.hosts": () => ({ hosts: [] }),
+    "session.list": () => ({
+      sessions: [
+        {
+          id: "pr-session",
+          projectId: "p1",
+          title: "feat/widget-lfs",
+          target: "your-pr",
+          createdAt: 1,
+          reviewId: "review-1",
+          claim: { branch: "feat/widget-lfs", prNumber: 42 },
+          ...(preparation === undefined ? {} : { preparation }),
+        } as SidebarSession,
+      ],
+    }),
+    "session.cancelPreparation": () => ({ session: null }),
+    "session.retryPreparation": () => ({ session: null }),
+    "session.chooseLargeFileMode": () => ({ session: null }),
+    "review.load": () => ({
+      review: {
+        id: "review-1",
+        repositoryRoot: "/repos/acme/checkout",
+        status: "current",
+        activePatchsetId: "ps-1",
+        patchsets: [{ id: "ps-1", source: "local" }],
+      } as unknown as Review,
+      repositoryPresent: true,
+    }),
+    "board.read": () => ({ board: null }),
+    "chat.t3Session": (input) => {
+      asks.push(input);
+      return {
+        origin: "http://127.0.0.1:43117",
+        wsUrl: "ws://127.0.0.1:43117/ws",
+        accessToken: "bearer-never-in-the-guest",
+        environmentId: "env-1",
+        thread:
+          options.bound === true
+            ? { status: "bound", threadId: "thread-1", threadUrl: "http://127.0.0.1:43117/t/1" }
+            : { status: "unavailable", reason: "The review's checkout did not complete." },
+      };
+    },
+  });
+  act(() => {
+    useRennetStore.getState().uiActions.setSidebarOpen(false);
+    useRennetStore.getState().uiActions.setChatOpen(true);
+  });
+  const Session = ({ session }: T3NativeChatProps) => (
+    <div data-slot="t3-native-stub">
+      {session.thread?.status === "bound" ? session.thread.threadId : "UNAVAILABLE"}
+    </div>
+  );
+  const Thread = (props: T3ThreadViewProps) => <div>{props.thread.threadId}</div>;
+  const view = mount(
+    <T3ChatSlotProvider session={Session} thread={Thread}>
+      <RennetRouterApp bridge={bridge} history={memoryHistory("/s/pr-session")} />
+    </T3ChatSlotProvider>,
+  );
+  return {
+    ...view,
+    asks,
+    setPreparation(next: SidebarSession["preparation"]) {
+      preparation = next;
+    },
+  };
+}
+
+/** The dock says whose conversation this is, and nothing else. */
+function expectTitleAlone(dock: HTMLElement) {
+  expect(dock.querySelector("header")?.textContent).toContain("feat/widget-lfs");
+  expect(dock.querySelector('[data-slot="t3-native-stub"]')).toBeNull();
+  expect(dock.querySelector('[data-slot="t3-chat-preparing"]')).toBeNull();
+  expect(dock.querySelector('[data-slot="t3-chat-starting"]')).toBeNull();
+  const text = dock.textContent ?? "";
+  expect(text).not.toContain("UNAVAILABLE");
+  for (const copy of INTERNAL_COPY) expect(text).not.toContain(copy);
+}
+
+/** The copy the dock used to print on this route, which named Rennet's internals. */
+const INTERNAL_COPY = ["New review", "No review is attached"] as const;
 
 /** Both rung-two components provided, each recording its props. */
 function mountWithSlot() {
@@ -363,23 +462,210 @@ describe("the chat slot is always the T3 thread", () => {
   // DISABLED with no review, so `data` is undefined forever and the line never resolved.
   // It is not the copy that was wrong — it is that the arm was reachable at all from a
   // route where nothing is being started.
-  it("never says the sidecar is starting on a session that holds no review", async () => {
-    const { getByTestId, asks } = mountChatOnly();
+  it("titles a preparing pull request with its branch and shows the thread's skeleton", async () => {
+    // review-preparation-reliability 3.2. Rai, on the build this replaces: "'New review'
+    // 'This review has no thread and none is being opened' omg i hope i dont have to explain
+    // why that's really bad UX". The pane now says whose conversation this is — the branch
+    // the reviewer opened — and that it is on its way, without a sentence about either.
+    const { getByTestId, asks } = mountUnattached({
+      status: "capturing",
+      step: "resolving-repository",
+    });
     const dock = getByTestId("chat-dock-slot");
     await waitFor(() =>
-      expect(dock.querySelector('[data-slot="t3-chat-no-review"]')).not.toBeNull(),
+      expect(dock.querySelector('[data-slot="t3-chat-preparing"]')).not.toBeNull(),
     );
-    expect(dock.querySelector('[data-slot="t3-chat-no-review"]')?.textContent).toContain(
-      "No review is attached to this session",
-    );
-    // The line the issue was filed about, gone from this route.
+    expect(dock.querySelector("header")?.textContent).toContain("feat/widget-lfs");
+    expect(
+      dock.querySelector('[data-slot="t3-chat-preparing"] [data-slot="skeleton"]'),
+    ).not.toBeNull();
+    const text = dock.textContent ?? "";
+    for (const copy of INTERNAL_COPY) expect(text).not.toContain(copy);
+    // #872 still holds: this is a review being PREPARED, not a sidecar being started, so the
+    // bring-up skeleton is absent and nothing was asked of the sidecar. A dock that fired the
+    // read and merely relabelled its skeleton would fail here.
     expect(dock.querySelector('[data-slot="t3-chat-starting"]')).toBeNull();
-    // And it is not merely unrendered: nothing was ASKED of the sidecar either, which is
-    // the fact the copy was misreporting. A dock that still fired the read and hid the
-    // line would pass the assertion above and keep lying about the same thing.
     expect(asks).toEqual([]);
-    // The dock is on a session route, so it is open and this is really on screen.
     expect(dock.getAttribute("data-open")).toBe("true");
+  });
+
+  it("says nothing more than the title once the preparation has stopped", async () => {
+    // A failed capture: the failure block over the workspace owns the message, so the pane
+    // adds no second account of it — and no skeleton, because nothing is on its way.
+    const { getByTestId, asks } = mountUnattached({
+      status: "failed",
+      stage: "capture",
+      reason: "The pull request's branch could not be fetched.",
+    });
+    const dock = getByTestId("chat-dock-slot");
+    await waitFor(() =>
+      expect(dock.querySelector("header")?.textContent).toContain("feat/widget-lfs"),
+    );
+    // Give the resolution a beat to settle into `no-review`, then read the whole pane.
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="preparation-failure"]')).not.toBeNull(),
+    );
+    expect(dock.querySelector('[data-slot="t3-chat-preparing"]')).toBeNull();
+    expect(dock.querySelector('[data-slot="t3-chat-starting"]')).toBeNull();
+    const text = dock.textContent ?? "";
+    for (const copy of INTERNAL_COPY) expect(text).not.toContain(copy);
+    expect(text).not.toContain("could not be fetched");
+    expect(asks).toEqual([]);
+  });
+
+  it("waits on the thread skeleton while an attached review is still being prepared", async () => {
+    // The review attaches when capture settles; its thread binds with the workspace, after
+    // the large-file answer. In between the daemon answers `unavailable`, and the slot used
+    // to print "This review has no thread, and none is being opened" — Rai's complaint, word
+    // for word. While the preparation runs that is a wait; once it binds, the thread shows.
+    let preparing = true;
+    const asks: unknown[] = [];
+    const bridge = new MemoryBridge({
+      ...frontDoorHandlers(),
+      "settings.get": () => ({ ...emptySettings(), projects: [projectRow()] }),
+      "session.list": () => ({
+        sessions: [
+          {
+            id: "pr-session",
+            projectId: "p1",
+            title: "feat/widget-lfs",
+            target: "your-pr",
+            createdAt: 1,
+            reviewId: "review-1",
+            claim: { branch: "feat/widget-lfs", prNumber: 42 },
+            ...(preparing
+              ? {
+                  preparation: {
+                    status: "awaiting" as const,
+                    kind: "large-file-choice" as const,
+                    lfsAvailable: true,
+                    reviewId: "review-1",
+                  },
+                }
+              : {}),
+          },
+        ],
+      }),
+      "session.cancelPreparation": () => ({ session: null }),
+      "session.chooseLargeFileMode": () => ({ session: null }),
+      "review.load": () => ({
+        review: {
+          id: "review-1",
+          repositoryRoot: "/repos/acme/checkout",
+          status: "current",
+          activePatchsetId: "ps-1",
+          patchsets: [{ id: "ps-1", source: "local" }],
+        } as unknown as Review,
+        repositoryPresent: true,
+      }),
+      "chat.t3Session": (input) => {
+        asks.push(input);
+        return {
+          origin: "http://127.0.0.1:43117",
+          wsUrl: "ws://127.0.0.1:43117/ws",
+          accessToken: "bearer-never-in-the-guest",
+          environmentId: "env-1",
+          thread: preparing
+            ? { status: "unavailable", reason: "The review is waiting for the large-file choice." }
+            : { status: "bound", threadId: "thread-1", threadUrl: "http://127.0.0.1:43117/t/1" },
+        };
+      },
+    });
+    act(() => {
+      useRennetStore.getState().uiActions.setSidebarOpen(false);
+      useRennetStore.getState().uiActions.setChatOpen(true);
+    });
+    const Session = ({ session }: T3NativeChatProps) => (
+      <div data-slot="t3-native-stub">
+        {session.thread?.status === "bound" ? session.thread.threadId : "UNAVAILABLE"}
+      </div>
+    );
+    const Thread = (props: T3ThreadViewProps) => <div>{props.thread.threadId}</div>;
+    const { getByTestId } = mount(
+      <T3ChatSlotProvider session={Session} thread={Thread}>
+        <RennetRouterApp bridge={bridge} history={memoryHistory("/s/pr-session")} />
+      </T3ChatSlotProvider>,
+    );
+    const dock = getByTestId("chat-dock-slot");
+    await waitFor(() => expect(asks.length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(dock.querySelector('[data-slot="t3-chat-preparing"]')).not.toBeNull(),
+    );
+    // The unavailable answer is never handed to the slot while the review is on its way.
+    expect(dock.querySelector('[data-slot="t3-native-stub"]')).toBeNull();
+    expect(dock.textContent).not.toContain("UNAVAILABLE");
+    expect(dock.querySelector("header")?.textContent).toContain("feat/widget-lfs");
+
+    // The answer lands, the workspace binds, the preparation clears: the thread shows.
+    preparing = false;
+    await waitFor(
+      () =>
+        expect(dock.querySelector('[data-slot="t3-native-stub"]')?.textContent).toBe("thread-1"),
+      { timeout: 5_000 },
+    );
+    expect(dock.querySelector('[data-slot="t3-chat-preparing"]')).toBeNull();
+  });
+
+  it("shows the title alone when an attached review's checkout failed for want of Git LFS", async () => {
+    const attached = mountAttached({
+      status: "failed",
+      stage: "workspace",
+      reason: "Git LFS is needed to check out this pull request.",
+      kind: "tool-missing",
+      action: "install",
+      tool: "git-lfs",
+      detail: "git-lfs filter-process: git-lfs: command not found",
+      reviewId: "review-1",
+    });
+    const dock = attached.getByTestId("chat-dock-slot");
+    await waitFor(() => expect(attached.asks.length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="preparation-failure"]')).not.toBeNull(),
+    );
+    expectTitleAlone(dock);
+    // Nothing is on its way, so nothing polls: every ask would send the daemon back to the
+    // checkout that just failed.
+    const settledAsks = attached.asks.length;
+    await new Promise((resolve) => setTimeout(resolve, 1_800));
+    expect(attached.asks.length).toBe(settledAsks);
+    expectTitleAlone(dock);
+  });
+
+  it("shows the title alone, and stops asking, once a review is cancelled at the large-file question", async () => {
+    const attached = mountAttached({
+      status: "awaiting",
+      kind: "large-file-choice",
+      lfsAvailable: false,
+      reviewId: "review-1",
+    });
+    const dock = attached.getByTestId("chat-dock-slot");
+    await waitFor(() =>
+      expect(dock.querySelector('[data-slot="t3-chat-preparing"]')).not.toBeNull(),
+    );
+    attached.setPreparation({ status: "cancelled", stage: "workspace", reviewId: "review-1" });
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-testid="preparation-failure"][data-status="cancelled"]'),
+      ).not.toBeNull(),
+    );
+    await waitFor(() => expect(dock.querySelector('[data-slot="t3-chat-preparing"]')).toBeNull());
+    const settledAsks = attached.asks.length;
+    await new Promise((resolve) => setTimeout(resolve, 1_800));
+    // Not even the one "the preparation is over" ask: a cancelled run bound nothing.
+    expect(attached.asks.length).toBe(settledAsks);
+    expectTitleAlone(dock);
+  });
+
+  it("still shows the thread when a stopped preparation had already bound it", async () => {
+    // The control for the two above: `stopped` hides an UNBOUND answer, never a real thread.
+    const attached = mountAttached(
+      { status: "failed", stage: "boards", reason: "Drafting stopped.", reviewId: "review-1" },
+      { bound: true },
+    );
+    const dock = attached.getByTestId("chat-dock-slot");
+    await waitFor(() =>
+      expect(dock.querySelector('[data-slot="t3-native-stub"]')?.textContent).toBe("thread-1"),
+    );
   });
 
   // The control for the pair above: the SAME assertions on a route that does hold a
@@ -390,7 +676,7 @@ describe("the chat slot is always the T3 thread", () => {
     await waitFor(() =>
       expect(dock.querySelector('[data-slot="t3-chat-unmounted"]')).not.toBeNull(),
     );
-    expect(dock.querySelector('[data-slot="t3-chat-no-review"]')).toBeNull();
+    expect(dock.querySelector('[data-slot="t3-chat-preparing"]')).toBeNull();
     expect(asks).toEqual([{ reviewId: "review-1" }]);
   });
 });

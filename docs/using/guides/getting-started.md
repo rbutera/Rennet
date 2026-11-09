@@ -99,6 +99,12 @@ outcome, and every lens's board or its typed absence) to
 prints that absolute path as its last line, so a script can take `tail -1`. The
 path is always absolute, even when `--data-dir` is relative.
 
+If the repository uses Git LFS, pass `--large-files skip` to leave large files as
+placeholders in the review's checkout, or `--large-files download` to fetch them.
+The flag applies to that review only. Without it, the project's choice from the
+app applies; if the project has none yet, the review downloads them and says so
+in one line, and the app still asks the next time.
+
 The exit code carries the outcome: `0` when the boards settled, `1` when the
 daemon was not running or the review failed, was cancelled, or ran past
 `--timeout` (default half an hour). Once a session exists, a document is written
@@ -315,12 +321,23 @@ the transcript drawer.
 
 While the change is being reviewed there is no Continue yet; it appears in the
 bottom-right corner when the review is ready. The Rennet mark in the top-left
-corner is what animates while Rennet works — in the sidebar's lockup when the
-sidebar is open, and as a floating orb in the corner when it is collapsed — so
-nothing repeats that over the boards. A floating Cancel button sits in that
-bottom-right corner while the boards are being generated. If a generation
-fails or you cancel it, a header appears over the boards with the reason and a
-Retry.
+corner animates while Rennet works — in the sidebar's lockup when the sidebar is
+open, and as a floating orb in the corner when it is collapsed. Until the first
+lens starts, the lens tabs and the board area move together while your review is
+on its way, with Cancel under them; the chat pane shows your branch's name. Once
+the lenses are writing, a floating Cancel button sits in the bottom-right corner.
+If preparing the review fails, one block says what went wrong, offers the fix
+(for example Install for me when Git LFS is missing), and Retry; git's own output
+is under Details. When Rennet can't tell what went wrong, the block says so plainly
+and keeps the raw message under Details too. If you cancel, the block says so and
+offers Retry. Either way the chat pane shows just your branch's name: the block is
+where the explanation lives.
+
+If the repository stores large files with Git LFS, the first review of the project
+asks how to check them out: Download large files (full files, slower) or Skip large
+files (faster, with small placeholder files). Rennet remembers the answer for the
+project, and you can change it in Settings → Projects under Large Files in Review
+Checkouts.
 
 You can navigate elsewhere while a review runs. Its sidebar row keeps an animated
 ring. Completion briefly shows a checkmark, then a dot until you open that review.

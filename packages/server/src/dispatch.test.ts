@@ -3831,6 +3831,7 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
         prPattern: "{owner}/{name}/pr-{number}",
         workspace: "share" as const,
       })),
+      writeLargeFiles: vi.fn(async () => undefined),
     };
     const { dispatch } = harness(undefined, { settings });
 

@@ -31,6 +31,7 @@ import {
 } from "./runtime";
 import { sessionHandlers } from "./session";
 import { settingsHandlers } from "./settings";
+import { toolsHandlers } from "./tools";
 import { worktreesHandlers } from "./worktrees";
 
 // Re-export the public router surface so `./dispatch` stays the single import site
@@ -98,6 +99,7 @@ export function buildDispatchTable(rt: DispatchRuntime) {
     ...roundHandlers(rt),
     ...sessionHandlers(rt),
     ...settingsHandlers(rt),
+    ...toolsHandlers(rt),
     ...worktreesHandlers(rt),
   };
   // Compile-time exhaustiveness guard — the successor to the old `switch` default's `never`

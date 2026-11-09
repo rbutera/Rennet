@@ -145,6 +145,7 @@ export function LensSwitcher({
   reviewId = "",
   generation = "",
   chatOpen = false,
+  preparing = false,
 }: {
   readonly lenses: readonly LensBoardEntry[];
   readonly selected: LensKind | null;
@@ -157,6 +158,13 @@ export function LensSwitcher({
   /** The chat dock's state, so the label fold matches the space the dock leaves — the
    *  same chat-awareness the top bar's pills carry (`top-bar.tsx` PILL.foldBelow). */
   readonly chatOpen?: boolean;
+  /**
+   * The review is being prepared and no seat has opened yet (review-preparation-reliability
+   * D6). The five tabs then breathe as ONE wave, staggered left to right, so the rail reads
+   * as "your lenses are on their way" rather than as five idle tabs. It is a presence, not a
+   * register: no tab claims a seat, and each tab keeps its own `data-register` untouched.
+   */
+  readonly preparing?: boolean;
 }) {
   const [inspected, setInspected] = useState<LensKind | null>(null);
   const selectedTab = useRef<HTMLButtonElement>(null);
@@ -174,13 +182,15 @@ export function LensSwitcher({
       ref={lensesRef}
       role="tablist"
       aria-label="Lens"
+      aria-busy={preparing || undefined}
       data-kind="lens-switcher"
+      data-presence={preparing ? "waiting" : undefined}
       className={cn(
         "flex items-center gap-0.5 rounded-lg border border-border bg-card/40 p-1",
         className,
       )}
     >
-      {lenses.map(({ lens, board, failure, absence, seat }) => {
+      {lenses.map(({ lens, board, failure, absence, seat }, index) => {
         // Withheld while the board is still being written (5.4): a partial board would
         // mark every section new, which is a lie the reviewer would act on.
         const unviewedDeltas = seat.drafting
@@ -239,26 +249,40 @@ export function LensSwitcher({
             )}
           >
             <LensStop cut={seat.cut} active={active} />
-            <span className="relative flex shrink-0">
-              <Icon icon={LENS_ICON[lens]} className={cn("size-4", active && "text-lens")} />
-              {openCount > 0 ? (
-                <span
-                  data-testid="lens-open-count"
-                  aria-hidden="true"
-                  className="-right-2 -top-2 absolute flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 font-semibold text-10 text-destructive-foreground leading-none tabular-nums"
-                >
-                  {openCount}
-                </span>
-              ) : unviewedDeltas > 0 ? (
-                <span
-                  data-testid="lens-delta-pip"
-                  data-delta-count={unviewedDeltas}
-                  aria-hidden="true"
-                  className="-right-1 -top-1 absolute size-1.5 rounded-full bg-primary"
-                />
-              ) : null}
-            </span>
-            {/* The label folds to icon-only once the rail's own pane (the top-bar `@container`)
+            {/* The shared wait: one breath travelling the rail, on the tab's CONTENT rather
+                than on the tab, so the stop under it keeps its own register untouched. Under
+                reduced motion it holds still at a dimmed ink, which still reads apart from a
+                settled rail. */}
+            <span
+              data-slot="lens-presence"
+              data-presence={preparing ? "waiting" : undefined}
+              className={cn(
+                "flex items-center gap-2",
+                preparing &&
+                  "animate-presence-breathe motion-reduce:animate-none motion-reduce:opacity-60",
+              )}
+              style={preparing ? { animationDelay: `${index * 160}ms` } : undefined}
+            >
+              <span className="relative flex shrink-0">
+                <Icon icon={LENS_ICON[lens]} className={cn("size-4", active && "text-lens")} />
+                {openCount > 0 ? (
+                  <span
+                    data-testid="lens-open-count"
+                    aria-hidden="true"
+                    className="-right-2 -top-2 absolute flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 font-semibold text-10 text-destructive-foreground leading-none tabular-nums"
+                  >
+                    {openCount}
+                  </span>
+                ) : unviewedDeltas > 0 ? (
+                  <span
+                    data-testid="lens-delta-pip"
+                    data-delta-count={unviewedDeltas}
+                    aria-hidden="true"
+                    className="-right-1 -top-1 absolute size-1.5 rounded-full bg-primary"
+                  />
+                ) : null}
+              </span>
+              {/* The label folds to icon-only once the rail's own pane (the top-bar `@container`)
                 is too narrow to hold the five labelled tabs beside the folded pills — CHAT-AWARE,
                 exactly as the pills fold (`top-bar.tsx` PILL.foldBelow): the dock open leaves the
                 rail ~12rem more room than shut, so it can keep its labels at a narrower pane. The
@@ -267,25 +291,26 @@ export function LensSwitcher({
                 pane, so labels show at normal sizes. The old fixed 1080px hid them on any pane
                 the dock left, which is the bug this replaces. The `aria-label` above still
                 carries the full name, so nothing is lost to a screen reader. */}
-            <span className={chatOpen ? "@max-[42rem]:hidden" : "@max-[55rem]:hidden"}>
-              {LENS_LABEL[lens]}
+              <span className={chatOpen ? "@max-[42rem]:hidden" : "@max-[55rem]:hidden"}>
+                {LENS_LABEL[lens]}
+              </span>
+              {lens === "noise" && seat.waitingOn.length > 0 ? (
+                <ReviewActivity label="Waiting for other lenses" className="size-3 text-lens" />
+              ) : seat.register === "settled" ? (
+                // Evidence green, NEVER the lens hue: a Flagged-red or any-hued check would read
+                // as a severity/error mark. Green is the palette's one "good / ready" ink and
+                // means the same on every lens. This is the "reworked" line's replacement (J) —
+                // "this lens is ready", carried as a mark on the tab, not a sentence in the feed.
+                <Icon
+                  icon={Check}
+                  strokeWidth={3}
+                  aria-hidden="true"
+                  className="size-3.5 shrink-0 text-green"
+                />
+              ) : (
+                <SeatIndicators register={seat.register} voices={seat.voices.length} />
+              )}
             </span>
-            {lens === "noise" && seat.waitingOn.length > 0 ? (
-              <ReviewActivity label="Waiting for other lenses" className="size-3 text-lens" />
-            ) : seat.register === "settled" ? (
-              // Evidence green, NEVER the lens hue: a Flagged-red or any-hued check would read
-              // as a severity/error mark. Green is the palette's one "good / ready" ink and
-              // means the same on every lens. This is the "reworked" line's replacement (J) —
-              // "this lens is ready", carried as a mark on the tab, not a sentence in the feed.
-              <Icon
-                icon={Check}
-                strokeWidth={3}
-                aria-hidden="true"
-                className="size-3.5 shrink-0 text-green"
-              />
-            ) : (
-              <SeatIndicators register={seat.register} voices={seat.voices.length} />
-            )}
           </button>
         );
         return (

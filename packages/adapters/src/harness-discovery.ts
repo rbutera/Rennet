@@ -11,6 +11,7 @@ import {
 } from "@rennet/core";
 import { execa } from "execa";
 import { probeAppServerHandshake } from "./codex-app-server";
+import { readLoginShellPath } from "./user-path";
 
 /**
  * Join path segments for a platform, NOT the host's (add-windows-support). A Windows
@@ -308,19 +309,9 @@ export function defaultDiscoveryDeps(): DiscoveryDeps {
     platform,
     pathExt: process.env.PATHEXT ?? "",
     locus: HOST_LOCUS,
-    async loginShellPath(): Promise<string | null> {
-      if (platform === "win32") return null; // no POSIX shell on Windows
-      const shell = process.env.SHELL ?? "/bin/zsh";
-      try {
-        const result = await execa(shell, ["-ilc", 'printf %s "$PATH"'], {
-          reject: false,
-          shell: false,
-        });
-        return result.exitCode === 0 ? result.stdout : null;
-      } catch {
-        return null;
-      }
-    },
+    // The shared resolver (daemon-process-environment): markers keep rc-file banners out of
+    // the value, a 5 s timeout bounds a hung shell, and Windows answers null (no POSIX shell).
+    loginShellPath: () => readLoginShellPath(),
     envPath: process.env.PATH ?? "",
     home: homedir(),
     async listDir(directory: string): Promise<readonly string[]> {

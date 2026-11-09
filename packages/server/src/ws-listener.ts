@@ -32,7 +32,6 @@ import type {
   BoardEventFrame,
   CommandName,
   LensDraftEvent,
-  ProjectProcessEvent,
   ProjectProgressEvent,
   RoundEvent,
   SessionFrame,
@@ -40,9 +39,11 @@ import type {
 import {
   ACT_FEATURE,
   ATTENTION_FEATURE,
+  commandOutputForProtocol,
   MIN_COMPATIBLE_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
   parseSessionFrame,
+  progressEventForProtocol,
   REVIEW_CLI_FEATURE,
 } from "@rennet/protocol";
 import { WebSocket, WebSocketServer } from "ws";
@@ -282,7 +283,7 @@ export interface WsListener {
   /** The host the listener bound (`127.0.0.1` by default, or the configured `daemon.listen.host`). */
   readonly host: string;
   /** Fan a rehydration/background progress event out to every connected socket (projected per connection class). */
-  broadcastProgress(commandId: string, event: ProjectProcessEvent): void;
+  broadcastProgress(commandId: string, event: ProjectProgressEvent): void;
   /**
    * Fan newly appended board events out to every authorized socket (B4 broadcast).
    * `private` (loopback) sockets receive the raw events; `projected` sockets receive
@@ -449,6 +450,12 @@ interface Connection {
   readonly connectionId: string;
   helloReceived: boolean;
   connectionClass: ConnectionClass;
+  /**
+   * The protocol version the client said it speaks in its `hello`. Payloads are written in
+   * that version's vocabulary (`commandOutputForProtocol`): a peer that negotiated an older
+   * version inside the window must never be sent a value its decoder rejects.
+   */
+  protocolVersion: number;
   /** The authenticated device id (projected connections only) — the push-token key (#383 M1). */
   deviceId?: string;
   /** The last presence this connection reported, or undefined until it does (⇒ away for delivery). */
@@ -578,6 +585,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
       connectionId,
       helloReceived: false,
       connectionClass: "private",
+      protocolVersion: PROTOCOL_VERSION,
       serverRequests: new Map(),
     };
     connections.add(connection);
@@ -622,10 +630,12 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
           progressRecipientId: connectionId,
           deviceId: connection.deviceId,
         });
+        // In the client's own protocol vocabulary first, then projected for its class.
+        const versioned = commandOutputForProtocol(output, connection.protocolVersion);
         send(socket, {
           type: "response",
           requestId,
-          output: ctx ? projectCommandOutput(command, output, ctx) : output,
+          output: ctx ? projectCommandOutput(command, versioned, ctx) : versioned,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -697,6 +707,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
             connection.connectionClass = "pairing-only";
           }
           connection.helloReceived = true;
+          connection.protocolVersion = frame.protocolVersion;
           send(socket, {
             type: "serverInfo",
             version: serverVersion,
@@ -838,7 +849,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
   }
   boundPort = address.port;
 
-  const broadcastProgress = (commandId: string, event: ProjectProcessEvent): void => {
+  const broadcastProgress = (commandId: string, event: ProjectProgressEvent): void => {
     // Serialize once per class: private sockets get the raw event, projected sockets the projection.
     const rawPayload = JSON.stringify({
       type: "progressEvent",
@@ -849,6 +860,8 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     for (const connection of connections) {
       if (connection.socket.readyState !== WebSocket.OPEN) continue;
       if (!connection.helloReceived || connection.connectionClass === "pairing-only") continue;
+      // An event kind the client's protocol version has no word for is not sent to it.
+      if (!progressEventForProtocol(event.kind, connection.protocolVersion)) continue;
       if (connection.connectionClass === "projected") {
         if (projectedPayload === null) {
           projectedPayload = JSON.stringify({

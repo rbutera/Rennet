@@ -16,6 +16,7 @@ import { ExitFab } from "../handoff/fab";
 import { resolveEntryMode } from "../handoff/handoff-data";
 import { HandoffView } from "../handoff/handoff-view";
 import type { RoundDispatchViewState } from "../handoff/rounds-lanes";
+import { PresenceScope } from "../preparation/preparation-presence";
 import { DiffViewContainer } from "../review";
 import { useAskLog } from "../review/ask-log";
 import { RoundGreeting } from "../rounds/round-greeting";
@@ -89,8 +90,11 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   const slug = sessionParams?.slug ? decodeURIComponent(sessionParams.slug) : "";
   const session = useSessionRow(slug);
   const preparation = session?.preparation;
+  // `awaiting` counts: a review waiting on the large-file answer has no boards to hand off.
   const preparationRunning =
-    preparation?.status === "capturing" || preparation?.status === "drafting";
+    preparation?.status === "capturing" ||
+    preparation?.status === "awaiting" ||
+    preparation?.status === "drafting";
   const mode = resolveEntryMode(review);
 
   // Review-identity isolation (C05's boardId lesson, applied to the singleton `review` slice): the
@@ -328,37 +332,39 @@ export function ReviewWorkspace({ review }: { review: Review }) {
     // the frame's `overflow-hidden`; they share ONE primary scroller now. That scroller is
     // also what C20's floating-chip clearance hangs off, so the board reads correctly under
     // the state-3 chip layer instead of starting beneath them.
-    <div className="rennet-workspace relative flex h-full min-h-0 flex-col">
-      {/* One line, above the branch so it is present on the hand-off too — the surface where a
+    <PresenceScope>
+      <div className="rennet-workspace relative flex h-full min-h-0 flex-col">
+        {/* One line, above the branch so it is present on the hand-off too — the surface where a
           stale review would be posted under the reviewer's own name. It reads and it offers a
           button; it blocks nothing and every view stays exactly as reachable as before. */}
-      {stale ? (
-        <div
-          data-testid="review-stale"
-          role="status"
-          className="flex shrink-0 items-baseline gap-3 border-border border-b bg-accent-surface px-6 py-2 text-sm text-ink-soft"
-        >
-          <span>
-            The repository changed since this review was captured — you are reading the older tree.
-          </span>
-          <button
-            type="button"
-            disabled={regenerating}
-            onClick={() => {
-              void regenerate({ commandId: crypto.randomUUID(), reviewId, repoPath }).catch(held);
-            }}
-            className="text-accent underline underline-offset-2 disabled:no-underline disabled:opacity-60"
+        {stale ? (
+          <div
+            data-testid="review-stale"
+            role="status"
+            className="flex shrink-0 items-baseline gap-3 border-border border-b bg-accent-surface px-6 py-2 text-sm text-ink-soft"
           >
-            {regenerating ? "Regenerating…" : "Regenerate"}
-          </button>
-        </div>
-      ) : null}
-      {/* CAPTURE IN THE WORKSPACE, NOT IN FRONT OF IT (5.2). While a generation is being
+            <span>
+              The repository changed since this review was captured — you are reading the older
+              tree.
+            </span>
+            <button
+              type="button"
+              disabled={regenerating}
+              onClick={() => {
+                void regenerate({ commandId: crypto.randomUUID(), reviewId, repoPath }).catch(held);
+              }}
+              className="text-accent underline underline-offset-2 disabled:no-underline disabled:opacity-60"
+            >
+              {regenerating ? "Regenerating…" : "Regenerate"}
+            </button>
+          </div>
+        ) : null}
+        {/* CAPTURE IN THE WORKSPACE, NOT IN FRONT OF IT (5.2). While a generation is being
           prepared this names the step it is on and offers cancel; when nothing is being
           prepared it renders nothing. The boards are on screen behind it either way —
           there is no waiting stage between the reviewer and their review. */}
-      <WorkspaceHeader slug={slug} />
-      {/* The session's work branch, beside the branch the workspace is about — one strip,
+        <WorkspaceHeader slug={slug} />
+        {/* The session's work branch, beside the branch the workspace is about — one strip,
           above every view, offering the fast-forward (workspace-settings D4). It renders
           nothing at all under `share`, and nothing once the branch is at the work branch's
           tip; what it says in between is read from git, not from a flag.
@@ -368,96 +374,110 @@ export function ReviewWorkspace({ review }: { review: Review }) {
           band around nothing — the route cannot know whether the note has a sentence,
           because that answer is a git read the note makes. So the border and the padding
           moved inside it, and an empty answer now renders nothing at all. */}
-      {showWorkBranch && session !== undefined ? <WorkBranchNote sessionId={session.id} /> : null}
-      {view === "handoff" ? (
-        <HandoffMount key={slug} review={review} slug={slug} navigate={navigate} />
-      ) : view === "diff" ? (
-        <DiffViewContainer
-          review={review}
-          records={roundRecords}
-          recordsPending={roundRecordsPending}
-          {...(roundsUnavailable === undefined ? {} : { recordsUnavailable: roundsUnavailable })}
-          round={query.round ?? undefined}
-        />
-      ) : (
-        // THE BOARD REGION (5.6/6.2/D15): a ROW of the board's own primary scroller and the
-        // seat-transcript drawer beside it. The scroller is the board column's, not the
-        // row's, so the drawer scrolls on its own and a tall board scrolls under a drawer
-        // that stays put. `@container` is the drawer's measure: it takes the whole region
-        // below the shell's minimum surface width, and that width is the REGION's, not the
-        // window's, so a wide window with a wide chat dock still gets the narrow treatment.
-        <div data-region="board" className="flex min-h-0 flex-1 @container">
-          <div className="chrome-scroll-clearance min-h-0 min-w-0 flex-1 overflow-y-auto">
-            {view === "rounds" && roundsUnavailable !== undefined ? (
-              <RoundsUnavailable reason={roundsUnavailable} />
-            ) : view === "rounds" && roundRecords.length > 0 ? (
-              <RoundsLedger reviewId={review.id} slug={slug} records={roundRecords} />
-            ) : showRoundGreeting ? (
-              // Report phase with the greeting armed: the report GATES the reveal. A valid report
-              // leads the surface (regeneration streaming beneath); a missing or invalid report is
-              // surfaced HONESTLY — never silently swallowed, and the new generation stays HIDDEN
-              // behind the reveal (finding 1). Falling through to `LensBoardView` here would open
-              // the composed generation with no "View the New Boards" act and hide the failure.
-              report.status === "valid" ? (
-                <RoundGreeting
-                  board={report.board}
-                  state={roundState}
-                  onReveal={consumeRoundReport}
-                  {...(greetingReceipt === undefined ? {} : { receipt: greetingReceipt })}
-                />
+        {showWorkBranch && session !== undefined ? <WorkBranchNote sessionId={session.id} /> : null}
+        {/* Quiet facts about the bound checkout (review-preparation-reliability): today only that
+          a skip-mode checkout left large files as placeholders. Plain sentences beside the
+          review, never a failure and never a dialog. */}
+        {session?.workspaceNotes !== undefined && session.workspaceNotes.length > 0 ? (
+          <ul
+            data-slot="workspace-notes"
+            className="flex shrink-0 flex-col gap-1 border-line border-b px-6 py-2 text-ink-soft text-xs"
+          >
+            {session.workspaceNotes.map((note) => (
+              <li key={note}>{note}</li>
+            ))}
+          </ul>
+        ) : null}
+        {view === "handoff" ? (
+          <HandoffMount key={slug} review={review} slug={slug} navigate={navigate} />
+        ) : view === "diff" ? (
+          <DiffViewContainer
+            review={review}
+            records={roundRecords}
+            recordsPending={roundRecordsPending}
+            {...(roundsUnavailable === undefined ? {} : { recordsUnavailable: roundsUnavailable })}
+            round={query.round ?? undefined}
+          />
+        ) : (
+          // THE BOARD REGION (5.6/6.2/D15): a ROW of the board's own primary scroller and the
+          // seat-transcript drawer beside it. The scroller is the board column's, not the
+          // row's, so the drawer scrolls on its own and a tall board scrolls under a drawer
+          // that stays put. `@container` is the drawer's measure: it takes the whole region
+          // below the shell's minimum surface width, and that width is the REGION's, not the
+          // window's, so a wide window with a wide chat dock still gets the narrow treatment.
+          <div data-region="board" className="flex min-h-0 flex-1 @container">
+            <div className="chrome-scroll-clearance min-h-0 min-w-0 flex-1 overflow-y-auto">
+              {view === "rounds" && roundsUnavailable !== undefined ? (
+                <RoundsUnavailable reason={roundsUnavailable} />
+              ) : view === "rounds" && roundRecords.length > 0 ? (
+                <RoundsLedger reviewId={review.id} slug={slug} records={roundRecords} />
+              ) : showRoundGreeting ? (
+                // Report phase with the greeting armed: the report GATES the reveal. A valid report
+                // leads the surface (regeneration streaming beneath); a missing or invalid report is
+                // surfaced HONESTLY — never silently swallowed, and the new generation stays HIDDEN
+                // behind the reveal (finding 1). Falling through to `LensBoardView` here would open
+                // the composed generation with no "View the New Boards" act and hide the failure.
+                report.status === "valid" ? (
+                  <RoundGreeting
+                    board={report.board}
+                    state={roundState}
+                    onReveal={consumeRoundReport}
+                    {...(greetingReceipt === undefined ? {} : { receipt: greetingReceipt })}
+                  />
+                ) : (
+                  <ReportUnavailable status={report.status} />
+                )
               ) : (
-                <ReportUnavailable status={report.status} />
-              )
-            ) : (
-              // No eyebrow. The board opens on the board (spike `main-surface.tsx`); a
-              // `REVIEW · <repo>` strip above it was app-only chrome restating the top bar's
-              // own trail, and it pushed the document down a row on every read.
-              <LensBoardView
-                slug={slug}
-                reviewId={review.id}
-                generation={boardGeneration}
-                selectedGeneration={query.generation ?? boardGeneration}
-                lens={query.lens}
-                generations={boardGenerations}
-                onGenerationSelect={(generation) =>
-                  navigate(
-                    sessionPath(slug, {
-                      view: "board",
-                      lens: query.lens,
-                      generation: generation === boardGeneration ? undefined : generation,
-                      file: query.file ?? undefined,
-                      round: query.round ?? undefined,
-                      ask: query.ask ?? undefined,
-                    }),
-                    { replace: true },
-                  )
-                }
-              />
-            )}
-          </div>
-          {/* The seat transcript, right-aligned inside the board region and never over the
+                // No eyebrow. The board opens on the board (spike `main-surface.tsx`); a
+                // `REVIEW · <repo>` strip above it was app-only chrome restating the top bar's
+                // own trail, and it pushed the document down a row on every read.
+                <LensBoardView
+                  slug={slug}
+                  reviewId={review.id}
+                  generation={boardGeneration}
+                  selectedGeneration={query.generation ?? boardGeneration}
+                  lens={query.lens}
+                  generations={boardGenerations}
+                  onGenerationSelect={(generation) =>
+                    navigate(
+                      sessionPath(slug, {
+                        view: "board",
+                        lens: query.lens,
+                        generation: generation === boardGeneration ? undefined : generation,
+                        file: query.file ?? undefined,
+                        round: query.round ?? undefined,
+                        ask: query.ask ?? undefined,
+                      }),
+                      { replace: true },
+                    )
+                  }
+                />
+              )}
+            </div>
+            {/* The seat transcript, right-aligned inside the board region and never over the
               chat dock (#823) — the dock is outside the outlet entirely, so no state of
               this drawer can reach it. */}
-          <SeatTranscriptDrawer reviewId={review.id} />
-        </div>
-      )}
-      <ExitFab
-        // "Interrupted" is reserved for a preparation that failed or was cancelled BEFORE there
-        // was a review to hand off — the header carries the failure and its Retry. Once a review
-        // exists, Continue stays actionable through a failed lane or a failed round: the
-        // hand-off view is the only way to dispatch again, and a failed round operation is
-        // durable until the next one, so gating on it would lock the reviewer out for good.
-        ready={
-          preparation === undefined ||
-          ("reviewId" in preparation && preparation.reviewId !== undefined)
-        }
-        reviewing={reviewing}
-        mode={mode}
-        hasOpenPr={review.postTarget !== undefined}
-        open={view === "handoff"}
-        onToggle={toHandoff}
-      />
-    </div>
+            <SeatTranscriptDrawer reviewId={review.id} />
+          </div>
+        )}
+        <ExitFab
+          // "Interrupted" is reserved for a preparation that failed or was cancelled BEFORE there
+          // was a review to hand off — the header carries the failure and its Retry. Once a review
+          // exists, Continue stays actionable through a failed lane or a failed round: the
+          // hand-off view is the only way to dispatch again, and a failed round operation is
+          // durable until the next one, so gating on it would lock the reviewer out for good.
+          ready={
+            preparation === undefined ||
+            ("reviewId" in preparation && preparation.reviewId !== undefined)
+          }
+          reviewing={reviewing}
+          mode={mode}
+          hasOpenPr={review.postTarget !== undefined}
+          open={view === "handoff"}
+          onToggle={toHandoff}
+        />
+      </div>
+    </PresenceScope>
   );
 }
 

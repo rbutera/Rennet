@@ -308,7 +308,10 @@ async function expectTerminalLensesRendered(
       );
     } else {
       await expect(tab).toHaveAttribute("data-failed", "true");
-      await expect(page.locator('[data-kind="board-failed"]')).toContainText(evidence.reason);
+      // The failure's own reason sits behind Details; the headline is plain.
+      const failedBoard = page.locator('[data-kind="board-failed"]');
+      await failedBoard.getByText("Details", { exact: true }).click();
+      await expect(failedBoard).toContainText(evidence.reason);
     }
     await expect(page.locator('[data-kind="board-empty"]')).toHaveCount(0);
     await expect(page.locator('[data-kind="board-error"]')).toHaveCount(0);

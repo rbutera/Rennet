@@ -39,6 +39,7 @@ export {
   type SettingsHost,
   type SettingsProjection,
   SettingsProjectionProvider,
+  type SourceControlTool,
   type ToolStatus,
   type TrackerKind,
   useSettingsProjection,

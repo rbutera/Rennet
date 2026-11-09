@@ -9,6 +9,7 @@ import type {
   ProjectProcessEvent,
   RennetBridge,
   RoundEvent,
+  ToolInstallProgressEvent,
   UpdateReadyInfo,
 } from "@rennet/protocol";
 import { parseCommandInput } from "@rennet/protocol";
@@ -19,7 +20,7 @@ import { parseCommandInput } from "@rennet/protocol";
 // A test hands per-command handlers, keyed by CommandName and typed through
 // CommandInput<K>/CommandOutput<K>, so the stub cannot answer a command with the
 // wrong shape. An un-handled command REJECTS loudly with its own name — never a
-// silent `undefined` that a hook would fold into a false empty state. The five push
+// silent `undefined` that a hook would fold into a false empty state. The push
 // channels are real subscribable emitters with `emit*` helpers so a test can drive
 // live narration through the same surface the seam subscribes to.
 //
@@ -94,6 +95,7 @@ export class MemoryBridge implements RennetBridge {
   readonly #askProjection = new KeyedEmitter<AskProjection>();
   readonly #roundProgress = new KeyedEmitter<RoundEvent>();
   readonly #lensDraft = new KeyedEmitter<LensDraftEvent>();
+  readonly #toolInstall = new KeyedEmitter<ToolInstallProgressEvent>();
   readonly #attention = new Emitter<AttentionEventFrame>();
   readonly #updateReady = new Emitter<UpdateReadyInfo>();
 
@@ -152,6 +154,13 @@ export class MemoryBridge implements RennetBridge {
     return this.#lensDraft.subscribe(reviewId, listener);
   }
 
+  onToolInstallProgress(
+    commandId: string,
+    listener: Listener<ToolInstallProgressEvent>,
+  ): () => void {
+    return this.#toolInstall.subscribe(commandId, listener);
+  }
+
   onAttention(listener: Listener<AttentionEventFrame>): () => void {
     return this.#attention.subscribe(listener);
   }
@@ -181,6 +190,11 @@ export class MemoryBridge implements RennetBridge {
   /** Push one accepted board write to the review's subscribers (`lens-board-tools` D11). */
   emitLensDraft(reviewId: string, event: LensDraftEvent): void {
     this.#lensDraft.emit(reviewId, event);
+  }
+
+  /** Push one chunk of a `tools.install` run's output to that command's subscribers. */
+  emitToolInstallProgress(commandId: string, event: ToolInstallProgressEvent): void {
+    this.#toolInstall.emit(commandId, event);
   }
 
   emitAttention(event: AttentionEventFrame): void {

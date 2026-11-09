@@ -330,7 +330,7 @@ describe("/s/:slug during New Chat preparation (#668)", () => {
     // and a slab repeating it over the boards was Rennet describing its own machinery.
     const cancel = await screen.findByTestId("preparation-cancel");
     expect(cancel.getAttribute("aria-label")).toBe("Cancel board generation");
-    expect(document.querySelector('[data-testid="workspace-header"]')).toBeNull();
+    expect(document.querySelector('[data-testid="preparation-failure"]')).toBeNull();
     expect(document.querySelector('[data-kind="lens-board-view"]')).toBeTruthy();
     expect(document.querySelectorAll('[data-kind="lens-switcher"] [data-lens]')).toHaveLength(5);
     expect(document.querySelector('[data-lens="design"]')?.getAttribute("data-register")).toBe(
@@ -347,14 +347,16 @@ describe("/s/:slug during New Chat preparation (#668)", () => {
     await user.click(screen.getByRole("button", { name: "Cancel board generation" }));
     await waitFor(() =>
       expect(
-        document.querySelector('[data-testid="workspace-header"]')?.getAttribute("data-status"),
+        document.querySelector('[data-testid="preparation-failure"]')?.getAttribute("data-status"),
       ).toBe("cancelled"),
     );
     expect(history.history.at(-1)).toBe("/s/sess-progress");
+    // Calm: it says the run was cancelled and offers Retry — nothing else to act on.
+    expect(screen.getByText("Cancelled")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 
-  it("names the failed stage and reason while retaining retry", async () => {
+  it("says why it failed in one block, with Retry and no stage label", async () => {
     const bridge = new MemoryBridge({
       ...frontDoorHandlers(),
       ...sessionHandlers([
@@ -374,10 +376,23 @@ describe("/s/:slug during New Chat preparation (#668)", () => {
       },
     } as never);
 
-    mount(<RennetRouterApp bridge={bridge} history={memoryHistory("/s/sess-failed")} />);
-    expect(await screen.findByText("Capture failed")).toBeTruthy();
+    const { user } = mount(
+      <RennetRouterApp bridge={bridge} history={memoryHistory("/s/sess-failed")} />,
+    );
+    // Unclassified, so the headline is plain and the daemon's own words wait behind Details.
+    expect(await screen.findByText("Rennet couldn't prepare this review.")).toBeTruthy();
+    expect(screen.queryByText("Branch feat/failed no longer exists.")).toBeNull();
+    await user.click(screen.getByText("Details"));
     expect(await screen.findByText("Branch feat/failed no longer exists.")).toBeTruthy();
+    const block = document.querySelector('[data-testid="preparation-failure"]');
+    expect(block?.getAttribute("data-status")).toBe("failed");
+    // An old failure with no `kind` or `action` reads as unknown + retry (protocol D5).
+    expect(block?.getAttribute("data-failure-kind")).toBe("unknown");
+    expect(block?.getAttribute("data-action")).toBe("retry");
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    // The pipeline's name for where it stopped is not something the reviewer acts on.
+    expect(screen.queryByText("Capture failed")).toBeNull();
+    expect(document.body.textContent).not.toContain("No board for this generation yet.");
   });
 });
 

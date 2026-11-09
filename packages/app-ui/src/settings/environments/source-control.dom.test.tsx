@@ -6,13 +6,16 @@
 // toggles persist through the projection seam while GitLab's health-only row has none.
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
-import { cleanup, mount, within } from "../../test/dom";
+import { BridgeProvider } from "../../data";
+import { cleanup, mount, waitFor, within } from "../../test/dom";
+import { MemoryBridge } from "../../test/memory-bridge";
 import {
   type DetectedTool,
   EMPTY_SETTINGS_PROJECTION,
   type SettingsHost,
   type SettingsProjection,
   SettingsProjectionProvider,
+  type SourceControlTool,
 } from "../data";
 import { SourceControlSection } from "./source-control";
 
@@ -128,6 +131,108 @@ describe("SourceControlSection — detection rows", () => {
         .getByRole("switch", { name: "Use GitHub on This Machine" })
         .getAttribute("aria-checked"),
     ).toBe("false");
+    cleanup();
+  });
+});
+
+// source-control-tooling: `git` and `git-lfs` as the daemon probed them, each in the same row
+// shape, with Install for me where one is missing. The bridge RECORDS the install a click
+// starts, so "offers Install for me" is the install it dispatched, at this host's locus.
+describe("SourceControlSection — Git and Git LFS", () => {
+  const GIT_TOOLS: readonly SourceControlTool[] = [
+    { id: "git", label: "Git", version: "2.51.0", status: "available", detail: "Git 2.51.0" },
+    {
+      id: "git-lfs",
+      label: "Git LFS",
+      status: "not-installed",
+      detail: "Git LFS isn't installed. Install it with `brew install git-lfs`.",
+      required: true,
+    },
+  ];
+
+  function withGitTools(host: SettingsHost) {
+    const installs: unknown[] = [];
+    const bridge = new MemoryBridge({
+      "tools.install": (input) => {
+        installs.push(input);
+        return {
+          result: {
+            status: "manual",
+            command: "brew install git-lfs && git lfs install",
+            docsUrl: "https://git-lfs.com",
+            probe: { id: "git-lfs", version: null, status: "not-installed", detail: "" },
+          },
+        };
+      },
+    });
+    const view = mount(
+      <BridgeProvider bridge={bridge}>
+        <SettingsProjectionProvider
+          value={{
+            ...EMPTY_SETTINGS_PROJECTION,
+            gitToolsByHost: { [host.id]: GIT_TOOLS },
+            sourceControlByHost: { [host.id]: [] },
+          }}
+        >
+          <SourceControlSection host={host} />
+        </SettingsProjectionProvider>
+      </BridgeProvider>,
+    );
+    return { ...view, installs };
+  }
+
+  const row = (tool: string) =>
+    document.querySelector<HTMLElement>(`[data-slot="git-tool-row"][data-tool="${tool}"]`);
+
+  it("shows both rows with the probe's own version and state", () => {
+    withGitTools({ ...HOST, id: "local" });
+    expect(row("git")?.textContent).toContain("2.51.0");
+    expect(row("git")?.getAttribute("data-status")).toBe("available");
+    expect(row("git-lfs")?.getAttribute("data-status")).toBe("not-installed");
+    expect(within(row("git-lfs") as HTMLElement).getByText("Not Installed")).toBeTruthy();
+    // An available tool offers nothing to do; a missing one offers the install.
+    expect(within(row("git") as HTMLElement).queryByRole("button")).toBeNull();
+    // Git's rows are not forge rulings: no toggle claims to switch Git off.
+    expect(document.querySelector('[role="switch"]')).toBeNull();
+    cleanup();
+  });
+
+  it("installs a missing Git LFS on this machine from its row", async () => {
+    const { user, installs } = withGitTools({ ...HOST, id: "local" });
+    await user.click(
+      within(row("git-lfs") as HTMLElement).getByRole("button", { name: "Install for me" }),
+    );
+    await waitFor(() => expect(installs).toHaveLength(1));
+    expect(installs[0]).toMatchObject({ tool: "git-lfs", locus: { kind: "host" } });
+    // No installer here: the manual command replaces the button.
+    await waitFor(() =>
+      expect(row("git-lfs")?.querySelector('[data-slot="install-command"]')?.textContent).toBe(
+        "brew install git-lfs && git lfs install",
+      ),
+    );
+    cleanup();
+  });
+
+  it("installs into the WSL distro the card is for", async () => {
+    const { user, installs } = withGitTools({
+      ...HOST,
+      id: "wsl:Ubuntu",
+      name: "Ubuntu",
+      kind: "remote",
+    });
+    await user.click(
+      within(row("git-lfs") as HTMLElement).getByRole("button", { name: "Install for me" }),
+    );
+    await waitFor(() => expect(installs).toHaveLength(1));
+    expect(installs[0]).toMatchObject({ locus: { kind: "wsl", distro: "Ubuntu" } });
+    cleanup();
+  });
+
+  it("offers no install on a paired remote device, which has its own settings", () => {
+    withGitTools({ ...HOST, id: "remote:desk-7", name: "Desk", kind: "remote" });
+    expect(within(row("git-lfs") as HTMLElement).queryByRole("button")).toBeNull();
+    // The state and the fix are still there to read.
+    expect(row("git-lfs")?.textContent).toContain("brew install git-lfs");
     cleanup();
   });
 });

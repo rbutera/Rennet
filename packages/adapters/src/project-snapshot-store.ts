@@ -143,6 +143,9 @@ export interface ProjectConfig {
   /** `share` | `own` — whether a review of a branch this repo's checkout already has
    *  out binds to that checkout or to a worktree Rennet makes beside it (D4). */
   readonly workspace?: string;
+  /** `download` | `skip` — how review checkouts of this repository treat Git LFS content
+   *  (`checkout.largeFiles`). Absent ⇒ no choice recorded, and the next checkout asks. */
+  readonly largeFiles?: string;
   readonly tracker?: {
     readonly kind?: string;
     readonly projectKey?: string;
@@ -160,6 +163,7 @@ export const REPO_PREF_FIELDS = [
   "worktreePattern",
   "prWorktreePattern",
   "workspace",
+  "largeFiles",
   "trackerKind",
   "trackerProjectKey",
   "trackerBaseUrl",
@@ -204,7 +208,8 @@ export function withRepoPref(
     | "worktreeBaseDir"
     | "worktreePattern"
     | "prWorktreePattern"
-    | "workspace";
+    | "workspace"
+    | "largeFiles";
   if (value === null) delete next[topLevel];
   else next[topLevel] = value;
   return next;
@@ -255,6 +260,7 @@ function isValidProjectConfig(value: unknown): value is ProjectConfig {
     "worktreePattern",
     "prWorktreePattern",
     "workspace",
+    "largeFiles",
   ] as const) {
     if (record[key] !== undefined && typeof record[key] !== "string") return false;
   }

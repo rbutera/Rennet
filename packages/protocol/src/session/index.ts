@@ -6,4 +6,5 @@
  */
 export * from "./ask-log";
 export * from "./model";
+export * from "./preparation-compat";
 export * from "./wire";

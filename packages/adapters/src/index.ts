@@ -208,6 +208,15 @@ export {
 } from "./fs-list-dir";
 export { GitCaptureAdapter } from "./git-capture";
 export {
+  type ClassifiedGitFailure,
+  type ClassifyGitFailureOptions,
+  classifyGitFailure,
+  GIT_FAILURE_DETAIL_CAP,
+  type GitFailureAction,
+  type GitFailureKind,
+  type SourceControlToolId,
+} from "./git-failure";
+export {
   type Counts,
   captureRangePatchset,
   DEFAULT_VISIBLE_BYTE_LIMIT,
@@ -315,6 +324,22 @@ export {
 } from "./harness-discovery";
 export { readKiroSpec, readKiroSpecSource, selectedKiroFeatureName } from "./kiro-spec-reader";
 export {
+  absoluteGitDir,
+  isIndexablePath,
+  LARGE_FILE_SKIP_CONFIG,
+  LARGE_FILE_SKIP_WITH_LFS_CONFIG,
+  LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE,
+  LARGE_FILES_NOT_REGISTERED_NOTE,
+  LargeFileSkipIndex,
+  largeFileSkipConfig,
+  largeFileSkipEnv,
+  largeFileSkipIndexPath,
+  largeFileSkipIndexText,
+  largeFileSkipOverridesText,
+  withGitConfigEnv,
+  withLargeFileSkipIndex,
+} from "./large-file-env";
+export {
   activePatchset,
   type BuildReviewContextManifestDeps,
   buildReviewContextManifest,
@@ -385,11 +410,16 @@ export {
   branchWorktreePath,
   defaultWorktreePlacement,
   type EnsureBranchWorktreeOptions,
+  type EnsureSiblingWorktreeOptions,
   ensureBranchWorktree,
   ensurePrWorktree,
   ensureSiblingWorktree,
   expandWorktreeRootForWrite,
+  LARGE_FILES_HOOK_SKIPPED_WARNING,
+  type LargeFileGitInvocation,
+  type LargeFileMode,
   LOCAL_OWNER,
+  largeFileGitInvocation,
   prTokens,
   prWorktreePath,
   readSetupLogTail,
@@ -616,6 +646,27 @@ export {
   type OverlayRetentionPolicy,
   SnapshotOverlayStore,
 } from "./snapshot-overlay-store";
+export {
+  type DetectedSourceControlTool,
+  type DetectSourceControlOptions,
+  defaultSourceControlDetectionDeps,
+  detectGit,
+  detectGitLfs,
+  detectSourceControlTool,
+  detectSourceControlTools,
+  gitattributesUseLfs,
+  type LocusRun,
+  type LocusRunResult,
+  parseGitLfsVersion,
+  type RepoUsesLfsOptions,
+  repoUsesLfs,
+  type SourceControlDetectionDeps,
+  type SourceControlToolStatus,
+  sourceControlDetectionDepsFor,
+  type ToolVersionProbe,
+  type WslDiscoveryEffects,
+  wslSourceControlDetectionDeps,
+} from "./source-control-discovery";
 export { SqliteReviewStore } from "./sqlite-review-store";
 export {
   readSuperpowersSpec,
@@ -635,6 +686,18 @@ export {
   type T3SettledTurn,
 } from "./t3-seat-turn";
 export {
+  INSTALL_OUTPUT_CAP,
+  type InstallOutputStream,
+  type InstallPlan,
+  type InstallPlanDeps,
+  type InstallRunResult,
+  type InstallStep,
+  type RunInstallOptions,
+  resolveInstallPlan,
+  runInstallPlan,
+  TOOL_DOCS_URL,
+} from "./tool-install";
+export {
   defaultTranscriptStoreDir,
   TRANSCRIPT_STORE_VERSION,
   TranscriptStore,
@@ -652,6 +715,17 @@ export {
   summarizeUsage,
   type TurnMetric,
 } from "./turn-metrics";
+export {
+  curatedPathDirectories,
+  defaultUserPathDeps,
+  hydrateProcessPath,
+  LOGIN_SHELL_TIMEOUT_MS,
+  mergePathEntries,
+  readLoginShellPath,
+  resolveUserPath,
+  type UserPathDeps,
+  type UserPathRunResult,
+} from "./user-path";
 export { type DraftOp, WhiteboardClient } from "./whiteboard-client";
 // The workspace inventory (workspace-settings D6).
 export {

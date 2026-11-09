@@ -602,3 +602,94 @@ describe("WS listener: a loopback socket is private only when Rennet opened it",
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
   });
 });
+
+/**
+ * Protocol version 4 added the `awaiting` preparation state, the `workspace` stage and the
+ * install-output progress event; a version-3 client still negotiates (the minimum is 3), so
+ * the listener writes every payload in the vocabulary the CONNECTION negotiated.
+ */
+describe("WS listener speaks each client's negotiated protocol version", () => {
+  const listeners: WsListener[] = [];
+  const sockets: WebSocket[] = [];
+  afterEach(async () => {
+    for (const socket of sockets.splice(0)) socket.close();
+    for (const listener of listeners.splice(0)) await listener.close();
+  });
+
+  const awaiting = {
+    status: "awaiting",
+    kind: "large-file-choice",
+    lfsAvailable: false,
+    reviewId: "rev-1",
+  } as const;
+
+  async function connectAs(listener: WsListener, protocolVersion: number) {
+    const socket = new WebSocket(`ws://127.0.0.1:${listener.port}`);
+    sockets.push(socket);
+    await once(socket, "open");
+    const frames: Record<string, unknown>[] = [];
+    socket.on("message", (data) => frames.push(JSON.parse(String(data))));
+    socket.send(
+      JSON.stringify({
+        type: "hello",
+        clientId: `v${protocolVersion}`,
+        clientType: "rennet-client",
+        protocolVersion,
+      }),
+    );
+    await vi.waitFor(() => expect(frames.some((frame) => frame.type === "serverInfo")).toBe(true));
+    return { socket, frames };
+  }
+
+  async function sessionList(client: Awaited<ReturnType<typeof connectAs>>, requestId: string) {
+    client.socket.send(
+      JSON.stringify({ type: "request", requestId, command: "session.list", input: {} }),
+    );
+    let response: Record<string, unknown> | undefined;
+    await vi.waitFor(() => {
+      response = client.frames.find((frame) => frame.requestId === requestId);
+      expect(response).toBeDefined();
+    });
+    return response as { type: string; output: { sessions: { preparation?: unknown }[] } };
+  }
+
+  it("a version-3 client gets `awaiting` as capturing; a version-4 client gets it as it is", async () => {
+    const dispatch = vi.fn(async () => ({
+      sessions: [{ id: "s1", preparation: awaiting }],
+    })) as WsListenerDeps["dispatch"];
+    const listener = await startWsListener({ dispatch, serverVersion: "test" });
+    listeners.push(listener);
+
+    const v3 = await sessionList(await connectAs(listener, 3), "old");
+    expect(v3.type).toBe("response");
+    expect(v3.output.sessions[0]?.preparation).toEqual({
+      status: "capturing",
+      step: "capturing-change",
+    });
+    const v4 = await sessionList(await connectAs(listener, PROTOCOL_VERSION), "new");
+    expect(v4.output.sessions[0]?.preparation).toEqual(awaiting);
+  });
+
+  it("install output reaches a version-4 client and never a version-3 one", async () => {
+    const dispatch = vi.fn(async () => ({})) as WsListenerDeps["dispatch"];
+    const listener = await startWsListener({ dispatch, serverVersion: "test" });
+    listeners.push(listener);
+    const v3 = await connectAs(listener, 3);
+    const v4 = await connectAs(listener, PROTOCOL_VERSION);
+    listener.broadcastProgress("install-1", {
+      kind: "tool-install-output",
+      tool: "git-lfs",
+      stream: "stdout",
+      chunk: "==> Pouring git-lfs\n",
+    });
+    // A progress kind both versions know, sent after: once v3 has it, v3 has had its chance.
+    listener.broadcastProgress("project-1", { kind: "prs-start", total: 0 });
+    await vi.waitFor(() =>
+      expect(v3.frames.some((frame) => frame.commandId === "project-1")).toBe(true),
+    );
+    await vi.waitFor(() =>
+      expect(v4.frames.some((frame) => frame.commandId === "install-1")).toBe(true),
+    );
+    expect(v3.frames.some((frame) => frame.commandId === "install-1")).toBe(false);
+  });
+});

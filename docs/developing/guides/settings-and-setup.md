@@ -200,8 +200,45 @@ harnesses, and a host the daemon cannot interrogate reads its honest not-detecte
 line rather than inheriting this machine's answers. The enable decision is stored
 per host, so ruling an agent out survives a reload and leaves it running elsewhere.
 
-Source Control reports GitHub / `gh` and GitLab.com / `glab` CLI readiness on
-each host. Detection runs per host exactly as agent detection does: the daemon
+Source Control reports `git` and Git LFS first, from the probe the daemon runs with the
+same environment its own git work uses: each reads **Available** with its proven version,
+**Not Installed**, or **Unreachable**, and a missing one offers **Install for me** (this
+machine or a WSL distribution; a paired remote device shows the fix without the button).
+Install for me streams the installer's output, shows the command it is running with a
+copy button (from the first moment of the run, not only once it ends), and re-probes. The
+verdict is the re-probe's: if every step succeeds but the tool still doesn't answer, the
+install reports that plainly as a failure, never as installed. A tool the re-probe cannot
+find says Rennet still can't find it; one that is there but won't run (Unreachable) says it
+was installed but doesn't run yet, with the probe's reason behind **Details**. An install belongs to whoever
+started it — a session's failure block or large-file question — so it keeps running
+across a remount, a dismissed dialog or a dropped connection to the daemon; until the
+machine it installs on is known, the button waits; where no installer exists it shows the
+command and a link instead. When it lands it sends nothing on your behalf: the large-file
+question returns to its two choices with Download available, and the failure block makes
+Retry its primary action. You click the next step. The block's verdict belongs to the
+failure it answered: if the retried review stops again for the same tool, the block offers
+the install again rather than repeating "installed".
+
+After a dropped connection the button asks the daemon again under the same command id as a
+*rejoin*, which never starts an installer: a run still going is re-joined, with its output
+so far sent as one snapshot that replaces the drawer's (the daemon keeps exactly the last
+64,000 characters, the same as the drawer, so the snapshot never shows less than you
+had), and a run that finished meanwhile answers with the verdict the daemon keeps for it
+(about ten minutes, for the last 32 commands). A daemon that knows neither — it restarted,
+or the verdict aged out — answers that it doesn't know, and the button says plainly that
+Rennet lost track of the install, with **Check again** (a re-probe that only shows what is
+installed: the tool and its version, with a pointer to **Install for me** to finish its
+setup; a tool that is there but Rennet couldn't run, with the reason behind **Details**; or
+nothing installed) and **Install for me** (a fresh install you ask for). So a reconnect never runs
+the installer a second time. Only the daemon's verdict settles the button as installed; a
+probe that sees the binary is not read as installed, since `git lfs install` may still be
+running or have failed. A Cancel pressed while the connection is down is sent once it is
+back, and the install is not asked for again; a cancel that reaches a command that already
+finished stops nothing and reports what happened, and one the daemon knows nothing of
+reads as lost track rather than claiming the install stopped.
+
+The first-run tools stage reads the same probe. Below Git and Git LFS, Source Control
+reports GitHub / `gh` and GitLab.com / `glab` CLI readiness on each host. Detection runs per host exactly as agent detection does: the daemon
 runs the probes on each machine the only way it can, so a WSL distribution shows
 its own CLI versions and authentication state, while a host the daemon cannot
 interrogate reads its honest "Connect … to detect its tooling" line rather than
@@ -411,6 +448,80 @@ Rennet never created.
   See [One workspace per session](../concepts/handoff-and-exits.md#one-workspace-per-session)
   for what that means for the round, the push, and the land action.
 
+#### Large files in review checkouts
+
+`checkout.largeFiles` (the **Large Files in Review Checkouts** row under Settings →
+Projects → Worktrees) decides how a review checkout treats Git LFS content in a
+repository whose `.gitattributes` routes files through `filter=lfs`. It lives on
+the **repository rung only**, as `largeFiles` in the project's `config.json`, and
+`settings.setProjectValue` writes it under the key `largeFiles`. There is no
+global rung and no detector: the choice is about one project's large files.
+
+| Value | What a checkout does |
+|---|---|
+| `download` | Runs git as you configured it, so the LFS filter fetches the real files. Needs Git LFS installed. |
+| `skip` | Leaves LFS pointer files in place. Works whether or not Git LFS is installed, and never writes your git config. |
+| unset (`ask`, the builtin) | The next review checkout of a repository that uses Git LFS stops and asks. |
+
+When the question is owed, preparation stops in the `awaiting` state before
+anything is checked out, and `session.chooseLargeFileMode` records the answer on
+the repository rung and resumes it. With `remember: false` it records the answer
+on that session only, and the project's question stays open. While the question
+is open nothing checks the review out: a chat thread or a handoff reports that
+the review is waiting for the choice, and a transcript read names the repository.
+A review opened outside a session's preparation (`review.openPr`, for one) has
+nothing that can ask, so the same refusal points at Settings → Projects instead.
+Writing `ask` is a reset: the entry is dropped and the next checkout asks again.
+**Settings → Projects → Worktrees** shows the choice as **Large Files in Review
+Checkouts** (Ask each time, Download, Skip) on each repository that uses Git LFS, or
+that already has a choice recorded; Ask each time is that reset.
+
+A session can also carry its own mode (`session.mint`'s `largeFiles`, which
+`rennet review --large-files` sends). It overrides the project's for that
+session's checkouts and writes nothing to the project.
+
+A mode belongs to the checkout it was created under. A change applies to the
+next checkout Rennet creates, including a pull-request snapshot a re-pin
+replaces; a checkout that is reused, by the same session or a later one, keeps
+the mode it was made with and its pointer files. A re-pin while the project's
+choice is `ask` is not a checkout anyone can be asked about, so the replacement
+keeps the mode of the checkout it replaces. The replacement's mode is written to
+the skip-mode index before git checks it out, because git hands it the same git
+directory the old checkout had.
+
+Skip mode also covers every later git command a session's processes run in that
+checkout: the seat, chat and round threads, utility turns, and Rennet's own git.
+The daemon starts with one `include.path` entry in its `GIT_CONFIG_*`
+environment, pointing at `~/.rennet/large-files/skip-checkouts.gitconfig`. When
+Rennet creates a checkout in skip mode it adds an `includeIf "gitdir:…"` section
+for that checkout's git directory there, so the overrides apply in that checkout
+and nowhere else. The reviewer's own checkout is never added, and neither is any
+checkout Rennet did not create. A checkout's entry is removed when Rennet removes
+the checkout, and any entry whose git directory is gone is dropped at the next
+start or the next checkout, because git reuses that directory's name for the next
+worktree added there. A git directory whose path contains a line break or other
+control character cannot be named in git's config, so that checkout is left out
+and its session says so.
+
+The overrides depend on whether Git LFS is installed on the host:
+
+| Git LFS | What later git commands in a skip-mode checkout do |
+|---|---|
+| Installed | Run Git LFS's own skip filter (`git-lfs filter-process --skip`): a checkout leaves pointer files, and a large file added there is still stored as a pointer. |
+| Not installed | Run no filter at all, which is the only way git can check the files out. A large file changed there is committed as an ordinary file, and the session says so beside the review. |
+
+Every host probe of Git LFS keeps the overrides in step: Install for me, the
+Source Control rows' detection, the large-file question's own probe, and one
+probe when the daemon starts with skip-mode checkouts registered. A probe that
+finds Git LFS switches every skip-mode checkout to the first row and drops the
+note from every session, older ones included. Only a probe that definitely finds
+Git LFS missing switches them back to the second row, and then every session
+bound to a registered checkout gets the note. A probe that times out, fails, or
+finds a `git-lfs` that does not answer changes nothing.
+
+This covers checkouts on the host only: a WSL distribution's git does not see the
+daemon's environment.
+
 **Workspaces** lists every workspace Rennet knows for the scoped repository — the
 reviewer's own checkout while a session is bound to it, each branch worktree, each
 sibling, each pull-request snapshot — with its path, its ref, the sessions bound to
@@ -586,7 +697,7 @@ The pool is shared by filesystem work and GitHub name resolution.
 rennet serve
 rennet status
 rennet stop
-rennet review <base>..<head> [path] | --pr <number> [path] [--out <file>] [--timeout <seconds>]
+rennet review <base>..<head> [path] | --pr <number> [path] [--out <file>] [--timeout <seconds>] [--large-files download|skip]
 rennet map [path] [--base <ref>] [--json <file>] [--projects-dir <dir>]
 ```
 
@@ -610,10 +721,21 @@ boards settled; `1` means the daemon was absent, the preparation failed or was
 cancelled, or `--timeout` (default 1800s) elapsed, and the document is still
 written with the outcome and reason; `2` is a usage error.
 
+A headless run never stops at the large-file question. `--large-files download`
+or `--large-files skip` sets the mode for that review's checkout only. Without
+the flag, a repository whose project has a choice uses it; one whose project has
+none downloads large files, as a headless run always did, prints one line saying
+so and how to choose, and records nothing on the project. A daemon older than the
+CLI (protocol 3) would drop both the flag and the session-only answer without a
+word, so against one the run stops with a single line asking you to restart
+Rennet so the daemon updates, and sends neither.
+
 `serve`, `status`, and `stop` operate on the daemon. `stop` asks the verified
 daemon to shut itself down over its own HTTP port (`POST /shutdown`, beside
 `/healthz`) and falls back to SIGTERM only when it gets no acknowledgement, then
-waits for the claim to clear. `map` runs without the
+waits for the claim to clear. The daemon removes `daemon.json` only once its
+shutdown has settled, which includes ending any running Install for me (it gives
+up on one after 5 seconds), so `stop` waits up to 8 seconds. `map` runs without the
 daemon, builds the same deterministic Repo Map used by project processing, and
 stores it under the path-keyed local project directory. `--json` exports the map.
 It calls no model and needs no harness.

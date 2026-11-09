@@ -1,7 +1,19 @@
 import { newCommandId, type SessionPreparation, type SidebarSession } from "@rennet/protocol";
-import { Button, cn } from "@rennet/ui";
-import { useEffect } from "react";
+import { Button } from "@rennet/ui";
+import { useCallback, useEffect, useRef } from "react";
 import { useCommand, useMutation, useRefreshCommand } from "../data";
+import { useScopedHandle, useScopedState } from "../data/scoped-state";
+import { useForgetSettledInstalls } from "../data/tool-install";
+import { ActionFailureLine, useActionFailure } from "../preparation/action-failure";
+import { LargeFileChoice, largeFileFailureKey } from "../preparation/large-file-choice";
+import {
+  failureInstallOwner,
+  PreparationFailure,
+  retryFailureKey,
+} from "../preparation/preparation-failure";
+import { preparationPhase, preparationStopped } from "../preparation/preparation-phase";
+import { usePresenceShown } from "../preparation/preparation-presence";
+import { useProjectLocus } from "../preparation/session-locus";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE WORKSPACE HEADER (lens-board-tools 5.2/5.4, D12) — capture reported IN the
@@ -26,7 +38,9 @@ import { useCommand, useMutation, useRefreshCommand } from "../data";
 // titlebar, in the same skin as the rest of the floating chrome.
 //
 // The header comes back for a terminal state, because a failure has something only it
-// can say (its reason) and an action only it can offer (Retry).
+// can say (its reason) and actions only it can offer: since review-preparation-reliability
+// that is one PreparationFailure block, with the recovery its kind calls for and Retry.
+// And it carries the large-file question while preparation waits on it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** How often this component re-asks `session.list` while preparation is live. The lane
@@ -48,8 +62,28 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
   const preparation: SessionPreparation | undefined = session?.preparation;
   const refreshSessions = useRefreshCommand("session.list");
   const cancel = useMutation("session.cancelPreparation", { invalidates: ["session.list"] });
-  const retry = useMutation("session.retryPreparation", { invalidates: ["session.list"] });
-  const active = preparation?.status === "capturing" || preparation?.status === "drafting";
+  const cancelFailure = useActionFailure();
+  const phase = preparationPhase(preparation);
+  const presenceShown = usePresenceShown();
+  // The large-file dialog's remembered state belongs to ONE question. When the session is
+  // no longer choosing, the next question (after a Retry, say) starts on a fresh dialog.
+  const resetLargeFileQuestion = useResetLargeFileQuestion(slug);
+  useEffect(() => {
+    if (phase !== "choosing") resetLargeFileQuestion();
+  }, [phase, resetLargeFileQuestion]);
+  // A Retry's failure, and what the block's Install for me came to, belong to the stop they
+  // were for: once the review is going again, the next stop starts without them. A kept
+  // "Git LFS is installed" over a new stop asking for Git LFS offered no install at all.
+  const retryFailure = useScopedHandle<string | undefined>(retryFailureKey(slug), undefined);
+  const forgetFailureInstall = useForgetSettledInstalls(failureInstallOwner(slug));
+  useEffect(() => {
+    if (preparationStopped(phase)) return;
+    retryFailure.set(undefined);
+    forgetFailureInstall();
+  }, [phase, retryFailure, forgetFailureInstall]);
+  // Still going: the poll is what moves the rail, the presence and the seats. `choosing` is
+  // polled too, so an answer given from another window resumes this one.
+  const active = phase === "waiting" || phase === "choosing" || phase === "drafting";
 
   useEffect(() => {
     if (!active) return;
@@ -61,10 +95,56 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
   // what is happening TO them.
   if (preparation === undefined || session === undefined) return null;
 
-  const failed = preparation.status === "failed";
-  const cancelled = preparation.status === "cancelled";
+  // The floating chip, for a run that is still going (see DRAFTING below for its corner).
+  const floatingCancel = (
+    <>
+      <button
+        type="button"
+        data-testid="preparation-cancel"
+        aria-label="Cancel board generation"
+        disabled={cancel.pending}
+        onClick={() => {
+          cancelFailure.run(
+            () => cancel.mutate({ sessionId: session.id }),
+            "Rennet couldn't cancel this review. Try again.",
+          );
+        }}
+        className="app-region-no-drag absolute right-6 bottom-6 z-40 flex h-8 items-center rounded-full border border-line/60 bg-surface/70 px-3 font-medium text-ink-soft text-sm backdrop-blur-md transition-colors hover:text-ink disabled:opacity-60"
+      >
+        Cancel
+      </button>
+      {cancelFailure.message === undefined ? null : (
+        // Just above the chip it is about, in the same corner.
+        <div className="absolute right-6 bottom-16 z-40 max-w-xs rounded-lg bg-surface/90 px-3 py-2 backdrop-blur-md">
+          <ActionFailureLine message={cancelFailure.message} />
+        </div>
+      )}
+    </>
+  );
 
-  // RUNNING: one control, floating, and nothing else. It sits in the EXIT's corner —
+  // WAITING: the board area is the preparation presence, and its Cancel sits inline under
+  // the skeleton (review-preparation-reliability D6) — a second, floating Cancel over a board
+  // that is itself a waiting presence would be two ways to say one thing. Where the presence
+  // is NOT on screen (the diff view, or boards an earlier attempt drafted) the chip floats.
+  if (phase === "waiting") return presenceShown ? null : floatingCancel;
+
+  // CHOOSING: the large-file question, over the presence that keeps animating behind it.
+  if (preparation.status === "awaiting") {
+    return (
+      <>
+        <AwaitingChoice session={session} lfsAvailable={preparation.lfsAvailable} />
+        {presenceShown ? null : floatingCancel}
+      </>
+    );
+  }
+
+  // STOPPED: one block that says what happened and what to do (task 3.3), in place of the
+  // strip that used to sit over an empty board.
+  if (preparation.status === "failed" || preparation.status === "cancelled") {
+    return <PreparationFailure session={session} preparation={preparation} />;
+  }
+
+  // DRAFTING: one control, floating, and nothing else. It sits in the EXIT's corner —
   // `right-6 bottom-6`, the slot `handoff/fab.tsx` uses for Continue — because the two
   // never coexist: Continue is absent while the boards are being written, and this chip
   // is absent once they are. One corner, one thing the reviewer can do to the review at
@@ -75,55 +155,78 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
   // the outlet, and the outlet — not the window — is what the dock sits beside.
   // `app-region-no-drag` is explicit: a control that does not opt out of a drag region
   // never receives its own clicks.
-  if (active) {
-    return (
-      <button
-        type="button"
-        data-testid="preparation-cancel"
-        aria-label="Cancel board generation"
-        disabled={cancel.pending}
-        onClick={() => void cancel.mutate({ sessionId: session.id })}
-        className="app-region-no-drag absolute right-6 bottom-6 z-40 flex h-8 items-center rounded-full border border-line/60 bg-surface/70 px-3 font-medium text-ink-soft text-sm backdrop-blur-md transition-colors hover:text-ink disabled:opacity-60"
-      >
-        Cancel
-      </button>
-    );
-  }
+  return floatingCancel;
+}
 
-  const stage = (failed || cancelled) && preparation.stage === "capture" ? "Capture" : "Review";
-
+/**
+ * The large-file question while preparation waits on it. The modal opens on its own; Escape
+ * (or its close button) does not strand the reviewer — it leaves this calm line with a way
+ * back, while the presence keeps animating below.
+ */
+function AwaitingChoice({
+  session,
+  lfsAvailable,
+}: {
+  readonly session: SidebarSession;
+  readonly lfsAvailable: boolean;
+}) {
+  // Per session, not per mount: the route swaps the workspace under this when the review
+  // attaches mid-question, and a dismissed dialog must not spring back open.
+  const [open, setOpen] = useScopedState(largeFileOpenKey(session.id), true);
+  const { locus } = useProjectLocus(session.projectId);
+  // Escape lands on the way back, not on <body>: with the dialog gone, that button is the
+  // only control that reopens it, and focus should be where the next step is.
+  const chooseAgain = useRef<HTMLButtonElement | null>(null);
+  const wasOpen = useRef(open);
+  useEffect(() => {
+    if (wasOpen.current && !open) chooseAgain.current?.focus();
+    wasOpen.current = open;
+  }, [open]);
   return (
-    <header
-      data-testid="workspace-header"
-      data-status={preparation.status}
-      role={failed ? "alert" : "status"}
-      className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-line border-b bg-surface px-6 py-2.5"
-    >
-      <span
-        data-testid="preparation-stage"
-        className={cn("font-medium text-13", failed ? "text-danger" : "text-ink")}
-      >
-        {failed ? `${stage} failed` : cancelled ? `${stage} cancelled` : stage}
-      </span>
-      <span className={cn("font-serif text-13", failed ? "text-danger" : "text-ink-soft")}>
-        {failed
-          ? preparation.reason
-          : cancelled
-            ? "The review is still here. Retry when you’re ready."
-            : ""}
-      </span>
-      <span className="flex-1" />
-      <Button
-        variant="accent"
-        size="sm"
-        data-testid="workspace-retry"
-        disabled={retry.pending}
-        onClick={() => void retry.mutate({ sessionId: session.id, commandId: newCommandId() })}
-      >
-        {retry.pending ? "Retrying…" : "Retry"}
-      </Button>
-    </header>
+    <>
+      <LargeFileChoice
+        sessionId={session.id}
+        open={open}
+        onOpenChange={setOpen}
+        lfsAvailable={lfsAvailable}
+        locus={locus}
+        finalFocus={chooseAgain}
+      />
+      {open ? null : (
+        <div
+          data-testid="large-file-waiting"
+          role="status"
+          className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-line border-b bg-surface/60 px-6 py-2.5"
+        >
+          <span className="text-ink-soft text-sm">
+            This review is waiting for your choice about large files.
+          </span>
+          <Button ref={chooseAgain} variant="accent" size="sm" onClick={() => setOpen(true)}>
+            Choose large-file mode
+          </Button>
+        </div>
+      )}
+    </>
   );
+}
+
+function largeFileOpenKey(sessionId: string): string {
+  return `large-file-open:${sessionId}`;
+}
+
+/** Forget one session's large-file dialog state: open again, on its first screen. */
+function useResetLargeFileQuestion(sessionId: string): () => void {
+  const open = useScopedHandle(largeFileOpenKey(sessionId), true);
+  const screen = useScopedHandle(`large-file-choice:${sessionId}`, {
+    needsLfs: false,
+    answered: false,
+  });
+  const failure = useScopedHandle<string | undefined>(largeFileFailureKey(sessionId), undefined);
+  return useCallback(() => {
+    open.set(true);
+    screen.set({ needsLfs: false, answered: false });
+    failure.set(undefined);
+  }, [open, screen, failure]);
 }
 
 /** The generation-wide retry as a bare action, for the seat widget's failure state to
@@ -146,7 +249,9 @@ export function useGenerationRetry(slug: string): {
     ...(retriable
       ? {
           retry: () => {
-            void mutate({ sessionId: session.id, commandId: newCommandId() });
+            // The failed seat's widget shows its own state; a retry that did not go through
+            // leaves the lane failed and the block's own Retry in reach, so nothing escapes.
+            mutate({ sessionId: session.id, commandId: newCommandId() }).catch(() => undefined);
           },
         }
       : {}),

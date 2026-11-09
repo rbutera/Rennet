@@ -1,12 +1,14 @@
 import type { ClientSettings, Locus, ProjectVisibility } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
+  BUILTIN_LARGE_FILES,
   BUILTIN_PR_WORKTREE_PATTERN,
   BUILTIN_SCHEME,
   BUILTIN_VISIBILITY,
   BUILTIN_WORKSPACE,
   BUILTIN_WORKTREE_PATTERN,
   LAYER_ORDER,
+  type LargeFilesChoice,
   resolve,
   resolveLocus,
   resolvePromoted,
@@ -110,6 +112,7 @@ describe("settings registry + generic resolve (#28)", () => {
     const keys = Object.keys(SETTINGS_REGISTRY).sort();
     expect(keys).toEqual([
       "gateCommand",
+      "largeFiles",
       "locus",
       "prWorktreePattern",
       "projectGlyph",
@@ -280,6 +283,32 @@ describe("issue-tracker section (#461, B7)", () => {
     expect(() =>
       resolve(SETTINGS_REGISTRY.worktreeBaseDir, { detected: "/repo/trees" } as never),
     ).toThrow(/detected/);
+  });
+
+  // review-preparation-reliability 2.2: unset means ask, and only the project's own rung
+  // records an answer.
+  it("checkout.largeFiles is unset (ask) until the repo rung records download or skip", () => {
+    const unset = resolve(SETTINGS_REGISTRY.largeFiles, {});
+    expect(unset.value).toBe("ask");
+    expect(unset.layer).toBe("builtin");
+    expect(BUILTIN_LARGE_FILES).toBe("ask");
+
+    const skip = resolve<LargeFilesChoice>(SETTINGS_REGISTRY.largeFiles, { repo: "skip" });
+    expect(skip.value).toBe("skip");
+    expect(skip.layer).toBe("repo");
+    expect(skip.provenance.contributions.map((entry) => entry.value)).toEqual(["ask", "skip"]);
+
+    expect(SETTINGS_REGISTRY.largeFiles.key).toBe("checkout.largeFiles");
+    expect(SETTINGS_REGISTRY.largeFiles.layers).toEqual(["builtin", "repo"]);
+    expect(SETTINGS_REGISTRY.largeFiles.validate("download")).toBe("download");
+    expect(() => SETTINGS_REGISTRY.largeFiles.validate("lazy")).toThrow(/checkout\.largeFiles/);
+    // A host-wide or detected answer is a programming error: the choice is the project's.
+    expect(() => resolve(SETTINGS_REGISTRY.largeFiles, { global: "skip" } as never)).toThrow(
+      /global/,
+    );
+    expect(() => resolve(SETTINGS_REGISTRY.largeFiles, { detected: "skip" } as never)).toThrow(
+      /detected/,
+    );
   });
 
   it("detectable string rows accept a scout offer and render unset honestly", () => {

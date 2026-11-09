@@ -128,6 +128,9 @@ const ABSORBED_IDS = [
   "round.retry",
   "session.archive",
   "session.cancelPreparation",
+  // The large-file question's answer (large-file-checkout spec): writes the project's
+  // `checkout.largeFiles` and resumes the session's preparation.
+  "session.chooseLargeFileMode",
   // The land action (workspace-settings D4): a fast-forward-only merge of the session's
   // work branch into the checkout that has the reviewed branch out, run on the reviewer's
   // click. Git's refusal is the outcome when there is one.
@@ -162,6 +165,10 @@ const ABSORBED_IDS = [
   "settings.setRepoVisibility",
   "settings.setRoleAssignment",
   "settings.setThemePack",
+  // Install for me (source-control-tooling spec): run the platform installer for git or
+  // git-lfs on one locus, streaming its output, and stop a running one.
+  "tools.cancelInstall",
+  "tools.install",
   // The workspace inventory (workspace-settings D6): the per-repository list of every
   // workspace Rennet knows, and the non-forcing removal of one idle Rennet-made row.
   "worktrees.list",
@@ -225,7 +232,7 @@ const MENU_INVENTORY: readonly string[] = [];
 describe("command registry invariants (#465)", () => {
   it("matches the recorded command snapshot (settings.setRepoLocus demoted, #476)", () => {
     expect(Object.keys(commands).sort()).toEqual([...ABSORBED_IDS]);
-    expect(ABSORBED_IDS).toHaveLength(114);
+    expect(ABSORBED_IDS).toHaveLength(117);
   });
 
   it("every row carries label, exposure, and locus with today's uniform values", () => {

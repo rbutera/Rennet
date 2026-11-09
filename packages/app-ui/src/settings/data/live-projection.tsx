@@ -2,6 +2,7 @@ import {
   councilPickSchema,
   type DaemonHostStatus,
   type DetectedForge,
+  type DetectedSourceControlTool,
   type ProjectLogo,
   type ProjectSource,
   projectLogoMimeSchema,
@@ -32,6 +33,7 @@ import {
   type SettingsHost,
   type SettingsProjection,
   SettingsProjectionProvider,
+  type SourceControlTool,
   type TrackerKind,
 } from "./projections";
 
@@ -48,6 +50,7 @@ import {
 //     invents no version. A remote host's platform is never reported to us, so its
 //     glyph is the neutral `unknown` mark rather than a guessed penguin.
 //
+//   • gitToolsByHost      ← `forge.hosts[].sourceControl`: `git` and `git-lfs` per host.
 //   • sourceControlByHost ← `forge.hosts` (C17 amendment B), the GitHub / `gh` and GitLab.com /
 //     `glab` CLI state on EACH host the settings surface enumerates. Like `harness.hosts` the
 //     fan-out is SERVER-side: the daemon probes each host through that host's own deps (a WSL
@@ -178,6 +181,19 @@ function forgeRow(forge: DetectedForge, disabled: ReadonlySet<string>): Detected
     // The SERVED per-host ruling (amendment A) — a forge the viewer ruled out on this host
     // reads off across reload, and one with no ruling reads enabled by default.
     enabled: !disabled.has(forge.id),
+  };
+}
+
+/** A probed `git`/`git-lfs` as the row Settings draws. The version is the probe's own
+ *  answer or nothing; a null one is never filled in. */
+function gitToolRow(tool: DetectedSourceControlTool): SourceControlTool {
+  return {
+    id: tool.id,
+    label: tool.id === "git" ? "Git" : "Git LFS",
+    ...(tool.version === null ? {} : { version: tool.version }),
+    status: tool.status,
+    detail: tool.detail,
+    ...(tool.required === undefined ? {} : { required: tool.required }),
   };
 }
 
@@ -394,6 +410,13 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
         sourceControlByHost[host.source] = host.detected.map((forge) => forgeRow(forge, disabled));
       }
     }
+    // `git` and `git-lfs` per host (source-control-tooling). They carry no ruling, so they do
+    // not wait for one; an unasked host, or an engine that never probed them, has no entry.
+    const gitToolsByHost: Record<string, readonly SourceControlTool[]> = {};
+    for (const host of forges?.hosts ?? []) {
+      if (!host.asked || host.sourceControl === undefined) continue;
+      gitToolsByHost[host.source] = host.sourceControl.map(gitToolRow);
+    }
 
     // The freshest truth wins, but only until disk answers. A write's response is the
     // resolver's answer AFTER the write, so it outranks the `settings.get` read it just
@@ -501,6 +524,7 @@ export function LiveSettingsProjectionProvider({ children }: { readonly children
       },
       hosts,
       sourceControlByHost,
+      gitToolsByHost,
       agentsByHost,
       glyphByProject,
       markByProject,

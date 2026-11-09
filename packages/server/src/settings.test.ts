@@ -104,6 +104,7 @@ type FakeRepoConfig = {
   worktreePattern?: string;
   prWorktreePattern?: string;
   workspace?: string;
+  largeFiles?: string;
   tracker?: { kind?: string; projectKey?: string; baseUrl?: string; tokenEnv?: string };
 };
 
@@ -184,6 +185,7 @@ function statefulDeps(
         "worktreePattern",
         "prWorktreePattern",
         "workspace",
+        "largeFiles",
         "tracker",
       ] as const) {
         delete store[key];
@@ -2279,7 +2281,11 @@ describe("resolveWorktreePlacement — what the BINDING reads (workspace-setting
     // two roots below and both assertions redden — which is the whole point of a per-repo
     // resolution rather than a per-project one.
     const { deps, asked } = twoRepoDeps({
-      [escapePath("/work/api")]: { workspace: "own", worktreePattern: "{name}/{branch}" },
+      [escapePath("/work/api")]: {
+        workspace: "own",
+        worktreePattern: "{name}/{branch}",
+        largeFiles: "skip",
+      },
     });
     const composition = createSettingsComposition(deps);
 
@@ -2291,14 +2297,16 @@ describe("resolveWorktreePlacement — what the BINDING reads (workspace-setting
       pattern: "{name}/{branch}",
       prPattern: "{owner}/{name}/pr-{number}",
       workspace: "own",
+      largeFiles: "skip",
     });
     // The second repository resolves the BUILTINS — it wrote nothing, and its sibling's
-    // file is not its file.
+    // file is not its file. Its large-file choice is still open (`ask`).
     expect(web).toEqual({
       root: join("/data", "worktrees"),
       pattern: "{repo}/{branch}",
       prPattern: "{owner}/{name}/pr-{number}",
       workspace: "share",
+      largeFiles: "ask",
     });
     // Each read asked for THAT repository's config key, by its own path.
     expect(asked).toEqual([escapePath("/work/api"), escapePath("/work/web")]);
@@ -2355,13 +2363,185 @@ describe("resolveWorktreePlacement — what the BINDING reads (workspace-setting
     // Rule 75, applied where it matters most: a broken `config.json` must not decide where
     // a worktree is created. The row already refuses to leak its unparseable values; the
     // binding reads the same way, so a hand-broken file places at the builtin.
-    const { deps } = statefulDeps({ workspace: "own" }, { malformed: true });
+    const { deps } = statefulDeps({ workspace: "own", largeFiles: "skip" }, { malformed: true });
     const placement = await createSettingsComposition(deps).resolveWorktreePlacement("/orbital");
     expect(placement).toEqual({
       root: join("/data", "worktrees"),
       pattern: "{repo}/{branch}",
       prPattern: "{owner}/{name}/pr-{number}",
       workspace: "share",
+      largeFiles: "ask",
     });
+  });
+});
+
+// review-preparation-reliability 2.2: `checkout.largeFiles` on the settings ladder — unset
+// reads `ask`, the repo rung records the answer, and the row carries it.
+describe("checkout.largeFiles — the project's large-file choice", () => {
+  const write = (key: SettingsProjectValueKey, value: string | null) => ({
+    projectId: "p1",
+    repoPath: "/orbital",
+    key,
+    value,
+  });
+
+  it("an untouched project reads ask, from the builtin, on its row and in its placement", async () => {
+    const { deps } = statefulDeps();
+    const composition = createSettingsComposition(deps);
+    const row = (await composition.get()).projects[0];
+    expect(row?.prefs?.largeFiles).toEqual({ value: "ask", layer: "builtin" });
+    expect((await composition.resolveWorktreePlacement("/orbital")).largeFiles).toBe("ask");
+  });
+
+  it("a repo-set choice is the row's value at the repo layer, and what the bind reads", async () => {
+    const { deps } = statefulDeps({ largeFiles: "skip" });
+    const composition = createSettingsComposition(deps);
+    const row = (await composition.get()).projects[0];
+    expect(row?.prefs?.largeFiles).toEqual({ value: "skip", layer: "repo" });
+    expect((await composition.resolveWorktreePlacement("/orbital")).largeFiles).toBe("skip");
+  });
+
+  it("setProjectValue records download or skip, refuses anything else, and ask resets", async () => {
+    const { deps, store } = statefulDeps();
+    const composition = createSettingsComposition(deps);
+    const skip = await composition.setProjectValue(write("largeFiles", "skip"));
+    expect(skip.project?.prefs?.largeFiles).toEqual({ value: "skip", layer: "repo" });
+    expect(store.largeFiles).toBe("skip");
+    await expect(composition.setProjectValue(write("largeFiles", "lazy"))).rejects.toThrow(
+      /checkout\.largeFiles/,
+    );
+    expect(store.largeFiles).toBe("skip");
+    // `ask` is the builtin, not an answer: writing it drops the entry, and the next checkout
+    // asks again.
+    const reset = await composition.setProjectValue(write("largeFiles", "ask"));
+    expect(reset.project?.prefs?.largeFiles).toEqual({ value: "ask", layer: "builtin" });
+    expect(store.largeFiles).toBeUndefined();
+  });
+
+  it("writeLargeFiles records the modal's answer on the repository's own repo rung", async () => {
+    const { deps, store } = statefulDeps();
+    const composition = createSettingsComposition(deps);
+    await composition.writeLargeFiles("/orbital", "download");
+    expect(store.largeFiles).toBe("download");
+    expect((await composition.resolveWorktreePlacement("/orbital")).largeFiles).toBe("download");
+  });
+
+  it("a hand-edited value or a stored ask falls back to ask rather than failing the read", async () => {
+    for (const stored of ["lazy", "ask"]) {
+      const { deps } = statefulDeps({ largeFiles: stored });
+      const row = (await createSettingsComposition(deps).get()).projects[0];
+      expect(row?.prefs?.largeFiles).toEqual({ value: "ask", layer: "builtin" });
+    }
+  });
+});
+
+// review-preparation-reliability 2.6: the Source Control rows' server side — `git` and
+// `git-lfs` per host, Git LFS required when a repository there uses it, and each row's
+// own `usesLfs`.
+describe("source-control projection — Git and Git LFS rows (2.6)", () => {
+  const git = {
+    id: "git" as const,
+    version: "2.53.0",
+    status: "available" as const,
+    detail: "Git 2.53.0.",
+  };
+  const lfs = (required: boolean) => ({
+    id: "git-lfs" as const,
+    version: null,
+    status: "not-installed" as const,
+    required,
+    detail: "Git LFS isn't installed. Run `brew install git-lfs && git lfs install`.",
+  });
+  const gh: DetectedForge = {
+    id: "github",
+    version: "2.76.0",
+    status: "available",
+    detail: "Authenticated with GitHub through the `gh` CLI.",
+  };
+
+  function sourceControlDeps(usesLfs: (root: string) => boolean) {
+    const asked: { source: string; lfsRequired: boolean }[] = [];
+    const { deps } = makeDeps({
+      listProjects: () => [
+        project({ source: "local" }),
+        project({
+          id: "b",
+          name: "widget",
+          path: "/widget",
+          openPath: "/widget",
+          source: "wsl:Ubuntu",
+        }),
+      ],
+      detectForgesOn: async (source) => (source.startsWith("remote:") ? null : [gh]),
+      detectSourceControlOn: async (source, options) => {
+        asked.push({ source, lfsRequired: options.lfsRequired });
+        return [git, lfs(options.lfsRequired)];
+      },
+      repoUsesLfs: async (root) => usesLfs(root),
+    });
+    return { deps, asked };
+  }
+
+  it("every asked host carries its Git and Git LFS rows beside its forge CLIs", async () => {
+    const { deps, asked } = sourceControlDeps((root) => root === "/orbital");
+    const hosts = await createSettingsComposition(deps).forgeHosts();
+    expect(hosts).toEqual([
+      { source: "local", asked: true, detected: [gh], sourceControl: [git, lfs(true)] },
+      { source: "wsl:Ubuntu", asked: true, detected: [gh], sourceControl: [git, lfs(false)] },
+    ]);
+    // Required is decided per HOST from the repositories that live there: the LFS repository
+    // is local, so the distro's Git LFS is not needed.
+    expect(asked).toEqual([
+      { source: "local", lfsRequired: true },
+      { source: "wsl:Ubuntu", lfsRequired: false },
+    ]);
+  });
+
+  it("a host whose tools cannot be probed keeps its forge rows and claims no tool state", async () => {
+    const { deps } = makeDeps({
+      detectForgesOn: async () => [gh],
+      detectSourceControlOn: async () => null,
+    });
+    const hosts = await createSettingsComposition(deps).forgeHosts();
+    expect(hosts[0]).toEqual({ source: "local", asked: true, detected: [gh] });
+  });
+
+  it("each repository row says whether it uses Git LFS, asked of that repository", async () => {
+    const { deps } = sourceControlDeps((root) => root === "/orbital");
+    const rows = (await createSettingsComposition(deps).get()).projects;
+    expect(rows.map((row) => [row.repoPath, row.usesLfs])).toEqual([
+      ["/orbital", true],
+      ["/widget", false],
+    ]);
+  });
+
+  it("one read asks each repository about Git LFS once, however many projects or rows name it", async () => {
+    const asked: string[] = [];
+    const { deps } = makeDeps({
+      // Two projects on one host include the same two repositories, and none uses Git LFS,
+      // so nothing short-circuits: every repository the host has must be asked.
+      listProjects: () => [
+        project({ kind: "workspace", repoCount: 2, includedRepoPaths: ["/orbital", "/widget"] }),
+        project({ id: "b", name: "widget", path: "/widget", openPath: "/widget" }),
+      ],
+      detectForgesOn: async () => [gh],
+      detectSourceControlOn: async () => [git, lfs(false)],
+      repoUsesLfs: async (root) => {
+        asked.push(root);
+        return false;
+      },
+    });
+    const composition = createSettingsComposition(deps);
+    await composition.forgeHosts();
+    expect([...asked].sort()).toEqual(["/orbital", "/widget"]);
+    asked.length = 0;
+    await composition.get();
+    expect([...asked].sort()).toEqual(["/orbital", "/widget"]);
+  });
+
+  it("no LFS probe wired ⇒ the row says nothing about LFS, never a guessed no", async () => {
+    const { deps } = makeDeps();
+    const row = (await createSettingsComposition(deps).get()).projects[0];
+    expect(row && "usesLfs" in row).toBe(false);
   });
 });

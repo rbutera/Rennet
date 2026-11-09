@@ -359,9 +359,196 @@ export async function worktreeForBranch(
  */
 export type WorktreeClaim = boolean | { readonly sessionId: string };
 
+/**
+ * How a review checkout treats Git LFS content (large-file-checkout spec, design D4).
+ *
+ * `download` is git as the user configured it: the LFS filter runs and fetches the real
+ * files. `skip` leaves LFS pointer files in place and works even when `git-lfs` is not
+ * installed and the user's config marks the filter as required. Absent means `download`,
+ * which is the behaviour every caller had before the option existed.
+ */
+export type LargeFileMode = "download" | "skip";
+
+/** What one checkout-writing git call takes for a large-file mode: `-c` overrides placed
+ *  before the subcommand, and extra environment. Per invocation only, so the user's git
+ *  config is never written. */
+export interface LargeFileGitInvocation {
+  readonly config: readonly string[];
+  readonly env?: Readonly<Record<string, string>>;
+}
+
+/**
+ * The per-call overrides for `mode`.
+ *
+ * Skip blanks both LFS filter commands and clears `required`, so git checks the pointer
+ * text out verbatim instead of starting `git-lfs`; `GIT_LFS_SKIP_SMUDGE=1` covers a
+ * `git-lfs` that is started anyway (a hook, or a filter configured under another name).
+ */
+export function largeFileGitInvocation(mode: LargeFileMode | undefined): LargeFileGitInvocation {
+  if (mode !== "skip") return { config: [] };
+  return {
+    config: [
+      "-c",
+      "filter.lfs.process=",
+      "-c",
+      "filter.lfs.smudge=",
+      "-c",
+      "filter.lfs.required=false",
+    ],
+    // Git's own progress lines are allow-listed in English when a skip-mode checkout is
+    // judged against git-lfs's hook refusal, so pin git's message language for the call.
+    // `LANGUAGE` is cleared as extra caution (gettext already ignores it under the C
+    // locale). The pin covers the whole call, so the user's other hooks also run in C and a
+    // genuine skip-mode failure reaches the user in English.
+    env: { GIT_LFS_SKIP_SMUDGE: "1", LC_ALL: "C", LANGUAGE: "" },
+  };
+}
+
+/**
+ * What a skip-mode checkout reports when git-lfs's own hook refused after the checkout had
+ * already landed. Plain words, for the preparation surface to show beside the review.
+ */
+export const LARGE_FILES_HOOK_SKIPPED_WARNING =
+  "Large files were left as placeholders. This repository's Git LFS hook needs Git LFS, which isn't installed, so the hook was skipped.";
+
+/**
+ * The line every hook `git lfs install` writes (post-checkout, post-commit, post-merge,
+ * pre-push) prints when `git-lfs` is not on the PATH, before it exits 2. Matched from the
+ * start of the line: a bare `git-lfs` token can sit in a path, a ref or a URL.
+ */
+const LFS_HOOK_WITHOUT_GIT_LFS =
+  /^This repository is configured for Git LFS but 'git-lfs' was not found on your path\b/;
+
+/** What git itself prints on stderr around a checkout-writing call that succeeded. */
+const GIT_CHECKOUT_PROGRESS: readonly RegExp[] = [
+  /^Preparing worktree \(.+\)$/,
+  /^HEAD is now at [0-9a-f]+\b/,
+  /^Updating files:/,
+  /^Switched to branch '.+'$/,
+  /^Previous HEAD position was [0-9a-f]+\b/,
+];
+
+/**
+ * Whether `stderr` is the stock git-lfs hook's refusal and nothing else: once git's own
+ * progress lines and blank lines are dropped, at least one line is left and every one left
+ * is the stock diagnostic. A hook that prints that line and then fails for a reason of its
+ * own (a composed hook) leaves its own line behind, and is not this.
+ */
+function onlyLfsHookRefusal(stderr: string): boolean {
+  const left = stderr
+    .split(/\r\n|\r|\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !GIT_CHECKOUT_PROGRESS.some((p) => p.test(line)));
+  return left.length > 0 && left.every((line) => LFS_HOOK_WITHOUT_GIT_LFS.test(line));
+}
+
+/**
+ * The exit code git reports when that hook refused. `worktree add` hands the hook's own code
+ * back, and the stock hook's is 2. `checkout` reports any post-checkout failure as 1, so for
+ * it the stderr and landing checks are the whole proof.
+ */
+function lfsHookRefusalExitCode(arguments_: readonly string[]): number {
+  return arguments_[0] === "checkout" ? 1 : 2;
+}
+
+/** Where a checkout-writing call must have left the worktree for a refused hook to be
+ *  harmless: registered at `path`, with HEAD at `head` (a detached add) or on `branch`. */
+type CheckoutLanding =
+  | { readonly path: string; readonly head: string }
+  | { readonly path: string; readonly branch: string };
+
+/** Git's own words from a failed call: stderr when the runner kept it, else the message. */
+function gitErrorText(error: unknown): string {
+  if (error instanceof Error) {
+    const stderr = (error as Error & { stderr?: unknown }).stderr;
+    return typeof stderr === "string" && stderr.length > 0 ? stderr : error.message;
+  }
+  return String(error);
+}
+
+/** The exit code a failed call reported, when the runner kept one. */
+function gitExitCode(error: unknown): number | undefined {
+  const code = (error as { exitCode?: unknown } | null)?.exitCode;
+  return typeof code === "number" ? code : undefined;
+}
+
+function sameCommit(recorded: string | undefined, expected: string): boolean {
+  if (recorded === undefined) return false;
+  if (recorded === expected) return true;
+  // An abbreviated OID names the same commit when it is a prefix of the full one git lists.
+  return (
+    /^[0-9a-f]{7,}$/i.test(expected) && recorded.toLowerCase().startsWith(expected.toLowerCase())
+  );
+}
+
+/** Whether git registered the worktree at the landing's path, on the landing's ref. */
+async function checkoutLanded(
+  git: GitExec,
+  root: string,
+  landing: CheckoutLanding,
+): Promise<boolean> {
+  const record = (await listWorktreeRecords(git, root)).find(
+    (entry) => comparablePath(entry.path) === comparablePath(landing.path),
+  );
+  if (record === undefined || record.prunable !== undefined) return false;
+  return "head" in landing
+    ? record.detached && sameCommit(record.head, landing.head)
+    : record.branch === landing.branch;
+}
+
+/**
+ * Run one checkout-writing git call under `mode`. Download passes the arguments and options
+ * through untouched, so a runner sees exactly what it saw before. Answers a warning when the
+ * call succeeded only in substance, else `undefined`.
+ *
+ * ⚠️ SKIP CANNOT SILENCE A HOOK, AND MUST NOT TRY. `git lfs install` also writes a
+ * `post-checkout` hook that opens with `command -v git-lfs || exit 2`. It runs after the
+ * checkout is written, and git hands its exit code back, so `worktree add` exits 2 with the
+ * worktree created and its pointer files in place. Turning hooks off (`core.hooksPath`)
+ * would silence every other hook the user relies on too. So in skip mode, and only for that
+ * hook's own refusal, the failure is checked against what git actually did. All three must
+ * hold: the exit code is the one that hook produces (`lfsHookRefusalExitCode`), stderr is
+ * that hook's message and git's own progress and nothing else, and the worktree is
+ * registered at the target, on the expected commit or branch. Then it is the checkout skip
+ * asked for, reported with a warning. Any other failure throws, including any other hook's
+ * and a hook that prints the stock message before failing for its own reason.
+ */
+async function gitWithLargeFiles(
+  git: GitExec,
+  root: string,
+  arguments_: string[],
+  mode: LargeFileMode | undefined,
+  landing: CheckoutLanding,
+): Promise<string | undefined> {
+  const invocation = largeFileGitInvocation(mode);
+  try {
+    if (invocation.env === undefined) await git(root, [...invocation.config, ...arguments_]);
+    else await git(root, [...invocation.config, ...arguments_], { env: invocation.env });
+    return undefined;
+  } catch (error) {
+    if (mode !== "skip") throw error;
+    if (gitExitCode(error) !== lfsHookRefusalExitCode(arguments_)) throw error;
+    if (!onlyLfsHookRefusal(gitErrorText(error))) throw error;
+    if (!(await checkoutLanded(git, root, landing))) throw error;
+    return LARGE_FILES_HOOK_SKIPPED_WARNING;
+  }
+}
+
+/** `{ warning }` when there is one, else nothing: results stay exactly what they were. */
+function withWarning(warning: string | undefined): { warning?: string } {
+  return warning === undefined ? {} : { warning };
+}
+
 export interface EnsureBranchWorktreeOptions {
   /** The claim oracle. Absent ⇒ `() => true`, which refuses. */
   readonly claimed?: (record: WorktreeRecord) => WorktreeClaim;
+  /** How the checkout treats Git LFS content. Absent ⇒ `download`. */
+  readonly largeFiles?: LargeFileMode;
+}
+
+export interface EnsureSiblingWorktreeOptions {
+  /** How the checkout treats Git LFS content. Absent ⇒ `download`. */
+  readonly largeFiles?: LargeFileMode;
 }
 
 /** What a worktree has out, as a person would say it. `rev-parse --abbrev-ref HEAD` prints
@@ -442,7 +629,7 @@ export async function ensureBranchWorktree(
   worktreePath: string,
   branch: string,
   options: EnsureBranchWorktreeOptions = {},
-): Promise<{ path: string; created: boolean; repaired?: boolean }> {
+): Promise<{ path: string; created: boolean; repaired?: boolean; warning?: string }> {
   const records = await listWorktreeRecords(git, cloneRoot);
   const registered = records.find(
     (record) => comparablePath(record.path) === comparablePath(worktreePath),
@@ -472,8 +659,14 @@ export async function ensureBranchWorktree(
     // claims is somebody's live workspace, whatever it has out.
     const claim = options.claimed?.(registered) ?? true;
     if (claim === false) {
-      await git(registered.path, ["checkout", branch]);
-      return { path: worktreePath, created: false, repaired: true };
+      const warning = await gitWithLargeFiles(
+        git,
+        registered.path,
+        ["checkout", branch],
+        options.largeFiles,
+        { path: registered.path, branch },
+      );
+      return { path: worktreePath, created: false, repaired: true, ...withWarning(warning) };
     }
     throw new Error(
       `worktree placement: ${registered.path} is already a worktree of this repository on ${headDescription(current)}, so Rennet will not check ${branch} out in it.${
@@ -482,8 +675,14 @@ export async function ensureBranchWorktree(
     );
   }
   await mkdir(join(worktreePath, ".."), { recursive: true });
-  await git(cloneRoot, ["worktree", "add", worktreePath, branch]);
-  return { path: worktreePath, created: true };
+  const warning = await gitWithLargeFiles(
+    git,
+    cloneRoot,
+    ["worktree", "add", worktreePath, branch],
+    options.largeFiles,
+    { path: worktreePath, branch },
+  );
+  return { path: worktreePath, created: true, ...withWarning(warning) };
 }
 
 /**
@@ -670,8 +869,11 @@ export async function ensureSiblingWorktree(
   cloneRoot: string,
   worktreePath: string,
   branch: string,
-): Promise<{ path: string; created: boolean; workBranch: string }> {
+  options: EnsureSiblingWorktreeOptions = {},
+): Promise<{ path: string; created: boolean; workBranch: string; warning?: string }> {
+  const largeFiles = options.largeFiles;
   const workBranch = siblingBranchFor(branch);
+  const landing = { path: worktreePath, branch: workBranch };
   const siblingRef = `refs/heads/${workBranch}`;
   const branchRef = `refs/heads/${branch}`;
   // ONE read of the registrations answers both questions below, and no write precedes it.
@@ -710,17 +912,36 @@ export async function ensureSiblingWorktree(
   // 3. The sibling BRANCH survives with no worktree. Re-forked only when its commits are
   //    provably elsewhere; otherwise checked out where it stands, ahead and intact.
   if (await refExists(git, cloneRoot, siblingRef)) {
+    let warning: string | undefined;
     if (await siblingIsCollectable(git, cloneRoot, workBranch, branch)) {
       await git(cloneRoot, ["branch", "-D", workBranch]);
-      await git(cloneRoot, ["worktree", "add", "-b", workBranch, worktreePath, branchRef]);
+      warning = await gitWithLargeFiles(
+        git,
+        cloneRoot,
+        ["worktree", "add", "-b", workBranch, worktreePath, branchRef],
+        largeFiles,
+        landing,
+      );
     } else {
-      await git(cloneRoot, ["worktree", "add", worktreePath, workBranch]);
+      warning = await gitWithLargeFiles(
+        git,
+        cloneRoot,
+        ["worktree", "add", worktreePath, workBranch],
+        largeFiles,
+        landing,
+      );
     }
-    return { path: worktreePath, created: true, workBranch };
+    return { path: worktreePath, created: true, workBranch, ...withWarning(warning) };
   }
   // 4. Nothing here: fork the sibling from the branch's head.
-  await git(cloneRoot, ["worktree", "add", "-b", workBranch, worktreePath, branchRef]);
-  return { path: worktreePath, created: true, workBranch };
+  const warning = await gitWithLargeFiles(
+    git,
+    cloneRoot,
+    ["worktree", "add", "-b", workBranch, worktreePath, branchRef],
+    largeFiles,
+    landing,
+  );
+  return { path: worktreePath, created: true, workBranch, ...withWarning(warning) };
 }
 
 /**
@@ -786,8 +1007,17 @@ export async function ensurePrWorktree(
   options?: {
     /** Rennet's pull-request index records a snapshot at this exact path. */
     readonly recordedSnapshot?: boolean;
+    /** How the checkout treats Git LFS content. Absent ⇒ `download`. */
+    readonly largeFiles?: LargeFileMode;
+    /**
+     * Called once the superseded snapshot at the path is known to be REPLACED, while it still
+     * exists and before anything is checked out. Git hands the replacement the same git dir,
+     * so whatever the daemon keys on that git dir (the skip-mode index) must already describe
+     * the new checkout's mode when git checks its files out. A throw stops the replacement.
+     */
+    readonly beforeReplace?: () => Promise<void>;
   },
-): Promise<{ path: string; created: boolean }> {
+): Promise<{ path: string; created: boolean; warning?: string }> {
   if (existsSync(join(worktreePath, ".git"))) {
     const current = (await git(worktreePath, ["rev-parse", "HEAD"], { reject: false })).trim();
     if (current === headOid) return { path: worktreePath, created: false };
@@ -804,12 +1034,19 @@ export async function ensurePrWorktree(
     }
     // Superseded head, and Rennet's own detached snapshot: replaced forcibly in place — it
     // is a managed detached checkout, never the user's own working tree.
+    await options?.beforeReplace?.();
     await git(cloneRoot, ["worktree", "remove", "--force", worktreePath], { reject: false });
     await rm(worktreePath, { recursive: true, force: true });
   }
   await mkdir(join(worktreePath, ".."), { recursive: true });
-  await git(cloneRoot, ["worktree", "add", "--detach", worktreePath, headOid]);
-  return { path: worktreePath, created: true };
+  const warning = await gitWithLargeFiles(
+    git,
+    cloneRoot,
+    ["worktree", "add", "--detach", worktreePath, headOid],
+    options?.largeFiles,
+    { path: worktreePath, head: headOid },
+  );
+  return { path: worktreePath, created: true, ...withWarning(warning) };
 }
 
 /** Read the worktree's recorded setup status (absent file ⇒ never ran ⇒ `none`). */

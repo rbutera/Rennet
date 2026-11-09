@@ -472,7 +472,11 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
     expect(readDaemonFile(dataDir)).toEqual(spawned);
   });
 
-  it("gives the spawned daemon thread-pool headroom and drops the shell data-dir override", async () => {
+  it("gives the spawned daemon thread-pool headroom, drops the shell data-dir override, and leaves PATH to the daemon", async () => {
+    // daemon-process-environment: the supervisor hands the daemon the app's env as-is (a Dock
+    // launch's bare launchd PATH included) and does NOT try to fix PATH here — the daemon
+    // hydrates its own PATH from the login shell at startup (`startDaemon` in
+    // packages/server/src/daemon.ts, proven in daemon.test.ts), which also covers `rennet serve`.
     const dataDir = makeDir();
     const stale = info(112, 40_500);
     const spawned = info(223, 41_500);
@@ -488,7 +492,7 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
       entryPath: "/bundle/server.cjs",
       execPath: "/electron",
       serverVersion: "1.2.3",
-      env: { RENNET_USER_DATA: "/shell/override", PATH: "/usr/bin" },
+      env: { RENNET_USER_DATA: "/shell/override", PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
       warn: vi.fn(),
     });
 
@@ -499,7 +503,9 @@ describe("desktop daemon supervision (ensureDaemon)", () => {
     const passedEnv: NodeJS.ProcessEnv = options?.env ?? {};
     expect(passedEnv.UV_THREADPOOL_SIZE).toBe("16");
     expect(passedEnv.RENNET_USER_DATA).toBeUndefined();
-    expect(passedEnv.PATH).toBe("/usr/bin");
+    // Passed through untouched: hydration is the daemon's job, so a supervisor-side rewrite
+    // (which would miss `rennet serve` and delay app launch) shows up here as a diff.
+    expect(passedEnv.PATH).toBe("/usr/bin:/bin:/usr/sbin:/sbin");
   });
 
   it("kills an incompatible daemon, spawns the bundled daemon, and preserves the new claim", async () => {

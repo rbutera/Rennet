@@ -231,8 +231,8 @@ describe("checkProtocolCompatibility", () => {
 });
 
 describe("version constants", () => {
-  it("exports the aggregate review-publish version window", () => {
-    expect(PROTOCOL_VERSION).toBe(3);
+  it("speaks version 4 and still accepts a version-3 peer", () => {
+    expect(PROTOCOL_VERSION).toBe(4);
     expect(MIN_COMPATIBLE_PROTOCOL_VERSION).toBe(3);
   });
 });

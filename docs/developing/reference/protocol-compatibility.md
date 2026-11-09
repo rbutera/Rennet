@@ -45,9 +45,22 @@ Use a new protocol version for a change that cannot follow the append-only rule.
 ## Negotiate a version window
 
 `PROTOCOL_VERSION` is the version this build speaks.
-`MIN_COMPATIBLE_PROTOCOL_VERSION` is the oldest version it accepts. Both are
-currently `2`; version 2 introduced the aggregate, byte-exact review artifact and post
-descriptor used by the publish preview.
+`MIN_COMPATIBLE_PROTOCOL_VERSION` is the oldest version it accepts. The build
+speaks `4` and accepts `3`:
+
+| Version | What it changed |
+|---|---|
+| 4 | Review preparation gained the `awaiting` state (the large-file question), the `workspace` stage, and the `tool-install-output` progress event. Each extends a closed union, so the daemon translates them for a version-3 connection (below). |
+| 3 | The context-map commands and knowledge schemas left the wire. No translation could serve a version-2 peer, so the minimum moved to 3 with it. |
+| 2 | The aggregate, byte-exact review artifact and post descriptor used by the publish preview. |
+
+A change that adds a value to a closed union (a new `status`, `stage` or event
+`kind`) is not append-only: a decoder from before it rejects the whole payload,
+not just the new value. It takes a new protocol version. When the daemon can say
+the new value in the older vocabulary, the minimum stays where it is and the
+daemon translates for each connection by the version that connection sent in its
+`hello`. When it cannot, the minimum moves with the version and a mixed pair
+fails at the handshake.
 
 Two peers are compatible when each version is at least the other peer's minimum:
 
@@ -127,6 +140,22 @@ UPDATE_PUBLIC_SCHEMA=1 pnpm nx test rennet-protocol
 
 A consumer adopts the regenerated fixture when it adopts the new projection
 shape.
+
+## Translate for an older connection
+
+The WebSocket listener records the `protocolVersion` each client sent in its
+`hello` and writes every response and progress frame in that version's
+vocabulary. `packages/protocol/src/session/preparation-compat.ts` owns the one
+translation live today, for a connection that negotiated version 3:
+
+| Version 4 value | What a version-3 connection receives |
+|---|---|
+| Preparation `awaiting` (the large-file question) | `capturing`, step `capturing-change`. The older client shows preparation under way, with Cancel. It cannot answer the question; a current client can. |
+| Preparation `failed` or `cancelled` at stage `workspace` | The same record at stage `capture`. |
+| Progress event `tool-install-output` | Nothing. A version-3 client never starts an install. |
+
+The translation covers every session row a command returns, under `session` or
+`sessions`. A version-4 connection receives every value as the daemon holds it.
 
 ## Track compatibility shims
 

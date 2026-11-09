@@ -232,11 +232,46 @@ export class SessionStore {
     sessionId: string,
     boundRoot: string,
     workBranch?: string,
+    /** Quiet facts about the checkout, recorded with the binding and cleared with it. */
+    workspaceNotes?: readonly string[],
   ): SessionModel | undefined {
     const session = this.load(sessionId);
     if (!session) return undefined;
     if (session.boundRoot !== undefined) return session;
-    const next = { ...session, boundRoot, ...(workBranch === undefined ? {} : { workBranch }) };
+    const next = {
+      ...session,
+      boundRoot,
+      ...(workBranch === undefined ? {} : { workBranch }),
+      ...(workspaceNotes === undefined || workspaceNotes.length === 0
+        ? {}
+        : { workspaceNotes: [...workspaceNotes] }),
+    };
+    this.save(next);
+    return next;
+  }
+
+  /**
+   * Replace the quiet notes about this session's bound checkout. For a binding that is
+   * already recorded and whose checkout changed under it — a re-pin that replaced the
+   * checkout, or Git LFS installed since — where `setBoundRoot` (which never touches a
+   * recorded binding) cannot. An empty list clears them. `undefined` if the session is absent.
+   */
+  setWorkspaceNotes(
+    sessionId: string,
+    workspaceNotes: readonly string[],
+  ): SessionModel | undefined {
+    const session = this.load(sessionId);
+    if (!session) return undefined;
+    const current = session.workspaceNotes ?? [];
+    if (
+      current.length === workspaceNotes.length &&
+      current.every((note, index) => note === workspaceNotes[index])
+    ) {
+      return session;
+    }
+    const next = { ...session };
+    if (workspaceNotes.length === 0) delete next.workspaceNotes;
+    else next.workspaceNotes = [...workspaceNotes];
     this.save(next);
     return next;
   }
@@ -286,6 +321,7 @@ export class SessionStore {
     delete next.boundRoot;
     delete next.workBranch;
     delete next.workBranchPush;
+    delete next.workspaceNotes;
     this.save(next);
     return next;
   }

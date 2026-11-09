@@ -110,6 +110,10 @@ and Tailwind tree-shakes the variable away. Such a keyframe still belongs in `@t
 keyframes declared there are emitted whether or not a utility references them — and the
 hand-written rule names it directly. Today that is `processing-spin`, the orb's ring.
 
+The preparation presence has its own two keyframes, `presence-breathe` and
+`presence-sweep`, deliberately apart from the seat vocabulary (`lens-sheen`,
+`seat-breathe`): those mean "this seat is writing", and before any lane opens no seat is.
+
 Reduced motion is honoured twice: by the base rule that collapses every animation's
 duration **and zeroes its delay**, and by the variant where a call site can safely drop
 the animation outright. Those are not interchangeable — an animation whose settled state
@@ -224,10 +228,59 @@ A review opens on its boards (`src/app/review-workspace-route.tsx`, and
 worth writing down because this is the surface that renders a live external process, and
 the failure mode is a surface that quietly lies about it.
 
-- **Boards first, and nothing in front of them.** There is no preparation screen. Capture
-  is reported in the workspace's own header (`src/board/workspace-header.tsx`) — its two
-  named beats and its cancel — over a board view that is already there. When nothing is
-  being prepared the header renders nothing rather than restating a finished step.
+- **Boards first, and nothing in front of them.** There is no preparation screen and no
+  named step. While a review is on its way and no seat has opened — capture running, the
+  large-file question open, every lane still queued — the workspace shows one waiting
+  presence (`src/preparation/preparation-presence.tsx`): the board area is a board-shaped
+  skeleton with a slow sweep (`animate-presence-sweep`), the rail's five tabs breathe as one
+  staggered wave (`animate-presence-breathe`), and Cancel sits inline under the skeleton. It
+  is a presence, not a register: no tab claims a seat and no step is named. It steps aside
+  the moment a lane moves; from then the seats speak for themselves and Cancel floats over
+  the real boards. Under reduced motion the sweep removes itself and the tabs hold still at
+  a dimmed ink, so the waiting look still reads, standing still. When nothing is being
+  prepared the header renders nothing rather than restating a finished step.
+- **A stopped preparation is one block.** A failed or cancelled preparation renders one
+  block (`src/preparation/preparation-failure.tsx`) where the header sits, never a thin strip
+  over an empty board: the daemon's plain sentence when the failure is classified, the one
+  recovery its kind calls for (Install for me with its streaming output and the command
+  shown while it runs, Choose large-file mode, or Sign in), Retry always, and the raw tool
+  output behind a Details disclosure that is rendered only when opened. An UNCLASSIFIED
+  failure's reason is the failing step's own text, so it never leads: the block says
+  "Rennet couldn't prepare this review." — or, when the text says no coding agent is
+  installed, says that and what to install — and the reason joins the output behind
+  Details (`src/preparation/failure-copy.ts`; a failed lens board follows the same rule).
+  The live region is the sentence alone, never the install log under it. A write that does
+  not go through (Retry, Skip large files, Cancel) says so in one plain line beside it.
+  Skip large files says, in the dialog's own words, that it is remembered for the project.
+  A cancelled run says "Cancelled" and offers Retry. The block names no stage. The
+  large-file question itself is a modal over the presence
+  (`src/preparation/large-file-choice.tsx`): two plain choices, Install for me when
+  Download needs a missing Git LFS, and Escape closes it to a calm line with a way back,
+  where focus lands. Its state belongs to the SESSION, not the mount: the route swaps the
+  workspace when the review attaches mid-question, and the dialog keeps its screen, its
+  dismissal and the install running under it. Escape does not stop that install.
+- **An install acts for nobody.** When Install for me lands it shows its verdict and the
+  surface makes the next step obvious; it sends nothing on the reviewer's behalf. In the
+  large-file dialog, Git LFS installed returns the dialog to the two choices with "Git LFS
+  is installed" and Download available, and the reviewer clicks Download. In the failure
+  block, the verdict ("Git LFS is installed") shows in place of the button and Retry
+  becomes the primary action. That verdict answers the stop it was pressed for: once the
+  review is going again, a later stop asking for the same tool offers the install afresh. Automatic follow-ups (answering Download, retrying) raced
+  Cancel and Retry, so a cancelled review could resume itself; there are none. If the
+  connection drops and the daemon, once back, no longer knows the install (it restarted),
+  the button says plainly that Rennet lost track of it and offers Check again, which
+  only shows what is installed, and Install for me, a fresh install. Install for me waits,
+  disabled, until the project's machine is known.
+- **No tip over a review on its way.** First-run coach marks hold back while the session on
+  screen is waiting or choosing (`Coachmark`'s `suppressed`, from `routes/layout.tsx`):
+  there is nothing to teach yet, and a card there covered the way back to the question.
+- **The chat pane never narrates the machinery.** Before the review's thread exists the
+  dock is titled with the session's own branch or pull request (a Current Checkout session
+  with the branch its review read, else the project's name) and shows the thread's
+  skeleton while preparation runs; once it has stopped — with or without a review
+  attached — and no thread was bound, it shows the title alone and asks nothing more,
+  because the failure block owns the message. "New review", "No review is attached…" and
+  "This review has no thread…" are gone.
 - **The rail carries every lens, from the first frame.** `src/board/lens-switcher.tsx`
   renders one tab per lens whether or not that lens has a result, each carrying the state
   of its seat. A running lens is selectable, never a disabled segment, and no lens is
@@ -268,7 +321,8 @@ the failure mode is a surface that quietly lies about it.
   sits above the selected board with that seat's provider, live line and output so far;
   Flagged shows both voices. It renders only when a lane for that lens actually exists.
   During capture the daemon has opened no lane, so there is no widget and no board claims
-  to be filling — an empty workspace is honest, five invented seats would not be.
+  to be filling: the waiting presence says the review is coming without inventing five
+  seats to say it.
 - **It never invents a state, and a stopped run is not a live one.** Every line comes off
   the lane arm that carries it: a running lane with no `latest` says "under way", an
   `idle` projection is rendered in the quiet voice with the daemon's own words, and a

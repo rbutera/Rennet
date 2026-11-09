@@ -11,6 +11,7 @@ import {
   execaGit,
   FILE_VISIBLE_BYTE_LIMIT,
   type GitExec,
+  gitCallEnv,
   parseUnifiedDiffFiles,
 } from "./git-range-diff";
 
@@ -230,6 +231,30 @@ describe("parseUnifiedDiffFiles (degraded REST parser) hunk-body content is neve
     // The preamble `--- a/other.txt` sets previousPath internally, but a `modified`
     // result omits it; the in-hunk `--- ` does not change the status or output path.
     expect(files[0]?.previousPath).toBeUndefined();
+  });
+});
+
+describe("gitCallEnv", () => {
+  const wsl = { kind: "wsl", distro: "Ubuntu" } as const;
+  const skip = { GIT_LFS_SKIP_SMUDGE: "1" };
+
+  it("passes a host call's environment through as is", () => {
+    expect(gitCallEnv({ kind: "host" }, skip, "FOO")).toEqual(skip);
+  });
+
+  it("forwards a WSL call's names after the ones the daemon already forwards", () => {
+    expect(gitCallEnv(wsl, skip, "FOO/p:BAR")).toEqual({
+      ...skip,
+      WSLENV: "FOO/p:BAR:GIT_LFS_SKIP_SMUDGE",
+    });
+    expect(gitCallEnv(wsl, skip, undefined)).toEqual({ ...skip, WSLENV: "GIT_LFS_SKIP_SMUDGE" });
+  });
+
+  it("never lists a name twice when the daemon already forwards it with flags", () => {
+    expect(gitCallEnv(wsl, skip, "GIT_LFS_SKIP_SMUDGE/u:FOO")).toEqual({
+      ...skip,
+      WSLENV: "GIT_LFS_SKIP_SMUDGE/u:FOO",
+    });
   });
 });
 

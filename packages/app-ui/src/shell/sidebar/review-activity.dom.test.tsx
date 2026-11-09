@@ -53,6 +53,24 @@ describe("background review activity", () => {
     expect(r.getByRole("status", { name: "Reviewing the change" })).toBeTruthy();
   });
 
+  it("never calls a review ready while it waits on the large-file answer", () => {
+    // capturing → awaiting attaches the review and stops for the reviewer's choice. Nothing
+    // is ready: reading the attached review id as "finished" would put a check on a review
+    // that has not been checked out, let alone drafted.
+    const r = mount(<SidebarReviewActivity sessionId="one" active={false} />);
+    reconcile([session("one", { status: "capturing", step: "capturing-change" })]);
+    reconcile([
+      session("one", {
+        status: "awaiting",
+        kind: "large-file-choice",
+        lfsAvailable: false,
+        reviewId: "review-one",
+      }),
+    ]);
+    expect(r.queryByRole("status", { name: "Review ready" })).toBeNull();
+    expect(r.getByRole("status", { name: "Reviewing the change" })).toBeTruthy();
+  });
+
   it("reconciles post-round work after navigation and does not acknowledge a successor operation", () => {
     const r = mount(<SidebarReviewActivity sessionId="one" active={false} />);
     const row = session("one");
@@ -79,12 +97,48 @@ describe("background review activity", () => {
     reconcile([session("one", { status: "cancelled", stage: "capture" })]);
     expect(r.queryByRole("status")).toBeNull();
     reconcile([
-      session("one", { status: "failed", stage: "capture", reason: "Repository unavailable" }),
+      session("one", {
+        status: "failed",
+        stage: "capture",
+        reason: "Repository unavailable",
+        kind: "ref-gone",
+      }),
     ]);
     expect(r.getByLabelText("Review failed: Repository unavailable")).toBeTruthy();
     reconcile([session("one", { status: "capturing", step: "capturing-change" })]);
     act(() => useReviewActivityState.getState().acknowledge("one"));
     expect(r.getByRole("status", { name: "Reviewing the change" })).toBeTruthy();
     expect(r.queryByLabelText("Review failed: Repository unavailable")).toBeNull();
+  });
+
+  it("says a failed preparation the way its block does, never the failing step's raw text", () => {
+    // An unclassified failure's reason is whatever the failing step printed. The block leads
+    // with a plain sentence and keeps that text behind Details; the sidebar's tooltip and
+    // label must not read it aloud either.
+    const raw = "fatal: git-lfs filter-process: git-lfs: command not found\nerror: external filter";
+    const r = mount(<SidebarReviewActivity sessionId="one" active={false} />);
+    reconcile([session("one", { status: "failed", stage: "workspace", reason: raw })]);
+    const icon = r.getByLabelText("Review failed: Rennet couldn't prepare this review.");
+    expect(icon.closest("[title]")?.getAttribute("title")).toBe(
+      "Rennet couldn't prepare this review.",
+    );
+    expect(document.body.innerHTML).not.toContain("command not found");
+
+    // A classified failure's reason IS the daemon's plain sentence, so it is what is said.
+    reconcile([
+      session("one", {
+        status: "failed",
+        stage: "workspace",
+        reason: "Git LFS is needed to check out this pull request.",
+        kind: "tool-missing",
+        action: "install",
+        tool: "git-lfs",
+        detail: raw,
+      }),
+    ]);
+    expect(
+      r.getByLabelText("Review failed: Git LFS is needed to check out this pull request."),
+    ).toBeTruthy();
+    expect(document.body.innerHTML).not.toContain("command not found");
   });
 });

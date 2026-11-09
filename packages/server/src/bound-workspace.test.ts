@@ -18,6 +18,8 @@ import type { Review } from "@rennet/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type BoundWorkspaceDeps,
+  bindWouldCreateCheckout,
+  checkoutLargeFileMode,
   comparablePath,
   decideBoundWorkspace,
   inRepoSpelling,
@@ -300,6 +302,70 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
     expect(git(bound, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()).toBe("HEAD"); // detached
   });
 
+  // review-preparation-reliability: the large-file question is owed only when a bind would
+  // CREATE a checkout, and the project's answer reaches the checkout it creates.
+  it("asks the large-file question only of a bind that would create a checkout", async () => {
+    const repo = initRepo(root, "repo"); // checkout is on `main`
+    const branch = (headRef: string) =>
+      reviewFor({
+        id: `r-${headRef}`,
+        repositoryRoot: repo,
+        headOid: headOid(repo, headRef),
+        headRef,
+        baseOid: headOid(repo, "main"),
+      });
+    // The reviewer's own checkout has `main` out: under `share` nothing is checked out…
+    expect(await bindWouldCreateCheckout(branch("main"), deps)).toBe(false);
+    // …under `own`, a sibling is.
+    placement = { ...placement, workspace: "own" };
+    expect(await bindWouldCreateCheckout(branch("main"), deps)).toBe(true);
+    placement = { ...placement, workspace: "share" };
+    // A branch nothing has out is checked out under either setting.
+    expect(await bindWouldCreateCheckout(branch("feature"), deps)).toBe(true);
+    // A pull request with no snapshot yet is; once its snapshot is at the head, it is not.
+    const pr = reviewFor({
+      id: "r-pr",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+      pullRequest: true,
+    });
+    expect(await bindWouldCreateCheckout(pr, deps)).toBe(true);
+    await bindRoot(pr);
+    expect(await bindWouldCreateCheckout(pr, deps)).toBe(false);
+    // Asking created nothing: the question is read-only.
+    expect(createdWorktrees()).toHaveLength(1);
+  });
+
+  it("creates a checkout under the project's large-file mode and says which", async () => {
+    const repo = initRepo(root, "repo");
+    const review = reviewFor({
+      id: "r-skip",
+      repositoryRoot: repo,
+      headOid: headOid(repo, "feature"),
+      headRef: "feature",
+      baseOid: headOid(repo, "main"),
+    });
+    placement = { ...placement, largeFiles: "skip" };
+    gitCalls = [];
+    const bound = await decideBoundWorkspace(review, deps);
+    expect(bound.largeFiles).toBe("skip");
+    // Executed, not reasoned: the checkout ran with the LFS filter switched off per call.
+    const add = gitCalls.find((call) => call.includes("worktree") && call.includes("add"));
+    expect(add?.slice(0, 6)).toEqual([
+      "-c",
+      "filter.lfs.process=",
+      "-c",
+      "filter.lfs.smudge=",
+      "-c",
+      "filter.lfs.required=false",
+    ]);
+    // `ask` (or nothing) is download: the checkout every bind made before the setting.
+    expect(checkoutLargeFileMode({ largeFiles: "ask" })).toBe("download");
+    expect(checkoutLargeFileMode({})).toBe("download");
+  });
+
   it("binds a retrospective pull-request review the same way — it carries no postTarget", async () => {
     const repo = initRepo(root, "repo");
     const review = reviewFor({
@@ -431,8 +497,14 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       pullRequest: true,
     });
     // The SAME path — a re-pin, not a re-decision — now holding the new head.
-    expect(await repinBoundWorkspace(advanced, bound, deps)).toBe(bound);
+    // A REPLACED checkout reports the mode it was created under, so the caller can record it.
+    expect(await repinBoundWorkspace(advanced, bound, deps)).toEqual({
+      boundRoot: bound,
+      largeFiles: "download",
+    });
     expect(git(bound, ["rev-parse", "HEAD"]).trim()).toBe(movedHead);
+    // A re-pin that finds the head already there replaced nothing, and says no mode.
+    expect(await repinBoundWorkspace(advanced, bound, deps)).toEqual({ boundRoot: bound });
     expect(existsSync(join(bound, "round.txt"))).toBe(true);
   });
 
@@ -447,7 +519,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
     });
     const bound = await bindRoot(review);
     gitCalls = [];
-    expect(await repinBoundWorkspace(review, bound, deps)).toBe(bound);
+    expect(await repinBoundWorkspace(review, bound, deps)).toEqual({ boundRoot: bound });
     expect(gitCalls).toEqual([]);
   });
 

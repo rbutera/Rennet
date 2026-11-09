@@ -212,6 +212,18 @@
    * own keyframe (not seat-breathe) keeps it a soft wash — a filled disc breathing to full
    * opacity would be a second mark, not a halo. */
   --animate-seat-halo: rn-seat-halo 2.2s cubic-bezier(0.37, 0, 0.63, 1) infinite;
+  /* THE PREPARATION PRESENCE (review-preparation-reliability D6): one waiting presence across
+   * the lens rail and the board area while a review is being prepared and no seat has opened
+   * yet. Deliberately NOT the seat vocabulary above: the sheen and the breathing ring mean
+   * "this seat is writing", and before any lane opens no seat is. So the rail's five tabs
+   * breathe together as ONE wave (each tab carries an inline stagger), and the board's
+   * skeleton carries a slow sweep. Both stop the moment a lane opens or the run is over.
+   *
+   * Reduced motion: the rail tabs take `motion-reduce:animate-none` with a static dimmed
+   * opacity, and the sweep takes `motion-reduce:hidden` (parked mid-travel it would sit as a
+   * bright patch). The skeleton itself stays, so the waiting look still reads, standing still. */
+  --animate-presence-breathe: rn-presence-breathe 2.4s cubic-bezier(0.37, 0, 0.63, 1) infinite;
+  --animate-presence-sweep: rn-presence-sweep 2.8s cubic-bezier(0.37, 0, 0.63, 1) infinite;
 
   @keyframes rn-lens-sheen {
     /* The band is one third of the rule's width; travel it from just off the left edge to
@@ -243,6 +255,25 @@
     50% {
       opacity: 0.22;
       transform: scale(1);
+    }
+  }
+  @keyframes rn-presence-breathe {
+    0%,
+    100% {
+      opacity: 0.45;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+  @keyframes rn-presence-sweep {
+    /* The band is half the row's width; it travels from fully off the left edge to fully
+     * off the right, so each pass starts and ends on a plain skeleton. */
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(200%);
     }
   }
   @keyframes rn-welcome-step-in {

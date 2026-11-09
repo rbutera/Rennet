@@ -1,6 +1,6 @@
 import { Skeleton } from "@rennet/ui";
-import { type ReactNode, Suspense } from "react";
-import { useCommand } from "../data/query";
+import { type ReactNode, Suspense, useEffect, useRef } from "react";
+import { useCommand, useRefreshCommand } from "../data/query";
 import { useOpenCapturedPath } from "../review/code-destination";
 import { useChatTrail, useRouteChatTarget } from "./chat-data";
 import { ChatHeader } from "./chat-header";
@@ -12,14 +12,21 @@ import { useT3ChatSlot } from "./t3-chat-slot";
  * skeleton, not a sentence: a wait reads as a wait without a label the reviewer has to parse
  * (Rai, 2026-09-14). The sr-only line keeps the state honest for a screen reader.
  */
-function ChatPaneSkeleton({ label }: { readonly label: string }) {
+/** How often a review still being prepared asks for its thread again. The bind lands with
+ *  the workspace, a few seconds after the large-file answer at most. */
+const THREAD_POLL_MS = 1_500;
+
+function ChatPaneSkeleton({
+  label,
+  slot = "t3-chat-starting",
+}: {
+  readonly label: string;
+  /** Which wait this is. The sidecar bring-up and a review still being prepared are two
+   *  different facts (#872), so they never share a slot a test could confuse. */
+  readonly slot?: "t3-chat-starting" | "t3-chat-preparing";
+}) {
   return (
-    <div
-      data-slot="t3-chat-starting"
-      role="status"
-      aria-label={label}
-      className="flex flex-col gap-2.5 p-3"
-    >
+    <div data-slot={slot} role="status" aria-label={label} className="flex flex-col gap-2.5 p-3">
       <Skeleton className="h-3 w-2/3" />
       <Skeleton className="h-3 w-1/2" />
       <Skeleton className="h-3 w-4/5" />
@@ -43,6 +50,37 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
     reviewId === undefined ? {} : { reviewId },
     { enabled: reviewId !== undefined },
   );
+  // A REVIEW STILL BEING PREPARED has no thread yet: the review attaches as soon as capture
+  // settles, and its thread binds with the workspace, after the large-file answer. Until
+  // then the daemon answers `unavailable`, and the slot used to print "This review has no
+  // thread, and none is being opened" — Rai's exact complaint. That is a wait, so it reads
+  // as one: the thread skeleton, and the session is asked again until the thread binds.
+  const preparing = target.kind === "review" && target.preparing;
+  const stopped = target.kind === "review" && target.stopped;
+  const unbound = data !== undefined && data.thread?.status !== "bound";
+  // Only a preparation still under way polls. A failed or cancelled one has nothing on its
+  // way, and every ask for its thread is the daemon trying the checkout again.
+  const awaitingThread = preparing && !stopped && unbound;
+  // STOPPED, THREAD NEVER BOUND: the title alone. The failure block owns the message; the
+  // T3 mount would otherwise be handed the `unavailable` answer and print its own sentence.
+  const stoppedUnbound = stopped && unbound;
+  const refreshSession = useRefreshCommand("chat.t3Session");
+  useEffect(() => {
+    if (!awaitingThread) return;
+    const timer = window.setInterval(refreshSession, THREAD_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [awaitingThread, refreshSession]);
+  // …and the moment the preparation is over, ask once more: the answer cached while it ran
+  // is the waiting one, and whatever the daemon says now is the one to show. Only on that
+  // transition — a review opened after its preparation finished is asked exactly once — and
+  // only when it SETTLED: a run that stopped bound nothing, and asking would only send the
+  // daemon back to the checkout that just failed.
+  const wasPreparing = useRef(preparing);
+  useEffect(() => {
+    const ended = wasPreparing.current && !preparing;
+    wasPreparing.current = preparing;
+    if (ended && !stopped) refreshSession();
+  }, [preparing, stopped, refreshSession]);
   const slot = useT3ChatSlot();
   // WHICH THREAD THE SLOT SHOWS: the session's own, in every state of every lane (#823).
   //
@@ -73,14 +111,21 @@ export function T3ChatDock({ corner }: { readonly corner?: ReactNode }) {
     >
       <ChatHeader trail={trail} {...(corner ? { corner } : {})} />
       {target.kind === "resolving" ? null : target.kind === "no-review" ? (
-        <p data-slot="t3-chat-no-review" className="p-3 text-xs text-ink-soft">
-          No review is attached to this session, so there is no thread to open.
-        </p>
+        // No review yet. While one is being prepared the thread is on its way, so the pane
+        // shows the thread's skeleton under the session's own title — never a sentence
+        // about Rennet's internals ("No review is attached…" was one, and it read as a
+        // dead end). Otherwise it shows nothing: a stopped preparation's failure block,
+        // over the workspace, owns the message.
+        target.preparing ? (
+          <ChatPaneSkeleton label="Preparing the conversation" slot="t3-chat-preparing" />
+        ) : null
       ) : error ? (
         <ChatUnavailable slot="t3-chat-error" />
       ) : pending || !data ? (
         <ChatPaneSkeleton label="Starting chat" />
-      ) : slot ? (
+      ) : awaitingThread ? (
+        <ChatPaneSkeleton label="Preparing the conversation" slot="t3-chat-preparing" />
+      ) : stoppedUnbound ? null : slot ? (
         <Suspense fallback={<ChatPaneSkeleton label="Loading the thread view" />}>
           <slot.session session={data} onOpenFile={openFileInDiff} />
         </Suspense>

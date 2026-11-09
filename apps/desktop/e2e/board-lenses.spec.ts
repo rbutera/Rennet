@@ -21,6 +21,7 @@ import {
   seedReviewRepo,
   writeRepoFile,
 } from "./harness";
+import { resizeAppWindow } from "./window-size";
 
 test("the board reports a failed drafting attempt without disguising it as empty", async () => {
   test.setTimeout(120_000);
@@ -35,8 +36,20 @@ test("the board reports a failed drafting attempt without disguising it as empty
     await openFixtureReview(page, repository, userData);
     const board = page.locator('[data-kind="lens-board-view"]');
     await expect(board).toBeVisible();
-    await expect(board.locator('[data-kind="board-failed"]')).toContainText("no runnable seat");
+    // The headline is plain (this environment has no coding agent), and the daemon's own
+    // seat text sits behind Details rather than glued onto it.
+    const failed = board.locator('[data-kind="board-failed"]');
+    await expect(failed).toContainText("No coding agent is installed");
+    await expect(failed).not.toContainText("no runnable");
+    await failed.getByText("Details", { exact: true }).click();
+    await expect(failed.locator('[data-slot="failure-detail-output"]')).toContainText(
+      "no runnable review seat",
+    );
     await expect(board.locator('[data-kind="board-empty"]')).toHaveCount(0);
+    // A settled review with no preparation on record shows no preparation chrome at all:
+    // neither the failure block nor the waiting presence.
+    await expect(page.locator('[data-testid="preparation-failure"]')).toHaveCount(0);
+    await expect(page.locator('[data-kind="preparation-presence"]')).toHaveCount(0);
     await expect(page.getByRole("tablist", { name: "Lens" }).getByRole("tab")).toHaveCount(5);
     await openDiffView(page);
     await expect(board).toHaveCount(0);
@@ -192,7 +205,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       timeout: 60_000,
     });
 
-    await page.setViewportSize({ width: 1440, height: 900 });
+    await resizeAppWindow(application, page, { width: 1440, height: 900 });
     const topBar = page.locator('[data-slot="session-top-bar"]');
     const rail = topBar.locator('[data-slot="lens-switcher"] [role="tablist"]');
     await expect(rail).toBeVisible();
@@ -325,7 +338,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
     await expect(artifactSource).toHaveAttribute("href", `#${designSectionId}`);
     await expect(artifactSource).toHaveAttribute("data-target-id", designSectionId);
     await expect(artifactSource).toHaveAttribute("aria-label", "Jump to widget/spec.md");
-    await page.setViewportSize({ width: 1440, height: 480 });
+    await resizeAppWindow(application, page, { width: 1440, height: 480 });
     const boardScroller = page
       .locator(".min-h-0.flex-1.overflow-y-auto")
       .filter({ has: page.locator('[data-kind="lens-board-view"]') });
@@ -360,7 +373,7 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
         return sectionBox.y >= unobscuredTop - 1;
       })
       .toBe(true);
-    await page.setViewportSize({ width: 1440, height: 900 });
+    await resizeAppWindow(application, page, { width: 1440, height: 900 });
     const capabilityGrid = board.getByRole("navigation", { name: "Design capabilities" });
     const capability = capabilityGrid.getByRole("link", { name: "Jump to widget-value" });
     await expect(capability).toHaveAttribute("href", `#${designSectionId}`);
@@ -398,30 +411,38 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       board.locator(`[data-kind="related-file-chip"][data-source-path="${BOARD_TEST_PATH}"]`),
     ).toBeVisible();
 
+    // The rail's labels fold to icons when the TOP BAR's own pane (its `@container`) is too
+    // narrow for five labelled tabs, and the fold is dock-aware (`lens-switcher.tsx`, #968):
+    // below 42rem with the chat dock open, below 55rem with it shut. This used to expect the
+    // label to stay shown under a fixed 46rem, a number from before #968; with the real
+    // window resize the bar lands below the fold and the label is (correctly) hidden. So the
+    // expectation is computed from the bar's real width and the dock's real state.
     const sequenceTab = rail.getByRole("tab", { name: /^Sequence(?:,|$)/ });
-    const sequenceLabel = sequenceTab.locator("span").last();
-    const containerThreshold = await page.evaluate(
-      () => 46 * Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+    const sequenceLabel = sequenceTab.getByText("Sequence", { exact: true });
+    const rootFont = await page.evaluate(() =>
+      Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
     );
-    expect(topBarBox.width).toBeGreaterThan(containerThreshold);
-    expect(await sequenceLabel.evaluate((label) => getComputedStyle(label).display)).not.toBe(
-      "none",
-    );
+    const foldBelow = async () =>
+      ((await page.getByTestId("chat-dock-slot").getAttribute("data-open")) === "true" ? 42 : 55) *
+      rootFont;
+    const labelShown = () =>
+      sequenceLabel.evaluate((label) => getComputedStyle(label).display !== "none");
+    expect(topBarBox.width).toBeGreaterThan(await foldBelow());
+    expect(await labelShown()).toBe(true);
 
-    await page.setViewportSize({ width: 720, height: 900 });
+    await resizeAppWindow(application, page, { width: 720, height: 900 });
     await expect
       .poll(async () => (await topBar.boundingBox())?.width ?? Number.POSITIVE_INFINITY)
-      .toBeLessThan(containerThreshold);
-    await expect
-      .poll(() => sequenceLabel.evaluate((label) => getComputedStyle(label).display))
-      .not.toBe("none");
+      .toBeLessThan(46 * rootFont);
+    const narrowWidth = (await topBar.boundingBox())?.width ?? 0;
+    // Folded exactly when the bar is under the dock-aware threshold — and the tab itself is
+    // still there, named in full for a screen reader.
+    await expect.poll(labelShown).toBe(narrowWidth >= (await foldBelow()));
     await expect(sequenceTab).toBeVisible();
     await expect(sequenceTab).toHaveAccessibleName(/Sequence/);
 
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await expect
-      .poll(() => sequenceLabel.evaluate((label) => getComputedStyle(label).display))
-      .not.toBe("none");
+    await resizeAppWindow(application, page, { width: 1440, height: 900 });
+    await expect.poll(labelShown).toBe(true);
 
     const beforeLens = await page.evaluate(() => history.length);
     await rail.getByRole("tab", { name: "Sequence" }).click();
@@ -552,7 +573,7 @@ test("review activity and code evidence remain usable across navigation", async 
       ],
     });
     await page.reload();
-    await page.setViewportSize({ width: 1440, height: 900 });
+    await resizeAppWindow(application, page, { width: 1440, height: 900 });
     const board = page.locator("article[data-lens]");
     const tabs = page.getByRole("tablist", { name: "Lens" });
     for (const name of ["Design", "Sequence", "Decisions", "Flagged", "Noise"]) {
@@ -686,7 +707,13 @@ test("review activity and code evidence remain usable across navigation", async 
     });
     await sessionRow.click();
     await expect(sessionRow.getByRole("status", { name: "Review ready" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled();
+    // The exit is back. This fixture is the reviewer's own branch with no pull request and
+    // nothing staged, so the exit is the draft pull request ("Open pull request"), not
+    // "Continue" — that label is for a branch with something staged or a PR already open
+    // (#965, `handoff/fab.tsx`). The assertion said "Continue" from before that change.
+    await expect(
+      page.getByRole("button", { name: "Open pull request", exact: true }),
+    ).toBeEnabled();
     // …and the chip has left the corner it was keeping for the exit.
     await expect(
       page.getByRole("button", { name: "Cancel board generation", exact: true }),
@@ -761,7 +788,7 @@ test("review activity and code evidence remain usable across navigation", async 
         }),
       );
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
-    await page.setViewportSize({ width: 900, height: 800 });
+    await resizeAppWindow(application, page, { width: 900, height: 800 });
     const narrowHeader = page.locator('[data-slot="session-top-bar"]');
     await expect
       .poll(async () => {

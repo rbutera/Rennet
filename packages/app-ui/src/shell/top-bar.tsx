@@ -9,6 +9,7 @@ import { countOpenFindings } from "../board/finding-lifecycle";
 import { useLensActivityHistory } from "../board/lens-activity-state";
 import { seatHoldsSelection } from "../board/lens-seats";
 import { Icon } from "../components/icon";
+import { presenceShows, usePreparationPhase } from "../preparation/preparation-phase";
 import { useRoundRecords, useRoundState, useRoundsUnavailable } from "../rounds/rounds-data";
 import { useSlugResolution } from "../routes/slug";
 import {
@@ -157,6 +158,11 @@ export function TopBar() {
   // (5.1/D12) — which is why it takes the SLUG: the lanes are read off the session row,
   // and during capture there is no review to read a board from at all.
   const lenses = useLensBoards(slug, review?.id ?? "", selectedGeneration);
+  // The rail's half of the preparation presence (review-preparation-reliability D6): while
+  // the review is on its way and no seat has opened, the tabs breathe with the board's
+  // skeleton. Only on the live generation — a drill-down is a settled record.
+  const preparing =
+    presenceShows(usePreparationPhase(slug)) && selectedGeneration === liveGeneration;
   const observeActivity = useLensActivityHistory((state) => state.observe);
   useEffect(
     () => observeActivity(review?.id ?? slug, selectedGeneration, lenses),
@@ -369,6 +375,7 @@ export function TopBar() {
           onSelect={onLens}
           flaggedOpenCount={flaggedOpenCount}
           chatOpen={chatOpen}
+          preparing={preparing}
           className={cn(
             "app-region-no-drag mx-auto shrink-0",
             floating && cn("pointer-events-auto", chip),

@@ -1540,15 +1540,71 @@ export const LensDraftSnapshotSchema = z.object({
 export type LensDraftSnapshot = z.infer<typeof LensDraftSnapshotSchema>;
 
 /**
+ * Where a preparation stopped. `workspace` is the bind of the session's checkout, between
+ * capture and the boards (review-preparation-reliability D5): a checkout that could not be
+ * created is reported there, not as a capture failure.
+ *
+ * ⚠️ A reader that switches on this must DEFAULT, not enumerate: `workspace` arrived after
+ * `capture` and `boards`, and a later stage may arrive the same way. The capture copy is the
+ * safe default for anything a reader does not know.
+ */
+export const PreparationStageSchema = z.enum(["capture", "workspace", "boards"]);
+export type PreparationStage = z.infer<typeof PreparationStageSchema>;
+
+/**
+ * What a failed preparation's cause was, as far as the tool output said (D5). The same
+ * vocabulary `classifyGitFailure` answers in `@rennet/adapters`.
+ */
+export const PreparationFailureKindSchema = z.enum([
+  "tool-missing",
+  "large-file",
+  "auth",
+  "ref-gone",
+  "unknown",
+]);
+export type PreparationFailureKind = z.infer<typeof PreparationFailureKindSchema>;
+
+/** The one recovery a failure offers beside Retry (D5). */
+export const PreparationFailureActionSchema = z.enum([
+  "install",
+  "choose-large-files",
+  "sign-in",
+  "retry",
+]);
+export type PreparationFailureAction = z.infer<typeof PreparationFailureActionSchema>;
+
+/** The source-control tools Rennet can name as missing, and install. */
+export const SourceControlToolIdSchema = z.enum(["git", "git-lfs"]);
+export type SourceControlToolId = z.infer<typeof SourceControlToolIdSchema>;
+
+/** How a review checkout treats Git LFS content: the per-project `checkout.largeFiles` mode. */
+export const LargeFileModeSchema = z.enum(["download", "skip"]);
+export type LargeFileMode = z.infer<typeof LargeFileModeSchema>;
+
+/**
  * The durable preparation state for a session opened from New Chat. The session is minted
  * before capture starts so the client can navigate immediately; this record is the honest
  * account of what the daemon is doing after that navigation. Board lanes are snapshots folded
  * from the real lens-pipeline events, not client timers.
+ *
+ * `awaiting` is the one state that is neither running nor over: preparation has stopped and
+ * is waiting for the person's answer (today only the large-file choice, D4). It survives a
+ * daemon restart, and the answer (`session.chooseLargeFileMode`) resumes it.
  */
 export const SessionPreparationSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("capturing"),
     step: z.enum(["resolving-repository", "capturing-change"]),
+  }),
+  z.object({
+    status: z.literal("awaiting"),
+    /** What is being asked. One question exists today; the literal leaves room for more. */
+    kind: z.literal("large-file-choice"),
+    /** Whether Git LFS answered on the repository's machine when the question was asked, so
+     *  the prompt can offer Install for me beside Download when it did not. */
+    lfsAvailable: z.boolean(),
+    /** The captured review the checkout is for. The answer resumes preparation from it. */
+    reviewId: id,
   }),
   z.object({
     status: z.literal("drafting"),
@@ -1557,14 +1613,26 @@ export const SessionPreparationSchema = z.discriminatedUnion("status", [
   }),
   z.object({
     status: z.literal("failed"),
-    stage: z.enum(["capture", "boards"]),
+    stage: PreparationStageSchema,
+    /** One plain-language sentence about the object, for the person. Never raw tool output. */
     reason: z.string().min(1),
+    /**
+     * The classified cause (D5). Absent on a failure recorded before classification existed,
+     * or on one that was never a checkout failure; a reader treats absent as `unknown`.
+     */
+    kind: PreparationFailureKindSchema.optional(),
+    /** The recovery beside Retry. Absent reads as `retry`. */
+    action: PreparationFailureActionSchema.optional(),
+    /** The missing tool, when `kind` is `tool-missing`. */
+    tool: SourceControlToolIdSchema.optional(),
+    /** The raw tool output behind a disclosure: capped, never the message. */
+    detail: z.string().min(1).optional(),
     reviewId: id.optional(),
     lanes: z.array(LensLaneSchema).optional(),
   }),
   z.object({
     status: z.literal("cancelled"),
-    stage: z.enum(["capture", "boards"]),
+    stage: PreparationStageSchema,
     reviewId: id.optional(),
     lanes: z.array(LensLaneSchema).optional(),
   }),
@@ -1942,6 +2010,20 @@ export const SessionModelSchema = z
      * before this field, and every session under `share`, means exactly that.
      */
     workBranch: z.string().min(1).optional(),
+    /**
+     * Quiet facts about the bound checkout the reviewer should know, recorded with the
+     * binding (review-preparation-reliability): today only that a skip-mode checkout left its
+     * large files as placeholders because the repository's Git LFS hook could not run. Plain
+     * sentences, shown beside the review, never as a failure. Cleared with the binding.
+     */
+    workspaceNotes: z.array(z.string().min(1)).optional(),
+    /**
+     * How THIS session's checkouts treat Git LFS content, when the session was told rather
+     * than its project: a headless `rennet review --large-files`, or an answer given without
+     * remembering it for the project. Overrides the project's `checkout.largeFiles` for this
+     * session only; absent ⇒ the project's choice (or its question) applies.
+     */
+    largeFiles: LargeFileModeSchema.optional(),
     /**
      * WHERE this session's work branch was pushed: the remote it went to and the branch
      * name it landed under. Written by the pull-request submission, and only when the work

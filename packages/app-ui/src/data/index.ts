@@ -13,3 +13,4 @@ export {
   useRefreshCommand,
 } from "./query";
 export { type UseCommandStreamParams, useCommandStream } from "./stream";
+export { type ToolInstall, type ToolInstallState, useToolInstall } from "./tool-install";

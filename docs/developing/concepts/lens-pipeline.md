@@ -790,16 +790,25 @@ observed history and elapsed time stay with the review, generation and seat thre
 across navigation and reconnection. A new generation or thread starts a fresh
 observation.
 
-No header narrates the preparation. The frame's Rennet mark — the sphere in the
-sidebar lockup, or the floating orb in the corner slot when the sidebar is
-collapsed — animates while any review is being prepared or any round is
-regenerating, and a floating Cancel chip in the bottom-right corner is the running
-generation's only other chrome. A header returns for a terminal state, carrying
-the reason and Retry. Continue does not exist while the boards are being written:
-the Cancel chip stands in its corner, and Continue appears there once the review
-is ready. The same session's sidebar row stays animated when the user
+No header narrates the preparation, and no step is named. The frame's Rennet mark — the
+sphere in the sidebar lockup, or the floating orb in the corner slot when the sidebar is
+collapsed — animates while any review is being prepared or any round is regenerating.
+Before any lane opens (capture running, the large-file question open, every lane still
+queued) the workspace itself shows one waiting presence: the board area is a skeleton
+with a slow sweep, the rail's five tabs breathe as one wave, and Cancel sits inline
+under the skeleton. Once a lane moves the seats speak for themselves, and a floating
+Cancel chip in the bottom-right corner is the running generation's only other chrome. A
+stopped preparation renders one failure block: the daemon's plain reason when the failure
+is classified, or a fixed plain sentence when it is not (an unclassified reason is the
+failing step's own text, so it goes behind Details with the raw output; a failure that
+says no coding agent is installed says so and what to install), the recovery its kind
+calls for (Install for me, Choose large-file mode or Sign in), Retry, and the raw output
+behind Details. A failed lens board does the same: a plain line, its reason behind
+Details. Continue does not exist while the boards are being written: the Cancel
+chip stands in its corner, and Continue appears there once the review is ready. The same session's sidebar row stays animated when the user
 navigates away. Completion becomes a check and then an unread dot until opened;
-failure retains its reason. Initial preparation and post-round regeneration
+failure keeps the failure block's plain sentence (an unclassified failure's raw reason
+stays behind the block's Details, never in the sidebar's tooltip). Initial preparation and post-round regeneration
 project their durable state into this presentation rather than relying on the
 currently mounted board.
 

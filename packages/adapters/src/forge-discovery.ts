@@ -5,6 +5,7 @@ import { posix as posixPath, win32 as win32Path } from "node:path";
 import { locusCommand } from "@rennet/core";
 import { execa } from "execa";
 import { wslDiscoveryDeps } from "./harness-discovery";
+import { readLoginShellPath } from "./user-path";
 
 /**
  * Forge (source-control) CLI detection, mirroring `harness-discovery.ts`.
@@ -425,21 +426,9 @@ export function defaultForgeDetectionDeps(): ForgeDetectionDeps {
   return {
     platform,
     pathExt: process.env.PATHEXT ?? "",
-    async loginShellPath(): Promise<string | null> {
-      if (platform === "win32") return null;
-      const shell = process.env.SHELL ?? "/bin/zsh";
-      try {
-        const result = await execa(shell, ["-ilc", 'printf %s "$PATH"'], {
-          reject: false,
-          shell: false,
-          stdin: "ignore",
-          timeout: FORGE_COMMAND_TIMEOUT_MS,
-        });
-        return result.exitCode === 0 ? result.stdout : null;
-      } catch {
-        return null;
-      }
-    },
+    // The shared resolver (daemon-process-environment): markers keep rc-file banners out of
+    // the value, a 5 s timeout bounds a hung shell, and Windows answers null (no POSIX shell).
+    loginShellPath: () => readLoginShellPath(),
     envPath: process.env.PATH ?? "",
     home: homedir(),
     async listDir(directory: string): Promise<readonly string[]> {

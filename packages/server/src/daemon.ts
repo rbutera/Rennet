@@ -9,7 +9,13 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { defaultForgeDetectionDeps, resolveGitHubCliToken } from "@rennet/adapters";
+import {
+  defaultForgeDetectionDeps,
+  hydrateProcessPath,
+  largeFileSkipIndexPath,
+  resolveGitHubCliToken,
+  withLargeFileSkipIndex,
+} from "@rennet/adapters";
 import { PROTOCOL_VERSION } from "@rennet/protocol";
 import { createRennetServer } from "./create-server";
 import { type DaemonInfo, removeDaemonFile, writeDaemonFile } from "./daemon-file";
@@ -78,8 +84,48 @@ export function resolveDaemonConfig(
 
 export interface RunningDaemon {
   readonly info: DaemonInfo;
-  /** Shut the server down and remove the claim. Idempotent. */
-  readonly stop: () => void;
+  /**
+   * Shut the server down, then remove the claim. Idempotent. Settles once every installer
+   * the server was running has ended (or `STOP_WAIT_MS` has passed), so a caller that exits
+   * the process after it leaves no Homebrew run behind; the claim goes at that same moment.
+   */
+  readonly stop: () => Promise<void>;
+}
+
+/** How long a stopping daemon waits for its installers to end before it exits anyway. An
+ *  aborted installer gets SIGTERM, then SIGKILL two seconds later, so this is the backstop. */
+export const STOP_WAIT_MS = 5_000;
+
+/**
+ * The daemon's one `stop`: shut the server down, and remove the `daemon.json` claim only once
+ * that shutdown has SETTLED (or the `waitMs` backstop has passed). The claim's disappearance is
+ * what `rennet stop` and the desktop launcher wait for, so removing it first told them the
+ * daemon was gone while it was still ending its installers — and a launcher that then
+ * replaced the bundle or started a new daemon raced the old one. Idempotent.
+ */
+export function createDaemonStop(input: {
+  readonly dataDir: string;
+  readonly pid: number;
+  /** Late-bound: `null` while the server is still being created. */
+  readonly shutdown: () => Promise<void> | null;
+  readonly waitMs?: number;
+}): () => Promise<void> {
+  let stopping: Promise<void> | null = null;
+  return (): Promise<void> => {
+    if (stopping !== null) return stopping;
+    const settled = input.shutdown() ?? Promise.resolve();
+    stopping = new Promise<void>((resolve) => {
+      const done = (): void => {
+        clearTimeout(backstop);
+        removeDaemonFile(input.dataDir, input.pid);
+        resolve();
+      };
+      const backstop = setTimeout(done, input.waitMs ?? STOP_WAIT_MS);
+      backstop.unref?.();
+      void settled.catch(() => undefined).finally(done);
+    });
+    return stopping;
+  };
 }
 
 /**
@@ -97,13 +143,15 @@ export async function runDaemon(
   // `stop` closes the server, so it has to exist before the listener can serve `/shutdown` —
   // and the listener starts inside `createRennetServer`. The shutdown is therefore late-bound
   // through this holder, which is assigned in the same synchronous run as the claim write.
-  let shutdownServer: (() => void) | null = null;
-  let stopped = false;
-  const stop = (): void => {
-    if (stopped) return;
-    stopped = true;
-    shutdownServer?.();
-    removeDaemonFile(config.dataDir, process.pid);
+  let shutdownServer: (() => Promise<void>) | null = null;
+  const stop = createDaemonStop({
+    dataDir: config.dataDir,
+    pid: process.pid,
+    shutdown: () => shutdownServer?.() ?? null,
+  });
+  /** Stop, then end the process once the stop has settled. */
+  const stopAndExit = (): void => {
+    void stop().finally(() => process.exit(0));
   };
   // A shutdown REQUEST ends the process, exactly as SIGTERM does: the launcher is waiting on
   // this pid to exit so the installer can replace the bundle it runs from. A daemon driven
@@ -124,8 +172,8 @@ export async function runDaemon(
     hostBundlePath: config.hostBundlePath,
     t3BundlePath: config.t3BundlePath,
     onShutdownRequest: () => {
-      stop();
-      if (exitOnShutdownRequest) process.exit(0);
+      if (exitOnShutdownRequest) stopAndExit();
+      else void stop();
     },
   });
   shutdownServer = () => server.shutdown();
@@ -141,13 +189,60 @@ export async function runDaemon(
   writeDaemonFile(config.dataDir, info);
 
   if (options.installSignalHandlers !== false) {
-    const onSignal = (): void => {
-      stop();
-      process.exit(0);
-    };
+    const onSignal = (): void => stopAndExit();
     process.once("SIGTERM", onSignal);
     process.once("SIGINT", onSignal);
   }
 
   return { info, stop };
+}
+
+/** Write PATH-resolution fall-throughs to stderr, which the desktop shell sends to daemon.log. */
+function hydrateDaemonPath(env: NodeJS.ProcessEnv): Promise<string> {
+  return hydrateProcessPath(env, {
+    warn: (message) => process.stderr.write(`rennet daemon: PATH: ${message}\n`),
+  });
+}
+
+export interface StartDaemonDeps {
+  /** The environment every child inherits: `process.env` in a real process. */
+  readonly env: NodeJS.ProcessEnv;
+  /** Resolve the user's tool PATH into `env.PATH` (daemon-process-environment). */
+  readonly hydratePath: (env: NodeJS.ProcessEnv) => Promise<unknown>;
+  readonly run: typeof runDaemon;
+}
+
+/**
+ * The process entries' start (`daemon-main.ts` and `rennet serve`): hydrate PATH, THEN run.
+ *
+ * A Dock-launched app hands its detached daemon launchd's bare PATH, and every git child
+ * (and the LFS filter, hooks and credential helpers git runs) inherits it — so a required
+ * `git-lfs` in `/opt/homebrew/bin` was "command not found" for the daemon's whole life.
+ * Assigning the resolved PATH to `process.env` before `runDaemon` means every execa call
+ * inherits it with no per-call-site change, and the order is load-bearing: `runDaemon`
+ * snapshots `process.env.PATH` into its forge detection deps the moment it starts.
+ * Resolution never throws and never blocks past its own timeouts, so the daemon still starts
+ * when every step fails.
+ */
+export async function startDaemon(
+  config: DaemonConfig,
+  deps: StartDaemonDeps = { env: process.env, hydratePath: hydrateDaemonPath, run: runDaemon },
+): Promise<RunningDaemon> {
+  await deps.hydratePath(deps.env);
+  includeLargeFileSkipIndex(deps.env, config.dataDir);
+  return deps.run(config);
+}
+
+/**
+ * Point every child of this daemon at its skip-mode index (review-preparation-reliability,
+ * large-file-checkout): one `include.path` entry in `GIT_CONFIG_*`, appended after any the
+ * environment already carries. The index names the checkouts whose project skips Git LFS
+ * content, so every later git command a daemon child runs in one of them — the T3 sidecar's
+ * seat, chat and round threads, the cold utility turns, Rennet's own git — leaves large files
+ * as placeholders there, and runs exactly as the user's config says everywhere else. Set
+ * BEFORE `runDaemon`, for the same reason PATH is: the sidecar copies this environment the
+ * moment it spawns, and it lives as long as the daemon.
+ */
+export function includeLargeFileSkipIndex(env: NodeJS.ProcessEnv, dataDir: string): void {
+  Object.assign(env, withLargeFileSkipIndex(env, largeFileSkipIndexPath(dataDir)));
 }

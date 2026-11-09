@@ -290,11 +290,20 @@ export function reviewHandlers(rt: DispatchRuntime) {
       // the agent is reading the work order would otherwise delete it mid-turn (review
       // finding 2). The lease is released when the turn settles, and the last release
       // performs a purge the archive deferred.
-      writeSessionContext(
-        (await deps.boundWorkspaceForReview?.(review.id))?.root ?? review.repositoryRoot,
-        contextSessionId,
-        [workOrderContextFile(bundle.tasks)],
-      );
+      // A workspace that cannot be bound — the large-file question still open, or a checkout
+      // that failed — is a reported state, the same answer a failed thread bind gives below:
+      // the turn needs that workspace, and its reason is already a plain sentence.
+      let workspaceRoot: string;
+      try {
+        workspaceRoot =
+          (await deps.boundWorkspaceForReview?.(review.id))?.root ?? review.repositoryRoot;
+      } catch (error) {
+        return parseCommandOutput(name, {
+          status: "unavailable",
+          reason: describeThreadError(error),
+        });
+      }
+      writeSessionContext(workspaceRoot, contextSessionId, [workOrderContextFile(bundle.tasks)]);
       const releaseContext = deps.holdSessionContext?.(contextSessionId);
       // THE ONE CREATION PATH, before the turn (session-thread-briefing 4.1). The handoff
       // runs on the review's own thread — the same `{ kind: "session" }` key the chat dock

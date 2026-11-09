@@ -248,6 +248,9 @@ export async function launchRennet(options: {
       ...(options.env ?? modelFreeEnv(options.home)),
       RENNET_TEST_REPO: options.repository,
       RENNET_USER_DATA: options.userData,
+      // The main process builds a window that can never go fullscreen and may be sized
+      // past the screen, so `resizeAppWindow` (`./window-size.ts`) can size it exactly.
+      RENNET_E2E_WINDOW: "1",
     },
   });
   // Daemon teardown (#379, design D9): the server is now a DETACHED daemon that SURVIVES

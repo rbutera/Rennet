@@ -237,11 +237,20 @@ function registerAppProtocol(): void {
 
 async function createWindow(): Promise<void> {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+  // The e2e harness (`apps/desktop/e2e/harness.ts`, `launchRennet`) sets this. The specs size
+  // the REAL window through `e2e/window-size.ts`, so under test the window must never be
+  // fullscreen (a fullscreen window ignores a resize and fills the screen of whoever runs
+  // the suite), and on macOS it may be sized past the screen so a 1520×1000 layout check
+  // means the same thing on a laptop as on a 4K display.
+  const e2eWindow = process.env.RENNET_E2E_WINDOW === "1";
   const window = new BrowserWindow({
     width: Math.min(1520, width),
     height: Math.min(1000, height),
     minWidth: 980,
     minHeight: 640,
+    ...(e2eWindow
+      ? { fullscreen: false, fullscreenable: false, enableLargerThanScreen: true }
+      : {}),
     // One seamless OPAQUE window (2026-08-19 overhaul; root DESIGN.md §Material).
     // Glass/vibrancy/acrylic are retired: the whole window paints the theme's warm
     // canvas, titlebar included. The pre-paint backgroundColor follows the OS

@@ -6,6 +6,7 @@ import type {
   ProjectDetailProgressEvent,
   ProjectProcessEvent,
   RoundEvent,
+  ToolInstallProgressEvent,
 } from "@rennet/protocol";
 import { MIN_COMPATIBLE_PROTOCOL_VERSION, PROTOCOL_VERSION } from "@rennet/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -82,6 +83,16 @@ class FakeBridge implements SupervisedBridge {
     listener: (e: ProjectDetailProgressEvent) => void,
   ): () => void {
     return add(this.detailProgressListeners, commandId, listener);
+  }
+  readonly toolInstallListeners = new Map<string, Set<(e: ToolInstallProgressEvent) => void>>();
+  onToolInstallProgress(
+    commandId: string,
+    listener: (e: ToolInstallProgressEvent) => void,
+  ): () => void {
+    return add(this.toolInstallListeners, commandId, listener);
+  }
+  emitToolInstall(commandId: string, event: ToolInstallProgressEvent): void {
+    for (const l of this.toolInstallListeners.get(commandId) ?? []) l(event);
   }
   onAttention(listener: (e: AttentionEventFrame) => void): () => void {
     this.attentionListeners.add(listener);
@@ -358,6 +369,37 @@ describe("ConnectionSupervisor — resubscribe registry (#389 client half)", () 
     // this the assertion above would pass over a registry that re-attached everything to
     // everyone, which is a different bug wearing the same green bar.
     nth(bridges, 1).emitLensDraft("rev-2", DRAFT_FRAME);
+    expect(received).toHaveLength(2);
+  });
+
+  it("re-delivers install output to the same listener after a reconnect", async () => {
+    // A Homebrew install runs for minutes, so a socket drop mid-install is ordinary. The
+    // registry re-attach is what keeps the drawer streaming; nothing else re-subscribes.
+    const { supervisor, bridges } = makeSupervisor();
+    track(supervisor);
+    await waitFor(() => bridges.length === 1);
+    nth(bridges, 0).goOnline();
+
+    const chunk: ToolInstallProgressEvent = {
+      kind: "tool-install-output",
+      tool: "git-lfs",
+      stream: "stdout",
+      chunk: "==> Downloading git-lfs",
+    };
+    const received: ToolInstallProgressEvent[] = [];
+    supervisor.onToolInstallProgress("install-1", (e) => received.push(e));
+    nth(bridges, 0).emitToolInstall("install-1", chunk);
+    expect(received).toHaveLength(1);
+
+    nth(bridges, 0).goOffline();
+    await waitFor(() => bridges.length === 2);
+    nth(bridges, 1).goOnline();
+
+    expect(nth(bridges, 1).toolInstallListeners.get("install-1")?.size).toBe(1);
+    nth(bridges, 1).emitToolInstall("install-1", chunk);
+    expect(received).toHaveLength(2);
+    // Keyed: another install's output never reaches this listener.
+    nth(bridges, 1).emitToolInstall("install-2", chunk);
     expect(received).toHaveLength(2);
   });
 

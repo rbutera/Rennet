@@ -54,6 +54,7 @@ import {
   buildCaptureFailureDocument,
   buildReviewDocument,
   foldPreparationLines,
+  formatElapsed,
   lensDraftLines,
   parseReviewTarget,
   REVIEW_USAGE,
@@ -62,7 +63,7 @@ import {
   reviewCliUnsupportedMessage,
   reviewDocumentPath,
 } from "./cli-review";
-import { defaultDataDir, runDaemon } from "./daemon";
+import { defaultDataDir, STOP_WAIT_MS, startDaemon } from "./daemon";
 import { readDaemonFile, removeDaemonFile } from "./daemon-file";
 import { findHealthyDaemon, requestDaemonShutdown } from "./supervise";
 import { resolveSidecarBundle, type StopSidecarOutcome, stopSidecar } from "./t3/sidecar";
@@ -107,7 +108,7 @@ const HELP = [
   "  rennet stop    [--data-dir <dir>]   stop the running daemon",
   "  rennet pair    [--data-dir <dir>]   mint a device pairing code (5-minute TTL)",
   "  rennet devices [--revoke <id>] [--data-dir <dir>]   list or revoke paired devices",
-  "  rennet review  <base>..<head> [path] | --pr <n> [path] [--out <file>] [--timeout <s>] [--data-dir <dir>]   review a range or PR over the daemon",
+  "  rennet review  <base>..<head> [path] | --pr <n> [path] [--out <file>] [--timeout <s>] [--large-files download|skip] [--data-dir <dir>]   review a range or PR over the daemon",
   "  rennet map     [path] [--base <ref>] [--json <file>] [--projects-dir <dir>] [--data-dir <dir>]   build & store the repo map",
   "  rennet benchmarks export [--out <file>] [--data-dir <dir>] [--revision <rev>] [--timestamp <iso>]   write the docs benchmark data",
   "",
@@ -362,7 +363,9 @@ async function serve(
     uiDist,
     t3BundlePath,
   };
-  const daemon = await runDaemon(config);
+  // Hydrate PATH first, exactly as the detached entry does: a `serve` started from a
+  // launchd job or a bare `env -i` shell must find the same tools the user's terminal does.
+  const daemon = await startDaemon(config);
   io.out(
     `rennet daemon listening on ${daemon.info.host ?? "127.0.0.1"}:${daemon.info.wsPort} (pid ${daemon.info.pid}, v${daemon.info.version})`,
   );
@@ -423,6 +426,9 @@ async function stop(dataDir: string, io: CliIo, deps: CliDeps): Promise<number> 
   return code;
 }
 
+/** How long `rennet stop` waits past the daemon's own stop backstop before giving up. */
+const STOP_GRACE_MS = 3_000;
+
 async function stopDaemon(dataDir: string, io: CliIo, deps: CliDeps): Promise<number> {
   const verdict = await deps.probe(dataDir);
   if (verdict.kind === "absent") {
@@ -458,8 +464,10 @@ async function stopDaemon(dataDir: string, io: CliIo, deps: CliDeps): Promise<nu
       return 1;
     }
   }
-  // The daemon removes daemon.json on clean shutdown; poll for that as the done signal.
-  const deadline = Date.now() + 5_000;
+  // The daemon removes daemon.json once its shutdown has settled; poll for that as the done
+  // signal. A daemon waits up to STOP_WAIT_MS for its installers to end before it gives up on
+  // them, so this waits past that backstop rather than reporting a stop that is still going.
+  const deadline = Date.now() + STOP_WAIT_MS + STOP_GRACE_MS;
   while (Date.now() < deadline) {
     if (readDaemonFile(dataDir)?.pid !== claim.pid) {
       io.out(`stopped (pid ${claim.pid})`);
@@ -469,8 +477,8 @@ async function stopDaemon(dataDir: string, io: CliIo, deps: CliDeps): Promise<nu
   }
   io.err(
     acknowledged
-      ? `pid ${claim.pid} acknowledged the shutdown but daemon.json still names it after 5s`
-      : `sent SIGTERM to pid ${claim.pid} but daemon.json is still present after 5s`,
+      ? `pid ${claim.pid} acknowledged the shutdown but daemon.json still names it after ${(STOP_WAIT_MS + STOP_GRACE_MS) / 1000}s`
+      : `sent SIGTERM to pid ${claim.pid} but daemon.json is still present after ${(STOP_WAIT_MS + STOP_GRACE_MS) / 1000}s`,
   );
   return 1;
 }
@@ -492,6 +500,8 @@ interface CliSocket {
   readonly features: Readonly<Record<string, boolean>>;
   /** The daemon's own version from the `serverInfo` frame, for a truthful capability refusal. */
   readonly serverVersion: string;
+  /** The protocol version the daemon speaks, from the `serverInfo` frame. */
+  readonly serverProtocolVersion: number;
   /** Close the socket. Idempotent from the caller's side. */
   close(): void;
 }
@@ -522,6 +532,7 @@ async function openCliSocket(dataDir: string, deps: CliDeps): Promise<CliSocket>
     // this promise resolves, then read through the getters below so `api` stays a readonly view.
     let capturedFeatures: Record<string, boolean> = {};
     let capturedVersion = "";
+    let capturedProtocolVersion = 0;
     const openTimer = setTimeout(() => {
       socket.close();
       rejectSocket(new Error("timed out waiting for the daemon"));
@@ -543,6 +554,9 @@ async function openCliSocket(dataDir: string, deps: CliDeps): Promise<CliSocket>
       },
       get serverVersion() {
         return capturedVersion;
+      },
+      get serverProtocolVersion() {
+        return capturedProtocolVersion;
       },
       close() {
         socket.close();
@@ -571,6 +585,7 @@ async function openCliSocket(dataDir: string, deps: CliDeps): Promise<CliSocket>
           // `socket.features` sees the handshake facts the moment it holds the socket (D11).
           capturedFeatures = frame.features;
           capturedVersion = frame.version;
+          capturedProtocolVersion = frame.protocolVersion;
           ready = true;
           clearTimeout(openTimer);
           resolveSocket(api);
@@ -799,6 +814,50 @@ function terminalResult(
 }
 
 /**
+ * What a headless run prints when it answered the large-file question itself: the project
+ * has no choice recorded and `--large-files` was not passed, so this review downloads large
+ * files, as a headless run always did, and nothing is recorded for the project.
+ */
+export const HEADLESS_LARGE_FILES_LINE =
+  "this repository uses Git LFS and its project has no large-file choice, so this review downloads large files; pass --large-files skip to skip them, or choose in Rennet's settings";
+
+/**
+ * The oldest daemon protocol that understands a session's own large-file mode: `largeFiles`
+ * on `session.mint` and `remember: false` on `session.chooseLargeFileMode`. An older daemon
+ * accepts this CLI's handshake and then drops both fields without a word — the review would
+ * run under the project's choice, or record the headless answer as the project's — so the CLI
+ * refuses instead of sending them.
+ */
+export const SESSION_LARGE_FILES_MIN_PROTOCOL = 4;
+
+/** The one line a refusal of an older daemon prints. */
+export function olderDaemonLargeFilesLine(protocolVersion: number): string {
+  return `the running Rennet daemon is older than this CLI (protocol ${protocolVersion}) and would ignore the large-file choice; restart Rennet so the daemon updates, then run this again`;
+}
+
+/**
+ * Answer the large-file question for a headless run (large-file-checkout spec): nobody is
+ * there to ask, so the run never stops at `awaiting`. The answer is `--large-files` when it
+ * was passed, else download, and it is this SESSION's only (`remember: false`): the project's
+ * question stays open for the next review that has a person to ask.
+ */
+async function answerLargeFilesHeadless(
+  socket: CliSocket,
+  sessionId: string,
+  largeFiles: "download" | "skip" | undefined,
+  elapsedMs: number,
+  io: CliIo,
+): Promise<void> {
+  if (largeFiles === undefined) io.out(`${formatElapsed(elapsedMs)}${HEADLESS_LARGE_FILES_LINE}`);
+  await socket.invoke("session.chooseLargeFileMode", {
+    sessionId,
+    mode: largeFiles ?? "download",
+    commandId: newCommandId(),
+    remember: false,
+  });
+}
+
+/**
  * Watch a session's preparation to a settled/failed/cancelled state (or the timeout), printing
  * one line per record transition and one per `lensDraft` write, each stamped with the seconds
  * since `startedAtMs` (D6). A timeout does NOT cancel the daemon's preparation (D9): the loop
@@ -811,6 +870,7 @@ async function pollPreparation(
   initialReviewId: string | undefined,
   startedAtMs: number,
   timeoutMs: number,
+  largeFiles: "download" | "skip" | undefined,
   io: CliIo,
 ): Promise<PollResult> {
   let reviewId = initialReviewId;
@@ -826,9 +886,24 @@ async function pollPreparation(
       io.out(line);
     }
     const deadline = startedAtMs + timeoutMs;
+    let answered = false;
     while (true) {
       const done = terminalResult(previous, reviewId);
       if (done) return done;
+      if (previous?.status === "awaiting" && !answered) {
+        // The answer is this session's only (`remember: false`), which an older daemon drops
+        // and records as the project's choice. Say so instead of sending it.
+        if (socket.serverProtocolVersion < SESSION_LARGE_FILES_MIN_PROTOCOL) {
+          return {
+            outcome: "failed",
+            reviewId,
+            reason: olderDaemonLargeFilesLine(socket.serverProtocolVersion),
+            settledAtMs: Date.now(),
+          };
+        }
+        answered = true;
+        await answerLargeFilesHeadless(socket, sessionId, largeFiles, Date.now() - startedAtMs, io);
+      }
       if (Date.now() > deadline) {
         return {
           outcome: "timeout",
@@ -968,6 +1043,8 @@ type MintInput = {
   projectId: string;
   commandId: string;
   branch: string;
+  /** This session's own large-file mode (`--large-files`); the project's is untouched. */
+  largeFiles?: "download" | "skip";
   base?: string;
   prNumber?: number;
   repository?: string;
@@ -1027,6 +1104,15 @@ async function driveReview(
     io.err(`rennet review: ${unsupported}`);
     return 1;
   }
+  // `--large-files` is this session's own mode, a field an older daemon drops silently: the
+  // review would run under the project's choice while this run said otherwise.
+  if (
+    target.largeFiles !== undefined &&
+    socket.serverProtocolVersion < SESSION_LARGE_FILES_MIN_PROTOCOL
+  ) {
+    io.err(`rennet review: ${olderDaemonLargeFilesLine(socket.serverProtocolVersion)}`);
+    return 1;
+  }
 
   const repoPath = resolve(target.path ?? process.cwd());
   let toplevel: string;
@@ -1061,6 +1147,7 @@ async function driveReview(
       projectId,
       commandId: newCommandId(),
       branch: requestedHead,
+      ...(target.largeFiles === undefined ? {} : { largeFiles: target.largeFiles }),
       base: target.base,
       repository: standing.repository,
       ...(standing.forgeRepository === undefined
@@ -1097,6 +1184,7 @@ async function driveReview(
       projectId,
       commandId: newCommandId(),
       branch: row.branch,
+      ...(target.largeFiles === undefined ? {} : { largeFiles: target.largeFiles }),
       prNumber: row.number,
       repository: row.repository,
       ...(row.forgeRepository === undefined ? {} : { forgeRepository: row.forgeRepository }),
@@ -1144,6 +1232,7 @@ async function driveReview(
     row.reviewId,
     startedAtMs,
     target.timeoutMs,
+    target.largeFiles,
     io,
   );
   if (result.reviewId === undefined) {
@@ -1222,6 +1311,9 @@ async function resolveReattach(
       io.out(`already reviewed at ${requestedHead}; reusing the settled boards`);
       return { kind: "fast", reviewId: row.reviewId };
     }
+    // Still waiting on the large-file answer: keep the session that is asking, and let the
+    // poll answer it (a headless run never stops there).
+    if (headMatches && preparation?.status === "awaiting") return { kind: "poll", row };
     if (headMatches && preparation?.status === "failed" && preparation.reviewId !== undefined) {
       const retried = (await socket.invoke("session.retryPreparation", {
         sessionId: row.id,

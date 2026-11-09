@@ -9,6 +9,7 @@ import {
   AskEventBodySchema,
   AskProjectionSchema,
   attentionFamilySchema,
+  LargeFileModeSchema,
   LensAbsenceReasonSchema,
   LensDraftSnapshotSchema,
   LensFailureAccountSchema,
@@ -17,6 +18,7 @@ import {
   RoundLedgerRecordSchema,
   RoundOperationProgressSnapshotSchema,
   SessionTranscriptSchema,
+  SourceControlToolIdSchema,
   StagedAskSchema,
   VerdictOverrideSchema,
 } from "../session";
@@ -30,6 +32,7 @@ import {
   deltaDigestResultSchema,
   detectedForgeSchema,
   detectedHarnessSchema,
+  detectedSourceControlToolSchema,
   discoveryResultSchema,
   dispositionTypeSchema,
   flaggedReviewSchema,
@@ -44,6 +47,7 @@ import {
   handoffDispositionSchema,
   handoffRunOutputSchema,
   harnessHostDetectionSchema,
+  locusSchema,
   noiseReviewSchema,
   openSpecChangeSchema,
   pairedDeviceSchema,
@@ -131,6 +135,56 @@ export function commandIdFor(key: string): string {
   const variant = ((Number.parseInt(hex.slice(16, 17), 16) & 0x3) | 0x8).toString(16);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${version}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
+
+/**
+ * What one `tools.install` came to (source-control-tooling spec): the re-probed tool after
+ * the run, never the installer's own opinion of it. Shared by `tools.cancelInstall`, which
+ * answers with a finished command's verdict.
+ */
+const toolInstallResultSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("installed"),
+    /** What ran, as one line a person can read and copy. */
+    command: z.string().min(1),
+    output: z.string(),
+    probe: detectedSourceControlToolSchema,
+  }),
+  z.object({
+    status: z.literal("failed"),
+    command: z.string().min(1),
+    /** One plain sentence; `output` is the detail. */
+    message: z.string().min(1),
+    /** The step that failed, as a person would type it. */
+    failedCommand: z.string().min(1),
+    exitCode: z.number().int().nullable(),
+    /** Present when the install stopped because it was cancelled. */
+    cancelled: z.literal(true).optional(),
+    output: z.string(),
+    probe: detectedSourceControlToolSchema,
+  }),
+  z.object({
+    status: z.literal("manual"),
+    /** The command to run by hand on that locus. */
+    command: z.string().min(1),
+    docsUrl: z.string().min(1),
+    probe: detectedSourceControlToolSchema,
+  }),
+]);
+export type ToolInstallResult = z.infer<typeof toolInstallResultSchema>;
+
+/**
+ * What `tools.install` answers: the verdict, or — ONLY to a request sent with `rejoin: true` —
+ * `{ outcome: "unknown" }`, meaning the daemon has no run and no retained verdict for that
+ * command id (it restarted, or the verdict aged out). A rejoin never starts an installer, so
+ * "unknown" is the honest answer: nothing is known to have run, and nothing was started.
+ * A request without `rejoin` never receives it, so a client that predates `rejoin` parses
+ * every answer it can get with the `{ result }` shape alone.
+ */
+const toolInstallOutputSchema = z.union([
+  z.object({ result: toolInstallResultSchema }),
+  z.object({ outcome: z.literal("unknown") }),
+]);
+export type ToolInstallOutput = z.infer<typeof toolInstallOutputSchema>;
 
 const definitions = {
   "app.bootstrap": {
@@ -508,6 +562,37 @@ const definitions = {
   // Source Control toggles, mirroring harness.setEnabled exactly and persisted on the same
   // per-host daemon-settings entry. The current surface exposes it for GitHub; health-only
   // GitLab has no toggle until merge-request operations exist for that ruling to control.
+  // Install a missing source-control tool on ONE execution locus (source-control-tooling
+  // spec, D3: "Install for me"). Pressing the button is the request — no confirmation step
+  // (Rule Zero). On macOS with Homebrew it runs the plan's commands, streaming every chunk of
+  // output as a `tool-install-output` progress event under `commandId`, then re-probes the
+  // tool; anywhere else it runs nothing and answers `manual` with the command and a link. The
+  // result carries the tool's real state after the run, not the installer's opinion of it.
+  //
+  // `rejoin: true` asks about a command id the client already sent, after its connection
+  // dropped: the daemon joins the run still going under that id, or answers with the verdict
+  // it retained, and when it knows neither it answers `{ outcome: "unknown" }` and STARTS
+  // NOTHING. A reconnect must never run an installer a second time. Optional and additive: a
+  // request without it behaves exactly as before.
+  "tools.install": {
+    input: z.object({
+      tool: SourceControlToolIdSchema,
+      locus: locusSchema,
+      commandId: commandIdSchema,
+      rejoin: z.literal(true).optional(),
+    }),
+    output: toolInstallOutputSchema,
+  },
+  // Stop a running `tools.install` by its `commandId`: the running step and everything it
+  // started are terminated and no later step runs. `cancelled: false` when nothing by that id
+  // was running (it had already finished, or never started). When it had FINISHED recently
+  // the daemon still holds its verdict and answers with it as `result`, so a cancel that
+  // arrives late — after a dropped connection — learns what really happened. Optional: an
+  // older daemon never sends it.
+  "tools.cancelInstall": {
+    input: z.object({ commandId: commandIdSchema }),
+    output: z.object({ cancelled: z.boolean(), result: toolInstallResultSchema.optional() }),
+  },
   "forge.setEnabled": {
     input: z.object({
       source: sourceSchema,
@@ -1626,6 +1711,13 @@ const definitions = {
          * clients and rows without a forge remote. */
         forgeRepository: forgeRepoIdentitySchema.optional(),
         /**
+         * How this session's checkouts treat Git LFS content, overriding the project's
+         * `checkout.largeFiles` for this session only and recording nothing on the project
+         * (a headless `rennet review --large-files`). Absent ⇒ the project's choice applies,
+         * and a project that has not chosen asks.
+         */
+        largeFiles: LargeFileModeSchema.optional(),
+        /**
          * The refused review session whose target claim this mint replaces. The host persists
          * the fresh claimant before archiving this session, so an interruption cannot hide the
          * only review. Absent keeps ordinary mint-or-reattach behavior unchanged.
@@ -1652,6 +1744,27 @@ const definitions = {
   },
   "session.retryPreparation": {
     input: z.object({ sessionId: z.string().min(1), commandId: commandIdSchema }),
+    output: z.object({ session: sidebarSessionSchema.nullable() }),
+  },
+  // The answer to the large-file question (large-file-checkout spec, D4): how this session's
+  // project treats Git LFS content in review checkouts. Writes `checkout.largeFiles` on the
+  // repository's repo rung, so later checkouts of the project never ask again, then resumes
+  // the session's preparation, which binds the checkout under the chosen mode. Also the
+  // answer to a failure whose action is `choose-large-files`. A preparation still running is
+  // left alone: the mode is recorded and applies to its next checkout. `commandId` keys the
+  // resumed run; absent ⇒ the daemon mints one.
+  "session.chooseLargeFileMode": {
+    input: z.object({
+      sessionId: z.string().min(1),
+      mode: LargeFileModeSchema,
+      commandId: commandIdSchema.optional(),
+      /**
+       * `false` records the answer for THIS session only and leaves the project's choice
+       * unset, so the next review of the project asks again (a headless run that had nobody
+       * to ask). Absent ⇒ `true`: the answer is the project's.
+       */
+      remember: z.boolean().optional(),
+    }),
     output: z.object({ session: sidebarSessionSchema.nullable() }),
   },
   "session.rename": {

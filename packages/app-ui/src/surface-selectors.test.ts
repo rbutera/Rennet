@@ -30,7 +30,7 @@ const RETIRED_SELECTORS: ReadonlyArray<{ readonly selector: string; readonly rep
     {
       // The bench's root (`preparation-bench.tsx`, deleted in `lens-board-tools` 6.5).
       selector: 'data-screen="session-preparation"',
-      replacedBy: '`[data-testid="workspace-header"]` over the board view',
+      replacedBy: '`[data-kind="preparation-presence"]` and `[data-testid="preparation-failure"]`',
     },
     {
       // The bench's five-reader grid.
@@ -41,6 +41,23 @@ const RETIRED_SELECTORS: ReadonlyArray<{ readonly selector: string; readonly rep
       // The line the bench printed above its stack of landed boards.
       selector: 'data-testid="bench-boards-landing"',
       replacedBy: "the board's own in-progress mark",
+    },
+    {
+      // The thin strip over an empty board that reported a stopped preparation, and its
+      // stage label ("Capture failed"), both replaced by one failure block (3.3).
+      selector: 'data-testid="workspace-header"',
+      replacedBy: '`[data-testid="preparation-failure"]`',
+    },
+    {
+      selector: 'data-testid="preparation-stage"',
+      replacedBy: "nothing: the block names no stage",
+    },
+    {
+      // "No review is attached to this session, so there is no thread to open." — the chat
+      // dock's line on a session with no review (review-preparation-reliability 3.2).
+      selector: 'data-slot="t3-chat-no-review"',
+      replacedBy:
+        '`[data-slot="t3-chat-preparing"]`, the thread skeleton under the session title, or nothing',
     },
   ];
 
@@ -81,7 +98,7 @@ describe("no test asserts a selector its surface no longer renders", () => {
     // HARD-CODED floors, not `files.length > 0`: an empty walk would satisfy both this
     // and the sweep below, which is exactly how a sweep comes to prove nothing.
     expect(files.length).toBeGreaterThan(150);
-    expect(RETIRED_SELECTORS).toHaveLength(3);
+    expect(RETIRED_SELECTORS).toHaveLength(6);
     expect(files.some((f) => f.includes("apps/desktop/e2e/"))).toBe(true);
     expect(files.some((f) => f.includes("packages/app-ui/src/board/"))).toBe(true);
   });
@@ -91,7 +108,7 @@ describe("no test asserts a selector its surface no longer renders", () => {
     expect(RETIRED_SELECTORS.some(({ selector }) => probe.includes(selector))).toBe(true);
     // …and does not fire on the selector that replaced it.
     const rewritten =
-      "await expect(page.locator('[data-testid=\"workspace-header\"]')).toBeVisible();";
+      "await expect(page.locator('[data-testid=\"preparation-failure\"]')).toBeVisible();";
     expect(RETIRED_SELECTORS.some(({ selector }) => rewritten.includes(selector))).toBe(false);
   });
 

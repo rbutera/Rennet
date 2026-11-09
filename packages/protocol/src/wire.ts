@@ -19,7 +19,7 @@ import type {
 import { MAX_UI_SCREENSHOTS_PER_RUN } from "./domain";
 import { forgeRepoIdentitySchema, forgeRepositoryMatchesLegacy } from "./forge";
 import type { AskProjection, AttentionEventFrame, LensDraftEvent, RoundEvent } from "./session";
-import { SessionPreparationSchema } from "./session/model";
+import { SessionPreparationSchema, SourceControlToolIdSchema } from "./session/model";
 import {
   WORKTREE_ROWS_CAP,
   worktreeInventorySchema,
@@ -494,6 +494,23 @@ export const detectedForgeSchema = z.object({
 });
 export type DetectedForge = z.infer<typeof detectedForgeSchema>;
 
+/**
+ * `git` or `git-lfs` as detected on one host (source-control-tooling spec). The states are
+ * the detection row's own: `available` (proven by a version answer), `not-installed`, and
+ * `unreachable` (a binary is there but could not be asked). No path crosses the wire.
+ */
+export const detectedSourceControlToolSchema = z.object({
+  id: SourceControlToolIdSchema,
+  /** The proven version, or `null` when nothing was proven. Never a guess. */
+  version: z.string().nullable(),
+  status: z.enum(["available", "not-installed", "unreachable"]),
+  /** Whether a project on this host needs the tool (Git LFS only). Absent ⇒ not said. */
+  required: z.boolean().optional(),
+  /** One line of honest state and the exact fix; backticked spans render as code. */
+  detail: z.string(),
+});
+export type DetectedSourceControlTool = z.infer<typeof detectedSourceControlToolSchema>;
+
 // ── The GitHub account (v4.2: gh primary, Rennet credential fallback) ───
 // The renderer-safe projection of the host-side auth state. The TOKEN itself is
 // never here — only who is connected, with which scopes, or which distinct
@@ -811,6 +828,34 @@ export const projectDetailProgressEventSchema = z.discriminatedUnion("kind", [
 export type ProjectDetailProgressEvent = z.infer<typeof projectDetailProgressEventSchema>;
 
 /**
+ * Live output from a `tools.install` run, streamed under that command's `commandId` while
+ * the installer runs (source-control-tooling spec: "shows the output as it streams"). One
+ * event per chunk, in arrival order; the command's own result is the verdict.
+ */
+export const toolInstallProgressEventSchema = z.object({
+  kind: z.literal("tool-install-output"),
+  tool: SourceControlToolIdSchema,
+  stream: z.enum(["stdout", "stderr"]),
+  chunk: z.string(),
+  /**
+   * The command the install is running, as one line a person can read and copy (the
+   * result's `command`). Sent on every event once the plan is known — the first event of a
+   * run carries it with an empty chunk, before the installer prints anything — so the
+   * command is shown alongside the install while it runs, not only after. Optional: an
+   * older daemon omits it, and the command then appears with the result.
+   */
+  command: z.string().min(1).optional(),
+  /**
+   * A snapshot: `chunk` is the run's WHOLE output so far and replaces what the listener
+   * holds, rather than following it. Sent when a command joins a run late or re-joins after
+   * a dropped connection, so output that streamed in between is neither lost nor repeated.
+   * Optional: absent means an ordinary chunk, and an older daemon never sends it.
+   */
+  replace: z.literal(true).optional(),
+});
+export type ToolInstallProgressEvent = z.infer<typeof toolInstallProgressEventSchema>;
+
+/**
  * Every event the single commandId-keyed progress frame can carry. The transport
  * routes by commandId and stays agnostic to shape; the two public channels
  * (`onProgress` / `onProjectDetailProgress`) each expose their own member. The
@@ -820,6 +865,7 @@ export type ProjectDetailProgressEvent = z.infer<typeof projectDetailProgressEve
 export const projectProgressEventSchema = z.union([
   projectProcessEventSchema,
   projectDetailProgressEventSchema,
+  toolInstallProgressEventSchema,
 ]);
 export type ProjectProgressEvent = z.infer<typeof projectProgressEventSchema>;
 
@@ -2017,6 +2063,13 @@ export const settingsProjectPrefsSchema = z.object({
   /** Whether a review of a branch some checkout ALREADY has out binds to that checkout
    *  (`share`, the builtin) or to a worktree Rennet makes beside it (`own`). */
   workspace: layeredStringSchema,
+  /**
+   * How a review checkout treats Git LFS content (`checkout.largeFiles`, large-file-checkout
+   * spec): `download`, `skip`, or the builtin `ask`, which means no choice is recorded and the
+   * next checkout of a repository that uses Git LFS asks. Repo rung only.
+   * Additive-optional: an engine that predates the setting omits it.
+   */
+  largeFiles: layeredStringSchema.optional(),
   tracker: z.object({
     kind: layeredStringSchema,
     projectKey: layeredStringSchema,
@@ -2093,6 +2146,12 @@ export const settingsProjectSchema = z
      * no preview, and the client shows none rather than inventing a path.
      */
     worktreePreview: z.object({ branch: z.string(), pullRequest: z.string() }).optional(),
+    /**
+     * Whether this repository uses Git LFS: its `.gitattributes` (at the project's primary
+     * branch when it has one, else the working tree) routes a path through `filter=lfs`.
+     * Additive-optional: absent means the engine did not look, never "no".
+     */
+    usesLfs: z.boolean().optional(),
   })
   .transform((project) => {
     const value = project.locus.kind === "host" ? "host" : `WSL · ${project.locus.distro}`;
@@ -2144,7 +2203,8 @@ export const sidebarSessionSchema = z
     id: z.string().min(1),
     /** The project this session belongs to — the sidebar's grouping key. */
     projectId: z.string().min(1),
-    /** The reviewer's chosen title, else the claimed branch, else "New review". */
+    /** The reviewer's chosen title, else the claimed branch, else (a session that claims
+     *  nothing: Current Checkout) the branch its review read or its project's name. */
     title: z.string().min(1),
     /** Latest completed round receipt, derived server-side from the durable round ledger.
      * Absent before this session has returned a round. */
@@ -2222,6 +2282,9 @@ export const sidebarSessionSchema = z
      * the moment anything moved. `session.workBranchState` is the read that asks git.
      */
     workBranch: z.string().min(1).optional(),
+    /** Quiet notes about the bound checkout (`SessionModel.workspaceNotes`): plain sentences
+     *  shown beside the review, e.g. that large files were left as placeholders. */
+    workspaceNotes: z.array(z.string().min(1)).optional(),
     /** When the session was minted (epoch ms) — the client renders the relative line. */
     createdAt: z.number(),
   })
@@ -2334,6 +2397,12 @@ export const forgeHostDetectionSchema = z.discriminatedUnion("asked", [
     asked: z.literal(true),
     /** Exactly the forge CLIs observed ON that host. Empty means "asked, none installed". */
     detected: z.array(detectedForgeSchema),
+    /**
+     * `git` and `git-lfs` on that host (source-control-tooling spec), probed with the same
+     * environment the daemon's own git work runs under. Additive-optional: absent means the
+     * engine did not probe them, never that they are missing.
+     */
+    sourceControl: z.array(detectedSourceControlToolSchema).optional(),
   }),
   z.object({
     source: sourceSchema,
@@ -2453,6 +2522,7 @@ export const settingsProjectValueKeySchema = z.enum([
   "worktreePattern",
   "prWorktreePattern",
   "workspace",
+  "largeFiles",
   "trackerKind",
   "trackerProjectKey",
   "trackerBaseUrl",
@@ -2987,6 +3057,17 @@ export interface RennetBridge {
   onProjectDetailProgress?(
     commandId: string,
     listener: (event: ProjectDetailProgressEvent) => void,
+  ): () => void;
+  /**
+   * Subscribe to a `tools.install` run's live output, keyed by the `commandId` the caller
+   * passes in that command's input. A sibling of `onProgress` routed over the same
+   * commandId-keyed push channel; only `tool-install-output` events reach the listener.
+   * Optional: a bridge without a push channel omits it, and Install for me degrades to the
+   * command's final result, which carries the whole output.
+   */
+  onToolInstallProgress?(
+    commandId: string,
+    listener: (event: ToolInstallProgressEvent) => void,
   ): () => void;
   /**
    * Subscribe to the durable ask projection for a review. The server emits the full

@@ -1,0 +1,674 @@
+import { randomUUID } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { DetectedSourceControlTool } from "@rennet/adapters";
+import type { ProjectProgressEvent, ToolInstallOutput, ToolInstallResult } from "@rennet/protocol";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createRennetServer } from "./create-server";
+
+/**
+ * `tools.install` (review-preparation-reliability 2.4, source-control-tooling spec): the
+ * installer's output streams as `tool-install-output` events under the command id while it
+ * runs, the tool is re-probed afterwards, and the result is the re-probed state. Homebrew
+ * and git are stubs in a directory of their own, so the run is the same on every machine.
+ */
+
+/** A `tools.install` answer that carries a verdict: every request below that is not a
+ *  `rejoin` of an id the daemon does not know. */
+type Answered = { readonly result: ToolInstallResult };
+
+const dirs: string[] = [];
+const shutdowns: (() => unknown)[] = [];
+afterEach(() => {
+  for (const shutdown of shutdowns.splice(0)) shutdown();
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+function stub(dir: string, name: string, body: string): void {
+  writeFileSync(join(dir, name), `#!/bin/sh\n${body}\n`);
+  chmodSync(join(dir, name), 0o755);
+}
+
+async function installer(brew: string, git: string, opts: { probeThrows?: () => boolean } = {}) {
+  const dataDir = realpathSync(mkdtempSync(join(tmpdir(), "rennet-tools-data-")));
+  const bin = realpathSync(mkdtempSync(join(tmpdir(), "rennet-tools-brew-")));
+  dirs.push(dataDir, bin);
+  stub(bin, "brew", brew);
+  stub(bin, "git", git);
+  // The probe answers "installed" only once the stub brew has left its mark.
+  const installed = join(bin, "installed");
+  const events: { commandId: string; event: ProjectProgressEvent }[] = [];
+  const server = await createRennetServer({
+    dataDir,
+    env: {},
+    broadcastProgress: (commandId, event) => events.push({ commandId, event }),
+    sourceControl: {
+      installPlanDeps: { platform: "darwin", envPath: "", brewDirectories: [bin] },
+      detect: async (): Promise<readonly DetectedSourceControlTool[]> => {
+        if (opts.probeThrows?.() === true) throw new Error("acme probe is unavailable");
+        const present = existsSync(installed);
+        return [
+          { id: "git", version: "2.53.0", status: "available", path: "/usr/bin/git", detail: "" },
+          present
+            ? { id: "git-lfs", version: "3.7.0", status: "available", path: null, detail: "" }
+            : { id: "git-lfs", version: null, status: "not-installed", path: null, detail: "" },
+        ];
+      },
+    },
+  });
+  shutdowns.push(server.shutdown);
+  return { server, events, bin, installed };
+}
+
+/** Wait until the stub installer has said `line` under `commandId`. */
+async function heard(
+  events: { commandId: string; event: ProjectProgressEvent }[],
+  commandId: string,
+  line: string,
+): Promise<void> {
+  await vi.waitFor(
+    () =>
+      expect(
+        events
+          .filter((entry) => entry.commandId === commandId)
+          .map((entry) => (entry.event as unknown as { chunk: string }).chunk)
+          .join(""),
+      ).toContain(line),
+    { timeout: 10_000, interval: 10 },
+  );
+}
+
+/** A brew that says it started, counts its runs, sleeps, and only then installs. */
+const SLEEPING_BREW =
+  'echo "==> starting"; echo run >> "$(dirname "$0")/runs"; sleep 2; touch "$(dirname "$0")/installed"';
+
+function runsOf(bin: string): number {
+  return existsSync(join(bin, "runs"))
+    ? readFileSync(join(bin, "runs"), "utf8").split("\n").filter(Boolean).length
+    : 0;
+}
+
+describe("tools.install (Install for me)", () => {
+  it.skipIf(process.platform === "win32")(
+    "runs brew then git lfs install, streams both, and answers with the re-probed tool",
+    async () => {
+      const { server, events } = await installer(
+        'echo "==> Pouring git-lfs"; touch "$(dirname "$0")/installed"',
+        'echo "Git LFS initialized."',
+      );
+      const commandId = randomUUID();
+      const { result } = (await server.dispatch("tools.install", {
+        tool: "git-lfs",
+        locus: { kind: "host" },
+        commandId,
+      })) as Answered;
+
+      expect(result.status).toBe("installed");
+      if (result.status !== "installed") throw new Error("not installed");
+      expect(result.command).toBe("brew install git-lfs && git lfs install");
+      expect(result.probe).toEqual({
+        id: "git-lfs",
+        version: "3.7.0",
+        status: "available",
+        detail: "",
+      });
+      // Streamed, under THIS command's id, in order: each step's line, then its output.
+      const chunks = events
+        .filter((entry) => entry.commandId === commandId)
+        .map((entry) => entry.event as unknown as { kind: string; tool: string; chunk: string });
+      expect(chunks.every((chunk) => chunk.kind === "tool-install-output")).toBe(true);
+      expect(chunks.every((chunk) => chunk.tool === "git-lfs")).toBe(true);
+      const text = chunks.map((chunk) => chunk.chunk).join("");
+      const order = [
+        "$ brew install git-lfs",
+        "==> Pouring git-lfs",
+        "$ git lfs install",
+        "Git LFS initialized.",
+      ].map((line) => text.indexOf(line));
+      expect(order.every((index) => index >= 0)).toBe(true);
+      expect([...order].sort((a, b) => a - b)).toEqual(order);
+      expect(result.output).toContain("Git LFS initialized.");
+      // The command is said FIRST, before the installer prints a line, and rides every event
+      // after: the UI shows it alongside the install while it runs, not only afterwards.
+      const commands = events
+        .filter((entry) => entry.commandId === commandId)
+        .map((entry) => entry.event as unknown as { chunk: string; command?: string });
+      expect(commands[0]).toMatchObject({
+        chunk: "",
+        command: "brew install git-lfs && git lfs install",
+      });
+      expect(commands.every((event) => event.command === result.command)).toBe(true);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "a failing installer reports the failed step plainly, with its output, and the tool still missing",
+    async () => {
+      const { server, events } = await installer(
+        'echo "Error: git-lfs: no bottle available" >&2; exit 1',
+        "exit 0",
+      );
+      const commandId = randomUUID();
+      const { result } = (await server.dispatch("tools.install", {
+        tool: "git-lfs",
+        locus: { kind: "host" },
+        commandId,
+      })) as Answered;
+
+      expect(result.status).toBe("failed");
+      if (result.status !== "failed") throw new Error("did not fail");
+      expect(result.message).toBe("Git LFS couldn't be installed.");
+      expect(result.failedCommand).toBe("brew install git-lfs");
+      expect(result.exitCode).toBe(1);
+      expect(result.output).toContain("no bottle available");
+      expect(result.probe.status).toBe("not-installed");
+      // The failure streamed too, and no later step ran.
+      const text = events
+        .filter((entry) => entry.commandId === commandId)
+        .map((entry) => (entry.event as unknown as { chunk: string }).chunk)
+        .join("");
+      expect(text).toContain("no bottle available");
+      expect(text).not.toContain("$ git lfs install");
+    },
+  );
+
+  it("a WSL distro gets the manual Linux command and a link, and nothing runs", async () => {
+    const { server, events } = await installer("exit 1", "exit 1");
+    const commandId = randomUUID();
+    const { result } = (await server.dispatch("tools.install", {
+      tool: "git-lfs",
+      locus: { kind: "wsl", distro: "Ubuntu" },
+      commandId,
+    })) as Answered;
+    expect(result).toMatchObject({
+      status: "manual",
+      command: "sudo apt-get install git-lfs && git lfs install",
+      docsUrl: "https://git-lfs.com",
+    });
+    expect(events.filter((entry) => entry.commandId === commandId)).toEqual([]);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "shutting the server down stops a running install: nothing more is installed, and it says cancelled",
+    async () => {
+      const { server, events, installed } = await installer(SLEEPING_BREW, "exit 0");
+      const commandId = randomUUID();
+      const pending = server.dispatch("tools.install", {
+        tool: "git-lfs",
+        locus: { kind: "host" },
+        commandId,
+      }) as Promise<Answered>;
+      await heard(events, commandId, "==> starting");
+      await server.shutdown();
+      const { result } = await pending;
+      expect(result.status).toBe("failed");
+      if (result.status !== "failed") throw new Error("did not fail");
+      expect(result.cancelled).toBe(true);
+      // Past the moment the sleeping installer would have finished: it never did.
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      expect(existsSync(installed)).toBe(false);
+    },
+    20_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "a second Install for me for the same tool joins the running one: one brew, both hear it",
+    async () => {
+      const { server, events, bin } = await installer(SLEEPING_BREW, "exit 0");
+      const first = randomUUID();
+      const second = randomUUID();
+      const install = (commandId: string) =>
+        server.dispatch("tools.install", {
+          tool: "git-lfs",
+          locus: { kind: "host" },
+          commandId,
+        }) as Promise<Answered>;
+      const one = install(first);
+      await heard(events, first, "==> starting");
+      const two = install(second);
+      const [a, b] = await Promise.all([one, two]);
+      expect(a.result.status).toBe("installed");
+      expect(b.result).toEqual(a.result);
+      expect(runsOf(bin)).toBe(1);
+      // The command that joined late heard what had already streamed, under its own id.
+      await heard(events, second, "==> starting");
+      await heard(events, second, "$ git lfs install");
+    },
+    20_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "tools.cancelInstall stops a RUNNING install, by any command that started or joined it",
+    async () => {
+      const { server, events, installed } = await installer(SLEEPING_BREW, "exit 0");
+      const first = randomUUID();
+      const joined = randomUUID();
+      const pending = server.dispatch("tools.install", {
+        tool: "git-lfs",
+        locus: { kind: "host" },
+        commandId: first,
+      }) as Promise<Answered>;
+      await heard(events, first, "==> starting");
+      const alsoPending = server.dispatch("tools.install", {
+        tool: "git-lfs",
+        locus: { kind: "host" },
+        commandId: joined,
+      }) as Promise<Answered>;
+      expect(await server.dispatch("tools.cancelInstall", { commandId: joined })).toEqual({
+        cancelled: true,
+      });
+      const [{ result }, { result: same }] = await Promise.all([pending, alsoPending]);
+      expect(result.status).toBe("failed");
+      if (result.status !== "failed") throw new Error("did not fail");
+      expect(result.cancelled).toBe(true);
+      expect(same).toEqual(result);
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      expect(existsSync(installed)).toBe(false);
+      // Nothing is running any more, so a cancel stops nothing — and says what happened.
+      expect(await server.dispatch("tools.cancelInstall", { commandId: first })).toEqual({
+        cancelled: false,
+        result,
+      });
+    },
+    20_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "Install for me right after a cancel, while the cancelled run is still dying, starts a fresh install",
+    async () => {
+      // A brew that ignores SIGTERM, so the cancelled run lingers until the SIGKILL grace ends.
+      const { server, events, bin } = await installer(
+        `trap "" TERM; ${SLEEPING_BREW.replace("sleep 2", "sleep 3")}`,
+        "exit 0",
+      );
+      const install = (commandId: string) =>
+        server.dispatch("tools.install", {
+          tool: "git-lfs",
+          locus: { kind: "host" },
+          commandId,
+        }) as Promise<Answered>;
+      const first = randomUUID();
+      const cancelled = install(first);
+      await heard(events, first, "==> starting");
+      expect(await server.dispatch("tools.cancelInstall", { commandId: first })).toEqual({
+        cancelled: true,
+      });
+      // Within the kill grace: the cancelled run has not ended yet.
+      const again = randomUUID();
+      const { result } = await install(again);
+      expect((await cancelled).result).toMatchObject({ status: "failed", cancelled: true });
+      // The reviewer asked to install, not to hear the cancelled run's ending: a new brew ran.
+      expect(result.status).toBe("installed");
+      expect(runsOf(bin)).toBe(2);
+      await heard(events, again, "$ git lfs install");
+    },
+    30_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "cancelling the fresh install while it waits for the cancelled one to die starts nothing",
+    async () => {
+      const { server, events, bin } = await installer(
+        `trap "" TERM; ${SLEEPING_BREW.replace("sleep 2", "sleep 3")}`,
+        "exit 0",
+      );
+      const install = (commandId: string) =>
+        server.dispatch("tools.install", {
+          tool: "git-lfs",
+          locus: { kind: "host" },
+          commandId,
+        }) as Promise<Answered>;
+      const first = randomUUID();
+      const cancelled = install(first);
+      await heard(events, first, "==> starting");
+      expect(await server.dispatch("tools.cancelInstall", { commandId: first })).toEqual({
+        cancelled: true,
+      });
+      // The retry queues behind the dying run; cancelling it must be honoured while it waits.
+      const again = randomUUID();
+      const queued = install(again);
+      expect(await server.dispatch("tools.cancelInstall", { commandId: again })).toEqual({
+        cancelled: true,
+      });
+      const { result } = await queued;
+      expect((await cancelled).result).toMatchObject({ status: "failed", cancelled: true });
+      expect(result).toMatchObject({ status: "failed", cancelled: true });
+      // Only the first, cancelled brew ever ran.
+      expect(runsOf(bin)).toBe(1);
+    },
+    30_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "a cancelled waiting retry starts nothing even when the dying run rejects",
+    async () => {
+      let probeBroken = false;
+      const { server, events, bin } = await installer(
+        `trap "" TERM; ${SLEEPING_BREW.replace("sleep 2", "sleep 3")}`,
+        "exit 0",
+        { probeThrows: () => probeBroken },
+      );
+      const install = (commandId: string) =>
+        server.dispatch("tools.install", {
+          tool: "git-lfs",
+          locus: { kind: "host" },
+          commandId,
+        }) as Promise<Answered>;
+      const first = randomUUID();
+      const dying = install(first).catch((error: unknown) => error);
+      await heard(events, first, "==> starting");
+      // The dying run's re-probe throws, so its result rejects.
+      probeBroken = true;
+      expect(await server.dispatch("tools.cancelInstall", { commandId: first })).toEqual({
+        cancelled: true,
+      });
+      const again = randomUUID();
+      const queued = install(again).catch((error: unknown) => error);
+      expect(await server.dispatch("tools.cancelInstall", { commandId: again })).toEqual({
+        cancelled: true,
+      });
+      expect(await dying).toBeInstanceOf(Error);
+      const answer = await queued;
+      // Either a cancelled result or the probe's own error — never an install.
+      if (!(answer instanceof Error)) {
+        expect((answer as Answered).result).toMatchObject({
+          status: "failed",
+          cancelled: true,
+        });
+      }
+      expect(runsOf(bin)).toBe(1);
+    },
+    30_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "the same commandId after its install finished gets the verdict back, and nothing runs again",
+    async () => {
+      // A client whose connection dropped mid-install asks again under the SAME id once it is
+      // back. The run finished meanwhile; that is the same request, not a second install.
+      const { server, bin } = await installer(
+        'echo "==> Pouring git-lfs"; echo run >> "$(dirname "$0")/runs"; touch "$(dirname "$0")/installed"',
+        "exit 0",
+      );
+      const commandId = randomUUID();
+      const install = () =>
+        server.dispatch("tools.install", {
+          tool: "git-lfs",
+          locus: { kind: "host" },
+          commandId,
+        }) as Promise<Answered>;
+      const first = await install();
+      expect(first.result.status).toBe("installed");
+      expect(runsOf(bin)).toBe(1);
+
+      const again = await install();
+      expect(again.result).toEqual(first.result);
+      expect(runsOf(bin)).toBe(1);
+      // A different id is a different request: it really installs again.
+      await server.dispatch("tools.install", {
+        tool: "git-lfs",
+        locus: { kind: "host" },
+        commandId: randomUUID(),
+      });
+      expect(runsOf(bin)).toBe(2);
+    },
+    20_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "a cancel that arrives after the install finished stops nothing and answers with its verdict",
+    async () => {
+      const { server, bin, installed } = await installer(
+        'echo run >> "$(dirname "$0")/runs"; touch "$(dirname "$0")/installed"',
+        "exit 0",
+      );
+      const commandId = randomUUID();
+      const { result } = (await server.dispatch("tools.install", {
+        tool: "git-lfs",
+        locus: { kind: "host" },
+        commandId,
+      })) as Answered;
+      expect(result.status).toBe("installed");
+      expect(await server.dispatch("tools.cancelInstall", { commandId })).toEqual({
+        cancelled: false,
+        result,
+      });
+      // Harmless: still installed, and asking again still runs nothing.
+      expect(existsSync(installed)).toBe(true);
+      const again = (await server.dispatch("tools.install", {
+        tool: "git-lfs",
+        locus: { kind: "host" },
+        commandId,
+      })) as Answered;
+      expect(again.result).toEqual(result);
+      expect(runsOf(bin)).toBe(1);
+    },
+    20_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "the same commandId re-joining a RUNNING install hears its output so far as one replacing snapshot",
+    async () => {
+      const { server, events, bin } = await installer(SLEEPING_BREW, "exit 0");
+      const commandId = randomUUID();
+      const install = () =>
+        server.dispatch("tools.install", {
+          tool: "git-lfs",
+          locus: { kind: "host" },
+          commandId,
+        }) as Promise<Answered>;
+      const one = install();
+      await heard(events, commandId, "==> starting");
+      const before = events.length;
+      const two = install();
+      const replayed = events
+        .slice(before)
+        .filter((entry) => entry.commandId === commandId)
+        .map((entry) => entry.event as unknown as { chunk: string; replace?: true });
+      // One snapshot, flagged to REPLACE what the client holds: it carries everything so far.
+      expect(replayed).toHaveLength(1);
+      expect(replayed[0]?.replace).toBe(true);
+      expect(replayed[0]?.chunk).toContain("$ brew install git-lfs");
+      expect(replayed[0]?.chunk).toContain("==> starting");
+      const [a, b] = await Promise.all([one, two]);
+      expect(b.result).toEqual(a.result);
+      expect(runsOf(bin)).toBe(1);
+    },
+    20_000,
+  );
+
+  describe("rejoin: a reconnecting client asking after its own command id", () => {
+    const rejoin = (
+      server: Awaited<ReturnType<typeof installer>>["server"],
+      commandId: string,
+      locus: { kind: "host" } | { kind: "wsl"; distro: string } = { kind: "host" },
+    ) =>
+      server.dispatch("tools.install", {
+        tool: "git-lfs",
+        locus,
+        commandId,
+        rejoin: true,
+      }) as Promise<ToolInstallOutput>;
+
+    it.skipIf(process.platform === "win32")(
+      "a fresh daemon knows nothing of the id: unknown, and no installer runs",
+      async () => {
+        // After a daemon restart the run and its retained verdict are gone with the process.
+        const { server, bin } = await installer(SLEEPING_BREW, "exit 0");
+        expect(await rejoin(server, randomUUID())).toEqual({ outcome: "unknown" });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(runsOf(bin)).toBe(0);
+      },
+    );
+
+    it.skipIf(process.platform === "win32")(
+      "after the retained verdict has aged out: unknown, and the installer does not run again",
+      async () => {
+        const { server, bin } = await installer(
+          'echo run >> "$(dirname "$0")/runs"; touch "$(dirname "$0")/installed"',
+          "exit 0",
+        );
+        const commandId = randomUUID();
+        await server.dispatch("tools.install", {
+          tool: "git-lfs",
+          locus: { kind: "host" },
+          commandId,
+        });
+        expect(runsOf(bin)).toBe(1);
+        const now = Date.now();
+        const clock = vi.spyOn(Date, "now").mockReturnValue(now + 11 * 60_000);
+        try {
+          expect(await rejoin(server, commandId)).toEqual({ outcome: "unknown" });
+        } finally {
+          clock.mockRestore();
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(runsOf(bin)).toBe(1);
+      },
+      20_000,
+    );
+
+    it.skipIf(process.platform === "win32")(
+      "after the retained verdict was evicted by the cap: unknown, and the installer does not run again",
+      async () => {
+        const { server, bin } = await installer(
+          'echo run >> "$(dirname "$0")/runs"; touch "$(dirname "$0")/installed"',
+          "exit 0",
+        );
+        const commandId = randomUUID();
+        await server.dispatch("tools.install", {
+          tool: "git-lfs",
+          locus: { kind: "host" },
+          commandId,
+        });
+        expect(runsOf(bin)).toBe(1);
+        // 32 later verdicts push the first out. WSL answers manual and runs nothing, so the
+        // brew counter below still only counts the one real install.
+        for (let index = 0; index < 32; index += 1) {
+          await server.dispatch("tools.install", {
+            tool: "git-lfs",
+            locus: { kind: "wsl", distro: "Ubuntu" },
+            commandId: randomUUID(),
+          });
+        }
+        expect(await rejoin(server, commandId)).toEqual({ outcome: "unknown" });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(runsOf(bin)).toBe(1);
+        // Control: the same id WITHOUT rejoin is a fresh request, as it always was.
+        await server.dispatch("tools.install", {
+          tool: "git-lfs",
+          locus: { kind: "host" },
+          commandId,
+        });
+        expect(runsOf(bin)).toBe(2);
+      },
+      20_000,
+    );
+
+    it.skipIf(process.platform === "win32")(
+      "a live id is joined: its output so far as one snapshot, then the same verdict, one brew",
+      async () => {
+        const { server, events, bin } = await installer(SLEEPING_BREW, "exit 0");
+        const commandId = randomUUID();
+        const first = server.dispatch("tools.install", {
+          tool: "git-lfs",
+          locus: { kind: "host" },
+          commandId,
+        }) as Promise<Answered>;
+        await heard(events, commandId, "==> starting");
+        const before = events.length;
+        const joined = rejoin(server, commandId);
+        const replayed = events
+          .slice(before)
+          .filter((entry) => entry.commandId === commandId)
+          .map((entry) => entry.event as unknown as { chunk: string; replace?: true });
+        expect(replayed[0]?.replace).toBe(true);
+        expect(replayed[0]?.chunk).toContain("==> starting");
+        const [a, b] = await Promise.all([first, joined]);
+        expect(a.result.status).toBe("installed");
+        expect(b).toEqual(a);
+        expect(runsOf(bin)).toBe(1);
+      },
+      20_000,
+    );
+
+    it.skipIf(process.platform === "win32")(
+      "a retained id answers with its verdict, and nothing runs again",
+      async () => {
+        const { server, bin } = await installer(
+          'echo run >> "$(dirname "$0")/runs"; touch "$(dirname "$0")/installed"',
+          "exit 0",
+        );
+        const commandId = randomUUID();
+        const first = (await server.dispatch("tools.install", {
+          tool: "git-lfs",
+          locus: { kind: "host" },
+          commandId,
+        })) as Answered;
+        expect(await rejoin(server, commandId)).toEqual(first);
+        expect(runsOf(bin)).toBe(1);
+      },
+      20_000,
+    );
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "a re-join snapshot is exactly the last 64,000 characters, the oldest chunk cut partially",
+    async () => {
+      // Three 30,000-character lines: 90,000+ characters, more than the client's drawer keeps.
+      // Trimming only WHOLE chunks kept the last two (60,000-odd), fewer than the 64,000 the
+      // client already showed, so the reconnect's `replace` snapshot shrank its drawer.
+      const line = (fill: string) =>
+        `printf '%s\\n' "$(head -c 30000 < /dev/zero | tr '\\0' '${fill}')"`;
+      const { server, events } = await installer(
+        `${line("a")}; ${line("b")}; ${line("c")}; echo "==> waiting"; sleep 2; touch "$(dirname "$0")/installed"`,
+        "exit 0",
+      );
+      const commandId = randomUUID();
+      const pending = server.dispatch("tools.install", {
+        tool: "git-lfs",
+        locus: { kind: "host" },
+        commandId,
+      }) as Promise<Answered>;
+      await heard(events, commandId, "==> waiting");
+      // What the client's drawer holds: the whole stream so far, kept to its last 64,000.
+      const streamed = events
+        .filter((entry) => entry.commandId === commandId)
+        .map((entry) => (entry.event as unknown as { chunk: string }).chunk)
+        .join("");
+      expect(streamed.length).toBeGreaterThan(64_000);
+      const drawer = streamed.slice(-64_000);
+      const before = events.length;
+      const rejoined = server.dispatch("tools.install", {
+        tool: "git-lfs",
+        locus: { kind: "host" },
+        commandId,
+        rejoin: true,
+      }) as Promise<Answered>;
+      const snapshot = events
+        .slice(before)
+        .map((entry) => entry.event as unknown as { chunk: string; replace?: true })
+        .find((event) => event.replace === true);
+      expect(snapshot?.chunk).toHaveLength(64_000);
+      expect(snapshot?.chunk).toBe(drawer);
+      await Promise.all([pending, rejoined]);
+    },
+    20_000,
+  );
+
+  it("tools.cancelInstall says false when nothing by that id is running", async () => {
+    const { server } = await installer("exit 0", "exit 0");
+    expect(await server.dispatch("tools.cancelInstall", { commandId: randomUUID() })).toEqual({
+      cancelled: false,
+    });
+  });
+});
