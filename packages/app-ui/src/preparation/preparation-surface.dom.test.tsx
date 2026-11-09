@@ -53,6 +53,8 @@ function surface(
     readonly installGate?: Promise<void>;
     /** Holds `session.chooseLargeFileMode` open, so a pending answer can be seen. */
     readonly chooseGate?: Promise<void>;
+    /** Holds `session.retryPreparation`'s acknowledgement until it resolves. */
+    readonly retryGate?: Promise<void>;
     /** Holds `settings.get` — and so the project's machine — until it resolves or rejects. */
     readonly settingsGate?: Promise<void>;
     /** Whether the review is attached, read on every call: flip it to attach mid-question. */
@@ -112,8 +114,9 @@ function surface(
       }
       return { session: row() };
     },
-    "session.retryPreparation": (input: CommandInput<"session.retryPreparation">) => {
+    "session.retryPreparation": async (input: CommandInput<"session.retryPreparation">) => {
       recorded.retries.push(input);
+      await options.retryGate;
       if (options.retryFails === true)
         throw Object.assign(new Error("connection lost"), {
           name: "ConnectionError",
@@ -269,6 +272,27 @@ describe("a stopped preparation is one actionable block", () => {
     await waitFor(() => expect(again.textContent).not.toContain("Git LFS is installed"));
     await user.click(within(again).getByRole("button", { name: "Install Git LFS for me" }));
     await waitFor(() => expect(recorded.installs).toHaveLength(2));
+  });
+
+  it("keeps an install that finished while the Retry was still being acknowledged", async () => {
+    // Codex: the Retry's acknowledgement forgot every settled verdict it found, including one
+    // from an install started and finished AFTER the press. That verdict is news about now.
+    const ack = deferred();
+    const { user, recorded } = surface(lfsMissing, { retryGate: ack.promise });
+    const failure = await block();
+    await user.click(within(failure).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(recorded.retries).toHaveLength(1));
+    await user.click(within(failure).getByRole("button", { name: "Install Git LFS for me" }));
+    await waitFor(() => expect(failure.textContent).toContain("Git LFS is installed"));
+
+    ack.resolve();
+    await waitFor(() => expect(recorded.retries).toHaveLength(1));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const after = await block();
+    expect(after.textContent).toContain("Git LFS is installed");
+    expect(recorded.installs).toHaveLength(1);
   });
 
   it("announces the failure sentence alone, with the install's output as its own polite log", async () => {

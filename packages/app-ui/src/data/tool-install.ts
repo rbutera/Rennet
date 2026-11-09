@@ -497,3 +497,28 @@ export function useForgetSettledInstalls(owner: string): () => void {
     }
   }, [cache, owner]);
 }
+
+/**
+ * Note `owner`'s finished verdicts NOW; the function returned forgets exactly those, later.
+ *
+ * For a forget that waits on the daemon (Retry's acknowledgement): an install started and
+ * finished in between is news about now, not the stop being left, so it must survive. A
+ * verdict is forgotten only while it is still the very state that was noted.
+ */
+export function useNoteSettledInstalls(owner: string): () => () => void {
+  const { cache } = useBridgeContext();
+  return useCallback(() => {
+    const prefix = `tool-install:${owner}:`;
+    const noted: [string, ToolInstallState][] = [];
+    for (const [key, record] of runs.get(cache) ?? []) {
+      if (!key.startsWith(prefix) || record.commandId !== null) continue;
+      noted.push([key, scopedHandle<ToolInstallState>(cache, key, IDLE).get()]);
+    }
+    return () => {
+      for (const [key, state] of noted) {
+        const handle = scopedHandle<ToolInstallState>(cache, key, IDLE);
+        if (handle.get() === state && runRecord(cache, key).commandId === null) handle.set(IDLE);
+      }
+    };
+  }, [cache, owner]);
+}

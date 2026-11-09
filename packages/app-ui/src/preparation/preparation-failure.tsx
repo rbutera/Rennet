@@ -6,7 +6,7 @@ import { FailureDetail } from "../components/failure-detail";
 import { InstallForMe, TOOL_NAME } from "../components/install-for-me";
 import { useMutation } from "../data";
 import { useScopedState } from "../data/scoped-state";
-import { useForgetSettledInstalls, useInstalledByOwner } from "../data/tool-install";
+import { useInstalledByOwner, useNoteSettledInstalls } from "../data/tool-install";
 import { settingsPath } from "../routes/url";
 import { ActionFailureLine, useActionFailure } from "./action-failure";
 import { preparationFailureCopy } from "./failure-copy";
@@ -70,15 +70,17 @@ export function PreparationFailure({
   );
   const { locus, failed: locusFailed, retry: rereadLocus } = useProjectLocus(session.projectId);
   const sessionId = session.id;
-  const forgetInstall = useForgetSettledInstalls(failureInstallOwner(sessionId));
+  const noteInstalls = useNoteSettledInstalls(failureInstallOwner(sessionId));
   const retryNow = () => {
     retryFailureHandle.set(undefined);
+    // What Install for me had come to when Retry was pressed answered the stop being left.
+    const forgetNoted = noteInstalls();
     retry
       .mutate({ sessionId, commandId: newCommandId() })
-      // The daemon took the Retry: what Install for me came to answered the stop before it.
-      // Forgotten here, not only when the header sees the review going again, because a
-      // retry can fail again before any refresh shows it running (failed → failed).
-      .then(() => forgetInstall())
+      // The daemon took the Retry: forget those verdicts here, not only when the header sees
+      // the review going again, because a retry can fail again before any refresh shows it
+      // running (failed → failed). An install finished since the press is kept.
+      .then(() => forgetNoted())
       .catch(() => retryFailureHandle.set(RETRY_FAILED));
   };
   const failed = preparation.status === "failed";
