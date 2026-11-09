@@ -73,6 +73,7 @@
   - Verify: dom tests for both choices and the missing-lfs path.
 - [x] 3.5 Settings → Environments source-control: add Git and Git LFS `DetectionRow`s with Install for me (or the manual command); add a per-project "Large files in review checkouts" control for `checkout.largeFiles`.
   - Verify: `source-control.dom.test.tsx` and the settings tests.
+  - Deviation: the large-files control is not under Environments. It lives under Settings → Projects → Worktrees, as the "Large Files in Review Checkouts" row on each repository that uses Git LFS (or already has a recorded choice), because `checkout.largeFiles` is a repository-rung setting and that is where the other per-repository checkout settings sit. The Git and Git LFS rows are under Environments as planned.
 - [x] 3.6 First-run welcome tools stage: show Git and Git LFS rows from the same probes with Install for me.
   - Verify: the welcome dom test covers git-lfs absent with an install action.
 - [x] 3.7 Copy pass against DESIGN.md (sentence case, no machinery nouns); update `packages/app-ui/DESIGN.md`'s preparation section to describe the animated presence and the failure block.
