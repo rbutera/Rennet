@@ -1022,8 +1022,11 @@ describe("ProjectsPage — the served per-project rung (C18 group A)", () => {
     const { writes, view } = mountServedPrefsWith(P1_PREFS, {
       second: { ...SECOND_REPO, usesLfs: true },
     });
-    const ledger = await view.findByLabelText("Large files in review checkouts for acme/ledger");
-    expect(view.queryByLabelText("Large files in review checkouts for acme/checkout")).toBeNull();
+    const ledger = await view.findByLabelText("Large Files in Review Checkouts for acme/ledger");
+    // A structural row label, so Title Case like its neighbours ("Project Key", "Review
+    // Context"): DESIGN.md's casing rule.
+    expect(view.getByText("Large Files in Review Checkouts")).toBeTruthy();
+    expect(view.queryByLabelText("Large Files in Review Checkouts for acme/checkout")).toBeNull();
     // Nothing recorded yet reads as the question still being asked.
     expect(
       within(ledger).getByRole("button", { name: "Ask each time" }).getAttribute("aria-pressed"),
@@ -1044,7 +1047,7 @@ describe("ProjectsPage — the served per-project rung (C18 group A)", () => {
     });
     // Shown although the row does not say it uses Git LFS: a recorded choice must not
     // become unreachable because an engine did not look.
-    const control = await view.findByLabelText("Large files in review checkouts for acme/checkout");
+    const control = await view.findByLabelText("Large Files in Review Checkouts for acme/checkout");
     expect(
       within(control).getByRole("button", { name: "Download" }).getAttribute("aria-pressed"),
     ).toBe("true");

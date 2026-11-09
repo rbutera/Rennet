@@ -419,7 +419,8 @@ Rennet never created.
 
 #### Large files in review checkouts
 
-`checkout.largeFiles` decides how a review checkout treats Git LFS content in a
+`checkout.largeFiles` (the **Large Files in Review Checkouts** row under Settings →
+Projects → Worktrees) decides how a review checkout treats Git LFS content in a
 repository whose `.gitattributes` routes files through `filter=lfs`. It lives on
 the **repository rung only**, as `largeFiles` in the project's `config.json`, and
 `settings.setProjectValue` writes it under the key `largeFiles`. There is no

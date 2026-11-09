@@ -375,13 +375,13 @@ function RepoWorktrees({
       </Row>
       {showLargeFiles ? (
         <Row
-          label="Large files in review checkouts"
+          label="Large Files in Review Checkouts"
           hint="this repository stores large files with Git LFS"
           stacked
         >
           <div className="flex flex-wrap items-center gap-2">
             <Segmented
-              ariaLabel={`Large files in review checkouts for ${label}`}
+              ariaLabel={`Large Files in Review Checkouts for ${label}`}
               options={LARGE_FILE_OPTIONS}
               value={largeFileMode}
               disabled={!editable || busy}
