@@ -268,12 +268,16 @@ function closePipesAfterExit(
   else spawned.once("exit", drain);
 }
 
-/** Signal every process in group `pgid`. A group that is already gone is no error. */
+/**
+ * Signal every process in group `pgid`, best effort. A group that is already gone, or one
+ * whose survivors we may not signal (EPERM: a setuid helper), is no error: this runs in a
+ * timer and an abort listener, where a throw would be uncaught and strand the run's result.
+ */
 function signalGroup(pgid: number, signal: NodeJS.Signals): void {
   try {
     process.kill(-pgid, signal);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  } catch {
+    // ESRCH: nothing left to signal. EPERM: nothing more we are allowed to do.
   }
 }
 
