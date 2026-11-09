@@ -175,27 +175,42 @@ test("#668: a row click opens real generation progress before held drafting comp
     // the row click awaited this exact command, so holding only board drafting would miss the
     // original renderer-blocking seam.
     //
-    // WHAT CHANGED, and it is the whole of `lens-board-tools` 5.2: the surface that paints is
-    // the BOARD WORKSPACE, not a preparation screen in front of it. This test used to assert
-    // that the board had NOT taken over while capture was held; boards-first inverts that, so
-    // the assertion is inverted with it rather than deleted. The running capture adds no
-    // header over those boards any more — the frame's sphere carries the working state and
-    // the workspace offers the one thing it cannot: the floating way to stop.
-    const cancel = page.locator('[data-testid="preparation-cancel"]');
-    await expect(cancel).toBeVisible({ timeout: 5_000 });
+    // WHAT THE REVIEWER SEES WHILE CAPTURE IS HELD (review-preparation-reliability D6): one
+    // waiting presence across the rail and the board. Rai, on the build before it: the PR
+    // opened and "it didn't look like it was working at all (normally the lenses all
+    // populate)". So the board area is a skeleton with a slow sweep, the five rail tabs
+    // breathe as one wave, Cancel is inline, and nothing names a step or a seat.
+    const presence = page.locator('[data-kind="preparation-presence"]');
+    await expect(presence).toBeVisible({ timeout: 5_000 });
     expect(await page.evaluate(() => location.hash)).toMatch(/#\/s\//);
-    await expect(page.locator('[data-testid="workspace-header"]')).toHaveCount(0);
-    await expect(page.locator('[data-kind="lens-board-view"]')).toBeVisible();
-    // All five lenses are on the rail from the first frame (5.1), while capture is still
-    // held — and the count is what proves it is all five rather than one.
+    await expect(presence.locator('[data-motion="sweep"].animate-presence-sweep')).not.toHaveCount(
+      0,
+    );
+    await expect(page.locator('[data-kind="lens-switcher"]')).toHaveAttribute(
+      "data-presence",
+      "waiting",
+    );
+    // All five lenses are on the rail from the first frame (5.1), each breathing with the
+    // shared wait — the count is what proves it is all five rather than one.
     await expect(page.locator('[data-kind="lens-switcher"] [data-lens]')).toHaveCount(5);
-    // ⚠️ ABSENCE ASSERTIONS, and they are the honest half of boards-first: the daemon has
+    await expect(
+      page.locator(
+        '[data-kind="lens-switcher"] [data-slot="lens-presence"].animate-presence-breathe',
+      ),
+    ).toHaveCount(5);
+    // The internal-state copy the reviewer used to meet here is gone.
+    await expect(page.getByText("No board for this generation yet.")).toHaveCount(0);
+    await expect(page.locator('[data-testid="workspace-header"]')).toHaveCount(0);
+    // ⚠️ ABSENCE ASSERTIONS, and they are the honest half of the presence: the daemon has
     // opened NO lane yet, so nothing on screen may claim a seat is working or a board is
-    // being written. This is the exact lie this wave's own review caught.
+    // being written. The presence is a presence, not five invented readers.
     await expect(page.locator('[data-kind="seat-widget"]')).toHaveCount(0);
     await expect(page.locator('[data-kind="board-in-progress"]')).toHaveCount(0);
     await expect(page.locator('[data-kind="board-ghost"]')).toHaveCount(0);
     await expect(page.locator('[data-register="working"]')).toHaveCount(0);
+    // Cancel is inline, inside the presence.
+    const cancel = presence.locator('[data-testid="preparation-cancel"]');
+    await expect(cancel).toBeVisible();
 
     // Cancellation is a live command, not a disabled navigation state. The review remains on
     // the same route with an explicit terminal account and can be retried in place — and the

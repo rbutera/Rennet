@@ -89,8 +89,11 @@ export function ReviewWorkspace({ review }: { review: Review }) {
   const slug = sessionParams?.slug ? decodeURIComponent(sessionParams.slug) : "";
   const session = useSessionRow(slug);
   const preparation = session?.preparation;
+  // `awaiting` counts: a review waiting on the large-file answer has no boards to hand off.
   const preparationRunning =
-    preparation?.status === "capturing" || preparation?.status === "drafting";
+    preparation?.status === "capturing" ||
+    preparation?.status === "awaiting" ||
+    preparation?.status === "drafting";
   const mode = resolveEntryMode(review);
 
   // Review-identity isolation (C05's boardId lesson, applied to the singleton `review` slice): the

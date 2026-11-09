@@ -125,7 +125,9 @@ describe("session top-bar (C03 §4)", () => {
       ["noise", "Noise"],
     ] as const) {
       const tab = rail?.querySelector<HTMLElement>(`[data-lens=${lens}]`);
-      const visibleLabel = [...(tab?.querySelectorAll("span") ?? [])].find(
+      // The label is the span that IS the word — not the preparation-presence wrapper
+      // around the tab's content, whose text is the same word.
+      const visibleLabel = [...(tab?.querySelectorAll("span:not([data-slot])") ?? [])].find(
         (span) => span.textContent === label,
       );
       expect(visibleLabel?.textContent).toBe(label);
@@ -493,9 +495,9 @@ describe("the bar's geometry", () => {
     // bug this asserts against. Positive control: swap either class back to `@max-[1080px]`
     // (chat-unaware) or a bare `hidden` and this reddens.
     const shut = mountTopBar("/s/s2", undefined, lensHandlers);
-    const shutLabel = [...shut.container.querySelectorAll('[data-lens="design"] span')].find(
-      (span) => span.textContent === "Design",
-    );
+    const shutLabel = [
+      ...shut.container.querySelectorAll('[data-lens="design"] span:not([data-slot])'),
+    ].find((span) => span.textContent === "Design");
     expect(shutLabel?.className).toBe("@max-[55rem]:hidden");
     shut.unmount();
 
@@ -503,9 +505,9 @@ describe("the bar's geometry", () => {
       useRennetStore.setState((s) => ({ ui: { ...s.ui, chatOpen: true } }));
     });
     const open = mountTopBar("/s/s2", undefined, lensHandlers);
-    const openLabel = [...open.container.querySelectorAll('[data-lens="design"] span')].find(
-      (span) => span.textContent === "Design",
-    );
+    const openLabel = [
+      ...open.container.querySelectorAll('[data-lens="design"] span:not([data-slot])'),
+    ].find((span) => span.textContent === "Design");
     expect(openLabel?.className).toBe("@max-[42rem]:hidden");
   });
 

@@ -2,6 +2,7 @@ import { newCommandId, type SessionPreparation, type SidebarSession } from "@ren
 import { Button, cn } from "@rennet/ui";
 import { useEffect } from "react";
 import { useCommand, useMutation, useRefreshCommand } from "../data";
+import { preparationPhase } from "../preparation/preparation-phase";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // THE WORKSPACE HEADER (lens-board-tools 5.2/5.4, D12) — capture reported IN the
@@ -49,7 +50,10 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
   const refreshSessions = useRefreshCommand("session.list");
   const cancel = useMutation("session.cancelPreparation", { invalidates: ["session.list"] });
   const retry = useMutation("session.retryPreparation", { invalidates: ["session.list"] });
-  const active = preparation?.status === "capturing" || preparation?.status === "drafting";
+  const phase = preparationPhase(preparation);
+  // Still going: the poll is what moves the rail, the presence and the seats. `choosing` is
+  // polled too, so an answer given from another window resumes this one.
+  const active = phase === "waiting" || phase === "choosing" || phase === "drafting";
 
   useEffect(() => {
     if (!active) return;
@@ -75,6 +79,10 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
   // the outlet, and the outlet — not the window — is what the dock sits beside.
   // `app-region-no-drag` is explicit: a control that does not opt out of a drag region
   // never receives its own clicks.
+  // WAITING: nothing here. The board area is the preparation presence, and its Cancel sits
+  // inline under the skeleton (review-preparation-reliability D6) — a second, floating Cancel
+  // over a board that is itself a waiting presence would be two ways to say one thing.
+  if (phase === "waiting" || phase === "choosing") return null;
   if (active) {
     return (
       <button

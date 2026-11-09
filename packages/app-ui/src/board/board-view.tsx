@@ -11,6 +11,12 @@ import { type RefCallback, useEffect, useMemo, useRef } from "react";
 import { useCoachAnchor } from "../coach/registry";
 import { ReviewActivity } from "../components/review-activity";
 import { useRefreshCommand } from "../data";
+import {
+  preparationStopped,
+  presenceShows,
+  usePreparationPhase,
+} from "../preparation/preparation-phase";
+import { PreparationPresence } from "../preparation/preparation-presence";
 import { ProseSelectionLayer, ReviewAnchoredAskProvider, RichText } from "../review";
 import { useRennetStore } from "../store";
 import {
@@ -227,6 +233,14 @@ export function LensBoardView({
   // a settled board is still being written.
   const live = selectedGeneration === generation;
   const drafting = live && seat.drafting;
+  // THE PREPARATION OWNS AN EMPTY BOARD (review-preparation-reliability D6). While the review
+  // is on its way and no seat has opened, a board with nothing to show is the waiting
+  // presence, never "No board for this generation yet."; once the run has stopped, the
+  // failure block over the workspace owns the message and the board under it says nothing.
+  // Both apply only to the live generation: a drill-down into a frozen predecessor reads
+  // as itself.
+  const phase = usePreparationPhase(slug);
+  const unread = shown.status === "missing" || shown.status === "pending";
 
   // Selecting a lens moves its board, activity and transcript together — a drawer left
   // on the Sequence seat above the Decisions board is exactly the kind of quiet mismatch a
@@ -282,7 +296,9 @@ export function LensBoardView({
           anchorRef={highlightRef}
           drafting={drafting}
         />
-      ) : (
+      ) : live && unread && presenceShows(phase) ? (
+        <PreparationPresence slug={slug} className="max-w-none px-0 py-0" />
+      ) : live && unread && preparationStopped(phase) ? null : (
         <BoardAccount
           resolution={shown}
           drafting={drafting}

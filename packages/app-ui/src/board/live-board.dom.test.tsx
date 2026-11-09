@@ -199,30 +199,109 @@ beforeEach(() => {
 });
 
 describe("the review opens on its boards, with no waiting stage in front of them", () => {
-  it("puts the board view on screen while capture is still running", async () => {
-    // 5.2. The review does not exist yet — capture is resolving the repository — and the
-    // board view is ALREADY the surface. Before this there was a whole separate screen
-    // here; then a header describing the step; now the boards and one way to stop.
+  it("shows one animated waiting presence across the rail and the board while capture runs", async () => {
+    // review-preparation-reliability D6, task 3.1. Rai, on the build this replaces: the PR
+    // opened and "it didn't look like it was working at all (normally the lenses all
+    // populate)". The board said "No board for this generation yet." under five idle tabs.
+    // Now the rail and the board move together as one presence, with Cancel inline, and
+    // nothing names a step or a seat.
     const live = liveBridge({
       review: false,
       preparation: { status: "capturing", step: "resolving-repository" },
     });
     open(live);
 
-    await waitFor(() =>
-      expect(document.querySelector('[data-kind="lens-board-view"]')).toBeTruthy(),
+    const presence = await waitFor(() => {
+      const found = document.querySelector('[data-kind="preparation-presence"]');
+      if (!found) throw new Error("no preparation presence");
+      return found;
+    });
+    // THE BOARD HALF: a skeleton that moves. Each card carries the sweep, and the sweep is
+    // the animated utility — not a static grey box that merely looks like a skeleton.
+    const sweeps = presence.querySelectorAll('[data-motion="sweep"]');
+    expect(sweeps.length).toBeGreaterThan(1);
+    for (const sweep of sweeps) {
+      expect(sweep.className).toContain("animate-presence-sweep");
+      // Reduced motion removes the band rather than parking it as a bright patch.
+      expect(sweep.className).toContain("motion-reduce:hidden");
+    }
+    // THE RAIL HALF: all five tabs breathe as ONE wave, staggered left to right, and each
+    // keeps its honest register — the presence is not a seat state.
+    const tabs = [
+      ...document.querySelectorAll<HTMLElement>('[data-kind="lens-switcher"] [data-lens]'),
+    ];
+    expect(tabs).toHaveLength(5);
+    expect(
+      document.querySelector('[data-kind="lens-switcher"]')?.getAttribute("data-presence"),
+    ).toBe("waiting");
+    const breaths = tabs.map((tab) =>
+      tab.querySelector<HTMLElement>('[data-slot="lens-presence"]'),
     );
-    // NOTHING describes the machinery across the top of the boards any more: no slab, no
-    // spinner, no named beats. While capture runs the workspace offers the one thing the
-    // frame's sphere cannot — a way to stop it.
-    expect(document.querySelector('[data-testid="workspace-header"]')).toBeNull();
-    const cancel = document.querySelector('[data-testid="preparation-cancel"]');
+    expect(breaths.map((breath) => breath?.style.animationDelay)).toEqual([
+      "0ms",
+      "160ms",
+      "320ms",
+      "480ms",
+      "640ms",
+    ]);
+    for (const [index, breath] of breaths.entries()) {
+      expect(breath?.getAttribute("data-presence")).toBe("waiting");
+      expect(breath?.className).toContain("animate-presence-breathe");
+      // Reduced motion holds still at a dimmed ink rather than vanishing into a normal rail.
+      expect(breath?.className).toContain("motion-reduce:animate-none");
+      expect(breath?.className).toContain("motion-reduce:opacity-60");
+      // A presence, not a register: no tab claims a working seat.
+      expect(tabs[index]?.getAttribute("data-register")).not.toBe("working");
+    }
+    // Cancel is INLINE, inside the presence, not a chip floating over an empty column.
+    const cancel = presence.querySelector('[data-testid="preparation-cancel"]');
     if (!cancel) throw new Error("a running capture offers no way to cancel it");
-    expect(cancel.getAttribute("aria-label")).toBe("Cancel board generation");
     expect(cancel.textContent).toBe("Cancel");
+    // The internal-state copy the reviewer used to meet here, and any step name, are gone.
+    const text = document.body.textContent ?? "";
+    expect(text).not.toContain("No board for this generation yet.");
+    expect(text).not.toMatch(/resolving|capturing/i);
+    expect(document.querySelector('[data-kind="board-empty"]')).toBeNull();
+    expect(document.querySelector('[data-testid="workspace-header"]')).toBeNull();
+    // No preparation SCREEN survives anywhere.
+    expect(document.querySelector('[data-screen="session-preparation"]')).toBeNull();
+  });
+
+  it("steps the presence aside once a lane opens, and the floating Cancel takes over", async () => {
+    // The presence is the wait BEFORE any seat exists. The moment a lane moves, the seats
+    // speak for themselves (the rail's own marks, the board's own in-progress signals), so
+    // the shared breath stops — otherwise the rail would say "waiting" over a seat that is
+    // writing. The control half: the same session, all lanes queued, IS the presence.
+    const queued = DRAFTING.map((lane) => ({ id: lane.id, label: lane.label, status: "queued" }));
+    const live = liveBridge({
+      preparation: { status: "drafting", reviewId: REVIEW.id, lanes: queued as LensLane[] },
+    });
+    open(live, "?lens=sequence");
+    await waitFor(() =>
+      expect(document.querySelector('[data-kind="preparation-presence"]')).toBeTruthy(),
+    );
+    expect(
+      document.querySelector('[data-kind="lens-switcher"]')?.getAttribute("data-presence"),
+    ).toBe("waiting");
+
+    live.setLanes(DRAFTING);
+
+    await waitFor(
+      () => expect(document.querySelector('[data-kind="preparation-presence"]')).toBeNull(),
+      { timeout: 4_000 },
+    );
+    expect(
+      document.querySelector('[data-kind="lens-switcher"]')?.getAttribute("data-presence"),
+    ).toBeNull();
+    expect(document.querySelector('[data-presence="waiting"]')).toBeNull();
+    for (const breath of document.querySelectorAll('[data-slot="lens-presence"]')) {
+      expect(breath.className).not.toContain("animate-presence-breathe");
+    }
+    const cancel = document.querySelector('[data-testid="preparation-cancel"]');
+    if (!cancel) throw new Error("a drafting generation offers no way to cancel it");
+    expect(cancel.getAttribute("aria-label")).toBe("Cancel board generation");
     // POSITION, not membership: the chip FLOATS over the board region rather than
     // displacing it — it is not an ancestor of the board, and the board is not inside it.
-    // A pair of `toContain` checks would be satisfied by a chip that swallowed the board.
     const region = document.querySelector('[data-region="board"]');
     if (!region) throw new Error("the workspace has no board region");
     expect(cancel.contains(region)).toBe(false);
@@ -234,8 +313,6 @@ describe("the review opens on its boards, with no waiting stage in front of them
     expect(cancel.className).toContain("right-6");
     expect(cancel.className).toContain("bottom-6");
     expect(cancel.className).not.toContain("top-16");
-    // No preparation SCREEN survives anywhere.
-    expect(document.querySelector('[data-screen="session-preparation"]')).toBeNull();
   });
 
   it("lists all five lenses from the first frame, each carrying its seat's state", async () => {
@@ -528,7 +605,7 @@ describe("a run that is over never says a seat is still writing", () => {
     open(live, "?lens=design");
 
     await waitFor(() =>
-      expect(document.querySelector('[data-kind="lens-board-view"]')).toBeTruthy(),
+      expect(document.querySelector('[data-testid="workspace-header"]')).toBeTruthy(),
     );
     expect(noStillWriting()).toEqual({
       inProgressMark: false,
@@ -572,7 +649,8 @@ describe("a run that is over never says a seat is still writing", () => {
 
   it("draws no board being written while capture is still running", async () => {
     // The explicit decision D13 left open: during capture nothing is being written, so no
-    // board carries the in-progress copy. The rail is where the five lenses are listed.
+    // board carries the in-progress copy. The waiting presence is a presence, not a seat:
+    // the rail lists the five lenses, honestly waiting, and none of them claims a board.
     const live = liveBridge({
       review: false,
       preparation: { status: "capturing", step: "capturing-change" },
@@ -580,7 +658,7 @@ describe("a run that is over never says a seat is still writing", () => {
     open(live, "?lens=design");
 
     await waitFor(() =>
-      expect(document.querySelector('[data-kind="lens-board-view"]')).toBeTruthy(),
+      expect(document.querySelector('[data-kind="preparation-presence"]')).toBeTruthy(),
     );
     expect(noStillWriting()).toEqual({
       inProgressMark: false,
@@ -594,6 +672,7 @@ describe("a run that is over never says a seat is still writing", () => {
     expect(document.querySelectorAll('[data-kind="lens-switcher"] [data-lens]')).toHaveLength(5);
     expect(tabOf("design")?.getAttribute("data-register")).toBe("waiting");
     expect(tabOf("noise")?.getAttribute("data-waiting-on")).toBeNull();
+    expect(document.body.textContent).not.toContain("No board for this generation yet.");
   });
 });
 
