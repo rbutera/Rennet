@@ -2204,7 +2204,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   interface ToolInstallRun {
     readonly controller: AbortController;
     readonly commandIds: Set<string>;
-    /** What has streamed so far, for a command that joins late. Capped: the tail is kept. */
+    /** What has streamed so far, for a command that joins late. Capped: exactly the last
+     *  `TOOL_INSTALL_REPLAY_CAP` characters are kept, the oldest chunk trimmed partially. */
     readonly streamed: { stream: "stdout" | "stderr"; chunk: string }[];
     streamedBytes: number;
     /** The plan's command once it is resolved, carried on every event so a reviewer sees what
@@ -2215,6 +2216,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const toolInstallRuns = new Map<string, ToolInstallRun>();
   /** Install retries waiting for a cancelled run to die, by their command id. */
   const pendingInstallRetries = new Map<string, AbortController>();
+  /** The client's live drawer keeps exactly this many characters of output (`tool-install.ts`
+   *  `LIVE_OUTPUT_CAP`). The replay keeps the same tail, so a `replace` snapshot after a
+   *  reconnect never shows the reviewer LESS than they already had. */
   const TOOL_INSTALL_REPLAY_CAP = 64_000;
   let toolInstallsClosed = false;
   const toolInstallKey = (tool: SourceControlToolId, locus: Locus): string =>
@@ -2290,6 +2294,29 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     } as const;
     options.broadcastProgress?.(commandId, event);
     wsListener?.broadcastProgress(commandId, event);
+  }
+
+  /**
+   * Append `chunk` to the run's replay and trim it to exactly the last
+   * `TOOL_INSTALL_REPLAY_CAP` characters. Whole chunks go first; the oldest survivor is cut
+   * partially, so the tail is the same one the client's drawer keeps — trimming only whole
+   * chunks kept less than the client showed, and a reconnect's snapshot shrank its drawer.
+   */
+  function keepReplayTail(run: ToolInstallRun, stream: "stdout" | "stderr", chunk: string): void {
+    run.streamed.push({ stream, chunk });
+    run.streamedBytes += chunk.length;
+    while (run.streamedBytes > TOOL_INSTALL_REPLAY_CAP) {
+      const oldest = run.streamed[0];
+      if (oldest === undefined) break;
+      const excess = run.streamedBytes - TOOL_INSTALL_REPLAY_CAP;
+      if (oldest.chunk.length <= excess) {
+        run.streamed.shift();
+        run.streamedBytes -= oldest.chunk.length;
+      } else {
+        oldest.chunk = oldest.chunk.slice(excess);
+        run.streamedBytes -= excess;
+      }
+    }
   }
 
   /**
@@ -2412,11 +2439,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           input,
           controller.signal,
           (stream, chunk) => {
-            streamed.push({ stream, chunk });
-            run.streamedBytes += chunk.length;
-            while (run.streamedBytes > TOOL_INSTALL_REPLAY_CAP && streamed.length > 1) {
-              run.streamedBytes -= streamed.shift()?.chunk.length ?? 0;
-            }
+            keepReplayTail(run, stream, chunk);
             for (const commandId of commandIds) {
               emitToolInstallOutput(commandId, input.tool, stream, chunk, run.command);
             }

@@ -482,6 +482,49 @@ describe("tools.install (Install for me)", () => {
     20_000,
   );
 
+  it.skipIf(process.platform === "win32")(
+    "a re-join snapshot is exactly the last 64,000 characters, the oldest chunk cut partially",
+    async () => {
+      // Three 30,000-character lines: 90,000+ characters, more than the client's drawer keeps.
+      // Trimming only WHOLE chunks kept the last two (60,000-odd), fewer than the 64,000 the
+      // client already showed, so the reconnect's `replace` snapshot shrank its drawer.
+      const line = (fill: string) =>
+        `printf '%s\\n' "$(head -c 30000 < /dev/zero | tr '\\0' '${fill}')"`;
+      const { server, events } = await installer(
+        `${line("a")}; ${line("b")}; ${line("c")}; echo "==> waiting"; sleep 2; touch "$(dirname "$0")/installed"`,
+        "exit 0",
+      );
+      const commandId = randomUUID();
+      const pending = server.dispatch("tools.install", {
+        tool: "git-lfs",
+        locus: { kind: "host" },
+        commandId,
+      }) as Promise<CommandOutput<"tools.install">>;
+      await heard(events, commandId, "==> waiting");
+      // What the client's drawer holds: the whole stream so far, kept to its last 64,000.
+      const streamed = events
+        .filter((entry) => entry.commandId === commandId)
+        .map((entry) => (entry.event as unknown as { chunk: string }).chunk)
+        .join("");
+      expect(streamed.length).toBeGreaterThan(64_000);
+      const drawer = streamed.slice(-64_000);
+      const before = events.length;
+      const rejoined = server.dispatch("tools.install", {
+        tool: "git-lfs",
+        locus: { kind: "host" },
+        commandId,
+      }) as Promise<CommandOutput<"tools.install">>;
+      const snapshot = events
+        .slice(before)
+        .map((entry) => entry.event as unknown as { chunk: string; replace?: true })
+        .find((event) => event.replace === true);
+      expect(snapshot?.chunk).toHaveLength(64_000);
+      expect(snapshot?.chunk).toBe(drawer);
+      await Promise.all([pending, rejoined]);
+    },
+    20_000,
+  );
+
   it("tools.cancelInstall says false when nothing by that id is running", async () => {
     const { server } = await installer("exit 0", "exit 0");
     expect(await server.dispatch("tools.cancelInstall", { commandId: randomUUID() })).toEqual({
