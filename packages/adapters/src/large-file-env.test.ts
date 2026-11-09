@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { execaGit } from "./git-range-diff";
 import {
@@ -170,7 +170,7 @@ describe("LargeFileSkipIndex", () => {
     const { skip, download, index, childEnv, restore } = fixture();
     const git = (cwd: string, args: string[]) =>
       execaGit(cwd, args, { env: childEnv as Record<string, string> });
-    index.add(await absoluteGitDir(git, skip));
+    index.add(await absoluteGitDir(git, skip), { lfsAvailable: false });
 
     // The registered checkout: a later checkout of the large file succeeds as a pointer.
     const skipped = restore(skip);
@@ -191,8 +191,8 @@ describe("LargeFileSkipIndex", () => {
     const git = (cwd: string, args: string[]) =>
       execaGit(cwd, args, { env: childEnv as Record<string, string> });
     const gitDir = await absoluteGitDir(git, skip);
-    index.add(gitDir);
-    index.add(gitDir);
+    index.add(gitDir, { lfsAvailable: false });
+    index.add(gitDir, { lfsAvailable: false });
     const reread = new LargeFileSkipIndex(index.indexPath);
     expect(reread.gitDirs()).toEqual([gitDir]);
     reread.remove((dir) => dir === gitDir);
@@ -204,7 +204,163 @@ describe("LargeFileSkipIndex", () => {
     const data = scratchDir("rennet-skipidx-odd-");
     const index = new LargeFileSkipIndex(largeFileSkipIndexPath(data));
     const odd = '/tmp/acme [widget]/*?"q"/.git/worktrees/pr-1';
-    index.add(odd);
+    index.add(odd, { lfsAvailable: false });
     expect(new LargeFileSkipIndex(index.indexPath).gitDirs()).toEqual([odd]);
+  });
+
+  it("refuses a path with a line break or control character, and every repository keeps working", () => {
+    const { root, skip, index, childEnv } = fixture();
+    // A read that runs no filter: the fixture's filter is required and git-lfs is absent.
+    const before = spawnSync("git", ["log", "-1", "--format=%H"], {
+      cwd: root,
+      env: childEnv,
+      encoding: "utf8",
+    });
+    expect(before.status, before.stderr).toBe(0);
+    // A real entry first, so the file exists and must stay parseable after the refusal.
+    expect(index.add(join(root, ".git"), { lfsAvailable: false })).toBe(true);
+    for (const bad of [`${skip}\n[core]\n\thooksPath = /tmp/evil`, `${skip}\u0007bell`]) {
+      expect(index.add(bad, { lfsAvailable: false })).toBe(false);
+    }
+    expect(index.gitDirs()).toEqual([join(root, ".git")]);
+    // The include every daemon child carries still parses: git runs, in the registered
+    // repository and in a checkout the index never named.
+    for (const cwd of [root, skip]) {
+      const after = spawnSync("git", ["log", "-1", "--format=%H"], {
+        cwd,
+        env: childEnv,
+        encoding: "utf8",
+      });
+      expect(after.status, after.stderr).toBe(0);
+    }
+  });
+
+  it("prunes the entries whose git dir is gone, so a re-added worktree is not skip mode", async () => {
+    const { root, skip, index, childEnv } = fixture();
+    const git = (cwd: string, args: string[]) =>
+      execaGit(cwd, args, { env: childEnv as Record<string, string> });
+    const gitDir = await absoluteGitDir(git, skip);
+    index.add(gitDir, { lfsAvailable: false });
+    execFileSync("git", ["worktree", "remove", "--force", skip], { cwd: root, env: childEnv });
+    index.prune();
+    expect(index.gitDirs()).toEqual([]);
+  });
+});
+
+/**
+ * Skip mode WITH Git LFS installed, against the real `git-lfs`: the checkout leaves pointers,
+ * and a `git add` of a large file in it still stores a POINTER. Blanking the filter there
+ * (the form for a host without Git LFS) would store the raw file, and the next commit an
+ * agent makes would put it into history.
+ */
+const realGitLfs = (() => {
+  const found = spawnSync(
+    "sh",
+    ["-c", 'PATH="$PATH:/opt/homebrew/bin:/usr/local/bin" command -v git-lfs'],
+    { encoding: "utf8" },
+  );
+  return found.status === 0 ? found.stdout.trim() : "";
+})();
+
+describe.skipIf(realGitLfs === "")("skip mode with Git LFS installed (real git-lfs)", () => {
+  const LARGE = "a large widget model, stored by Git LFS\n";
+
+  function lfsFixture() {
+    const home = scratchDir("rennet-skiplfs-home-");
+    const root = scratchDir("rennet-skiplfs-repo-");
+    const trees = scratchDir("rennet-skiplfs-wt-");
+    const data = scratchDir("rennet-skiplfs-data-");
+    const bin = scratchDir("rennet-skiplfs-bin-");
+    const realGit = realpathSync(
+      execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim(),
+    );
+    symlinkSync(realGit, join(bin, "git"));
+    symlinkSync(realpathSync(realGitLfs), join(bin, "git-lfs"));
+    // The user's global config as `git lfs install` leaves it.
+    const global = join(home, "global.gitconfig");
+    writeFileSync(
+      global,
+      [
+        "[user]",
+        "\temail = rennet@example.test",
+        "\tname = Rennet Test",
+        '[filter "lfs"]',
+        "\tclean = git-lfs clean -- %f",
+        "\tsmudge = git-lfs smudge -- %f",
+        "\tprocess = git-lfs filter-process",
+        "\trequired = true",
+        "",
+      ].join("\n"),
+    );
+    const env = { PATH: bin, HOME: home, GIT_CONFIG_GLOBAL: global, GIT_CONFIG_NOSYSTEM: "1" };
+    const run = (cwd: string, args: string[], extra: Record<string, string> = {}) =>
+      execFileSync("git", args, { cwd, env: { ...env, ...extra }, encoding: "utf8" }).trim();
+    run(root, ["init", "-q", "-b", "main"]);
+    writeFileSync(join(root, ".gitattributes"), "*.bin filter=lfs diff=lfs merge=lfs -text\n");
+    mkdirSync(join(root, "assets"));
+    writeFileSync(join(root, "assets", "model.bin"), LARGE);
+    // Committed through the real filter: the blob is a pointer and the content is in the
+    // repository's LFS store, so a checkout that DID download would get it back.
+    run(root, ["add", "-A"]);
+    run(root, ["commit", "-q", "-m", "add a large file"]);
+    expect(run(root, ["cat-file", "-p", "HEAD:assets/model.bin"])).toMatch(/^version https:/);
+    const skip = join(trees, "skip");
+    // Rennet's own skip-mode checkout call: the per-call overrides wave 1 passes.
+    run(
+      root,
+      [
+        "-c",
+        "filter.lfs.process=",
+        "-c",
+        "filter.lfs.smudge=",
+        "-c",
+        "filter.lfs.required=false",
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        skip,
+        "HEAD",
+      ],
+      { GIT_LFS_SKIP_SMUDGE: "1" },
+    );
+    const index = new LargeFileSkipIndex(largeFileSkipIndexPath(data));
+    const childEnv = withLargeFileSkipIndex({ ...env }, index.indexPath) as Record<string, string>;
+    return { root, skip, index, childEnv };
+  }
+
+  it("git add of an LFS-tracked file in a registered checkout stores a pointer", async () => {
+    const { skip, index, childEnv } = lfsFixture();
+    const git = (cwd: string, args: string[]) => execaGit(cwd, args, { env: childEnv });
+    expect(index.add(await absoluteGitDir(git, skip), { lfsAvailable: true })).toBe(true);
+    writeFileSync(join(skip, "assets", "new.bin"), "another large widget model\n");
+    await git(skip, ["add", "assets/new.bin"]);
+    const staged = await git(skip, ["cat-file", "-p", ":assets/new.bin"]);
+    expect(staged).toMatch(/^version https:\/\/git-lfs\.github\.com\/spec\/v1\n/);
+    expect(staged).not.toContain("another large widget model");
+  });
+
+  it("a later checkout in a registered checkout leaves the pointer, though the content is local", async () => {
+    const { skip, index, childEnv } = lfsFixture();
+    const git = (cwd: string, args: string[]) => execaGit(cwd, args, { env: childEnv });
+    expect(readFileSync(join(skip, "assets", "model.bin"), "utf8")).toMatch(/^version https:/);
+    expect(index.add(await absoluteGitDir(git, skip), { lfsAvailable: true })).toBe(true);
+    unlinkSync(join(skip, "assets", "model.bin"));
+    await git(skip, ["checkout", "--", "assets/model.bin"]);
+    const restored = readFileSync(join(skip, "assets", "model.bin"), "utf8");
+    expect(restored).toMatch(/^version https:\/\/git-lfs\.github\.com\/spec\/v1\n/);
+    expect(restored).not.toBe(LARGE);
+  });
+
+  it("the overrides follow Git LFS being installed: blank without it, LFS's own skip with it", () => {
+    const { index } = lfsFixture();
+    const overrides = join(dirname(index.indexPath), "skip-overrides.gitconfig");
+    index.setLfsAvailable(false);
+    expect(readFileSync(overrides, "utf8")).toContain("\tprocess =\n");
+    index.setLfsAvailable(true);
+    expect(readFileSync(overrides, "utf8")).toContain(
+      "\tprocess = git-lfs filter-process --skip\n",
+    );
+    expect(readFileSync(overrides, "utf8")).toContain("\trequired = true\n");
   });
 });

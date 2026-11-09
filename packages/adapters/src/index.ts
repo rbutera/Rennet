@@ -325,8 +325,13 @@ export {
 export { readKiroSpec, readKiroSpecSource, selectedKiroFeatureName } from "./kiro-spec-reader";
 export {
   absoluteGitDir,
+  isIndexablePath,
   LARGE_FILE_SKIP_CONFIG,
+  LARGE_FILE_SKIP_WITH_LFS_CONFIG,
+  LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE,
+  LARGE_FILES_NOT_REGISTERED_NOTE,
   LargeFileSkipIndex,
+  largeFileSkipConfig,
   largeFileSkipEnv,
   largeFileSkipIndexPath,
   largeFileSkipIndexText,

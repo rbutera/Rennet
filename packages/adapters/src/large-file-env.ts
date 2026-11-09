@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { GitExec } from "./git-range-diff";
 
@@ -25,17 +25,59 @@ import type { GitExec } from "./git-range-diff";
  * pointing at the overrides. Git reads the file on every invocation, so a checkout registered
  * after the sidecar started is covered at once, and a download-mode checkout matches nothing.
  *
- * `GIT_LFS_SKIP_SMUDGE=1` cannot be scoped to a directory, so it is NOT set here: with both
- * filter commands blanked git never starts `git-lfs` to smudge, which is what that variable
- * would have stopped. It stays on Rennet's own skip-mode checkout call, where it is per call.
+ * `GIT_LFS_SKIP_SMUDGE=1` cannot be scoped to a directory, so it is NOT set here. It stays on
+ * Rennet's own skip-mode checkout call, where it is per call.
+ *
+ * ⚠️ TWO FORMS, BY WHETHER GIT LFS IS INSTALLED. Skip mode means "do not DOWNLOAD", never "do
+ * not use Git LFS". A blank `filter.lfs.process` is not "unset" to git: git runs no filter at
+ * all, so a `git add` of an LFS-tracked file in that checkout stores the raw file instead of a
+ * pointer, and an agent's commit there puts the large file into history. So:
+ *
+ *   • Git LFS installed → LFS's OWN skip mode, the config `git lfs install --skip-smudge`
+ *     writes: `filter-process --skip` leaves pointers on checkout and still cleans on add,
+ *     and the filter stays required.
+ *   • Git LFS absent → blanking is the only way git can check anything out. A file changed
+ *     there is committed without Git LFS; the daemon says so on the session, and rewrites the
+ *     overrides to the first form once Git LFS is installed.
  */
 
-/** The three filter overrides skip mode applies, as `key=value` config entries. */
+/** Skip mode without Git LFS: both filter commands blanked and the filter not required. Git
+ *  runs nothing on checkout or on add. */
 export const LARGE_FILE_SKIP_CONFIG: readonly (readonly [string, string])[] = [
   ["filter.lfs.process", ""],
   ["filter.lfs.smudge", ""],
   ["filter.lfs.required", "false"],
 ];
+
+/** Skip mode WITH Git LFS: LFS's own `--skip` filter, which leaves pointers on checkout and
+ *  still turns an added large file into a pointer. Required, as `git lfs install` sets it. */
+export const LARGE_FILE_SKIP_WITH_LFS_CONFIG: readonly (readonly [string, string])[] = [
+  ["filter.lfs.process", "git-lfs filter-process --skip"],
+  ["filter.lfs.smudge", "git-lfs smudge --skip -- %f"],
+  ["filter.lfs.clean", "git-lfs clean -- %f"],
+  ["filter.lfs.required", "true"],
+];
+
+/** The skip-mode overrides for a host where Git LFS is (or is not) installed. */
+export function largeFileSkipConfig(lfsAvailable: boolean): readonly (readonly [string, string])[] {
+  return lfsAvailable ? LARGE_FILE_SKIP_WITH_LFS_CONFIG : LARGE_FILE_SKIP_CONFIG;
+}
+
+/**
+ * The note a session carries when its skip-mode checkout runs without Git LFS: the blank
+ * filter commits a changed large file as an ordinary file. Plain words, shown beside the
+ * review; dropped once Git LFS is installed.
+ */
+export const LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE =
+  "Git LFS isn't installed, so large files changed in this review are committed as ordinary files until you install it.";
+
+/**
+ * The note a session carries when its checkout could not be marked as skip mode, because its
+ * git directory's path holds a line break or another control character that git's config
+ * cannot hold. Plain words, shown beside the review.
+ */
+export const LARGE_FILES_NOT_REGISTERED_NOTE =
+  "Rennet couldn't mark this checkout to skip large files, because its folder path contains a line break or control character. Git commands run in it may try to download large files.";
 
 /**
  * `env` with `entries` appended as command-line git config, after any the environment
@@ -61,14 +103,18 @@ export function withGitConfigEnv<T extends Record<string, string | undefined>>(
 }
 
 /**
- * The environment a process needs for skip mode in ONE known checkout: the three filter
- * overrides plus `GIT_LFS_SKIP_SMUDGE=1`. For a process spawned for exactly one skip-mode
+ * The environment a process needs for skip mode in ONE known checkout: the filter overrides
+ * for whether Git LFS is installed, plus `GIT_LFS_SKIP_SMUDGE=1`. For a process spawned for exactly one skip-mode
  * checkout; a process shared across checkouts takes {@link withLargeFileSkipIndex} instead.
  */
 export function largeFileSkipEnv<T extends Record<string, string | undefined>>(
   env: T,
+  options: { readonly lfsAvailable?: boolean } = {},
 ): T & Record<string, string | undefined> {
-  return { ...withGitConfigEnv(env, LARGE_FILE_SKIP_CONFIG), GIT_LFS_SKIP_SMUDGE: "1" };
+  return {
+    ...withGitConfigEnv(env, largeFileSkipConfig(options.lfsAvailable === true)),
+    GIT_LFS_SKIP_SMUDGE: "1",
+  };
 }
 
 /** Where the daemon keeps the skip-mode index for `dataDir`. */
@@ -122,9 +168,26 @@ const INDEX_HEADER =
   "# Rennet's processes run in them leave large files as placeholders. Not your git config;\n" +
   "# Rennet's own processes read it through GIT_CONFIG_* in their environment.\n";
 
-/** The text of the overrides file every index section includes. */
-export function largeFileSkipOverridesText(): string {
-  return `${INDEX_HEADER}[filter "lfs"]\n\tprocess =\n\tsmudge =\n\trequired = false\n`;
+/** The text of the overrides file every index section includes, for whether Git LFS is
+ *  installed on this host. */
+export function largeFileSkipOverridesText(lfsAvailable = false): string {
+  const lines = largeFileSkipConfig(lfsAvailable).map(([key, value]) => {
+    const name = key.slice("filter.lfs.".length);
+    return value.length === 0 ? `\t${name} =` : `\t${name} = ${value}`;
+  });
+  return `${INDEX_HEADER}[filter "lfs"]\n${lines.join("\n")}\n`;
+}
+
+/**
+ * Whether `path` can be named in the index at all. Git's config grammar has no escape for a
+ * line break inside a subsection name, and a control character there is not something to
+ * gamble on: written anyway, one bad line makes the index unparseable, and because every
+ * daemon child includes the index, EVERY git command the daemon runs, in every repository,
+ * would then fail. So such a path is refused, never encoded.
+ */
+export function isIndexablePath(path: string): boolean {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: the control characters are the point.
+  return !/[\u0000-\u001f\u007f]/.test(path);
 }
 
 /** The text of an index naming `gitDirs`, each including `overridesPath`. */
@@ -160,8 +223,9 @@ function writeAtomically(path: string, text: string): void {
  * The daemon's register of skip-mode checkouts, kept as the index file git includes.
  *
  * The file IS the store: it survives a daemon restart, so a checkout registered before the
- * restart stays covered with nothing to rebuild. Registering is idempotent, and only a
- * project's mode change (or the checkout's removal) unregisters.
+ * restart stays covered with nothing to rebuild. An entry is the mode the checkout was
+ * CREATED under and lasts as long as the checkout: registering is idempotent, a checkout
+ * Rennet re-creates under download mode unregisters, and a removed checkout is pruned.
  */
 export class LargeFileSkipIndex {
   readonly #indexPath: string;
@@ -189,15 +253,36 @@ export class LargeFileSkipIndex {
     return this.gitDirs().includes(gitDir);
   }
 
-  /** Register a checkout's git dir. Writes the overrides file too, so the include resolves. */
-  add(gitDir: string): void {
+  /**
+   * Register a checkout's git dir. Writes the overrides file too, so the include resolves, in
+   * the form for whether Git LFS is installed on this host (see the module note).
+   *
+   * Answers `false`, writing nothing, for a path the index cannot hold
+   * ({@link isIndexablePath}): the caller treats that checkout as unregistered.
+   */
+  add(gitDir: string, options: { readonly lfsAvailable: boolean }): boolean {
+    if (!isIndexablePath(gitDir)) return false;
     const current = this.gitDirs();
-    writeAtomically(this.#overridesPath, largeFileSkipOverridesText());
-    if (current.includes(gitDir)) return;
+    this.setLfsAvailable(options.lfsAvailable);
+    if (current.includes(gitDir)) return true;
     writeAtomically(
       this.#indexPath,
       largeFileSkipIndexText([...current, gitDir], this.#overridesPath),
     );
+    return true;
+  }
+
+  /** Rewrite the overrides for whether Git LFS is installed now: once it is, every registered
+   *  checkout cleans large files on add again. */
+  setLfsAvailable(lfsAvailable: boolean): void {
+    const text = largeFileSkipOverridesText(lfsAvailable);
+    let current: string | undefined;
+    try {
+      current = readFileSync(this.#overridesPath, "utf8");
+    } catch {
+      current = undefined;
+    }
+    if (current !== text) writeAtomically(this.#overridesPath, text);
   }
 
   /** Unregister every git dir `drop` selects. */
@@ -206,6 +291,17 @@ export class LargeFileSkipIndex {
     const kept = current.filter((gitDir) => !drop(gitDir));
     if (kept.length === current.length) return;
     writeAtomically(this.#indexPath, largeFileSkipIndexText(kept, this.#overridesPath));
+  }
+
+  /**
+   * Unregister every git dir that no longer exists. A removed worktree's git dir is deleted
+   * with it, and git REUSES the name (`.git/worktrees/<name>`) for the next worktree added
+   * under it — so an entry left behind would silently put a later checkout, perhaps one that
+   * is not Rennet's at all, into skip mode. While the directory exists git cannot hand its
+   * name to anyone else, so existence is exactly the right test.
+   */
+  prune(exists: (path: string) => boolean = existsSync): void {
+    this.remove((gitDir) => !exists(gitDir));
   }
 }
 
