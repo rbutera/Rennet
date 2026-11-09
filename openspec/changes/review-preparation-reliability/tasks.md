@@ -2,25 +2,25 @@
 
 ## 1. Wave 1: Daemon environment, tool probes, checkout modes (adapters/core/desktop)
 
-- [ ] 1.1 Add a `resolveUserPath()` module.
+- [x] 1.1 Add a `resolveUserPath()` module.
   - Login shell `-ilc` with start/end markers and a 5 s timeout; fallback to `launchctl getenv PATH` on macOS.
   - Union with the inherited PATH plus `/opt/homebrew/bin`, `/opt/homebrew/sbin`, `/usr/local/bin`, keeping order and removing duplicates.
   - Verify with unit tests: banner noise is ignored, timeout falls back, launchctl fallback works, dedupe and order hold.
-- [ ] 1.2 Call it in `packages/server/src/daemon-main.ts` before `runDaemon`, assigning `process.env.PATH`.
+- [x] 1.2 Call it in `packages/server/src/daemon-main.ts` before `runDaemon`, assigning `process.env.PATH`.
   - Update `apps/desktop/src/main/daemon-supervisor.test.ts:480-502` to the new contract.
   - Verify: a daemon test spawned with `PATH=/usr/bin:/bin` resolves a stub tool placed in a curated directory.
-- [ ] 1.3 Point the harness and forge discovery login-shell harvests at the shared resolver.
+- [x] 1.3 Point the harness and forge discovery login-shell harvests at the shared resolver.
   - Verify: `harness-discovery.test.ts` and `forge-discovery.test.ts` pass.
-- [ ] 1.4 Confirm the version-skew restart replaces an older daemon (compare build version, not only protocol).
+- [x] 1.4 Confirm the version-skew restart replaces an older daemon (compare build version, not only protocol).
   - Verify: a supervisor test where a running daemon reports an older version is restarted.
-- [ ] 1.5 Add `git` and `git-lfs` probes (version + health), reusing detection states, plus a `repoUsesLfs(root)` helper that reads `.gitattributes` for `filter=lfs`.
+- [x] 1.5 Add `git` and `git-lfs` probes (version + health), reusing detection states, plus a `repoUsesLfs(root)` helper that reads `.gitattributes` for `filter=lfs`.
   - Verify with unit tests: present, absent, unaskable, LFS detection true/false.
-- [ ] 1.6 Add `classifyGitFailure(error)` returning `{kind, tool?, message, action, detail}` for tool-missing, large-file, auth, ref-gone and unknown.
+- [x] 1.6 Add `classifyGitFailure(error)` returning `{kind, tool?, message, action, detail}` for tool-missing, large-file, auth, ref-gone and unknown.
   - Verify with table-driven tests using real stderr samples, including the observed `git-lfs filter-process --skip: git-lfs: command not found`.
-- [ ] 1.7 Add a `largeFiles: "download" | "skip"` option to `ensurePrWorktree` and the branch/sibling worktree adds.
+- [x] 1.7 Add a `largeFiles: "download" | "skip"` option to `ensurePrWorktree` and the branch/sibling worktree adds.
   - Skip passes `-c filter.lfs.process= -c filter.lfs.smudge= -c filter.lfs.required=false` and `GIT_LFS_SKIP_SMUDGE=1`.
   - Verify with an integration test on a temp repo with an LFS attribute, `filter.lfs.required=true` and no `git-lfs` on PATH: skip succeeds with pointer files; download fails and is classified tool-missing.
-- [ ] 1.8 Add an install-plan resolver and runner for `git-lfs` and `git`.
+- [x] 1.8 Add an install-plan resolver and runner for `git-lfs` and `git`.
   - macOS + brew: `brew install git-lfs` then `git lfs install`.
   - Otherwise: `{plan:"manual", command, docsUrl}`.
   - Streams output and re-probes after.
