@@ -2210,6 +2210,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     readonly result: Promise<CommandOutput<"tools.install">["result"]>;
   }
   const toolInstallRuns = new Map<string, ToolInstallRun>();
+  /** Install retries waiting for a cancelled run to die, by their command id. */
+  const pendingInstallRetries = new Map<string, AbortController>();
   const TOOL_INSTALL_REPLAY_CAP = 64_000;
   let toolInstallsClosed = false;
   const toolInstallKey = (tool: SourceControlToolId, locus: Locus): string =>
@@ -2247,10 +2249,17 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // Wait for it to end, then start a fresh one — joining any fresh run another caller
     // started meanwhile, since this calls back in.
     if (running?.controller.signal.aborted === true && !toolInstallsClosed) {
+      // The retry is registered while it waits, so cancelling it (by its own command id) is
+      // honoured before any new installer starts; it then answers with the dying run's
+      // cancelled result rather than installing anyway.
+      const waiter = new AbortController();
+      pendingInstallRetries.set(input.commandId, waiter);
       return running.result
         .catch(() => undefined)
-        .then(() => {
+        .then((dyingResult) => {
+          pendingInstallRetries.delete(input.commandId);
           if (toolInstallRuns.get(key) === running) toolInstallRuns.delete(key);
+          if (waiter.signal.aborted && dyingResult !== undefined) return dyingResult;
           return installSourceControlTool(input);
         });
     }
@@ -2359,6 +2368,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   /** Stop the `tools.install` run `commandId` names (any command that started or joined it);
    *  `false` when none is running. */
   function cancelSourceControlInstall(commandId: string): boolean {
+    const waiting = pendingInstallRetries.get(commandId);
+    if (waiting !== undefined) {
+      waiting.abort("Cancelled by reviewer.");
+      return true;
+    }
     for (const run of toolInstallRuns.values()) {
       if (!run.commandIds.has(commandId)) continue;
       run.controller.abort("Cancelled by reviewer.");

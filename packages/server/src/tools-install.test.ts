@@ -298,6 +298,41 @@ describe("tools.install (Install for me)", () => {
     30_000,
   );
 
+  it.skipIf(process.platform === "win32")(
+    "cancelling the fresh install while it waits for the cancelled one to die starts nothing",
+    async () => {
+      const { server, bin } = await installer(
+        `trap "" TERM; ${SLEEPING_BREW.replace("sleep 2", "sleep 3")}`,
+        "exit 0",
+      );
+      const install = (commandId: string) =>
+        server.dispatch("tools.install", {
+          tool: "git-lfs",
+          locus: { kind: "host" },
+          commandId,
+        }) as Promise<CommandOutput<"tools.install">>;
+      const first = randomUUID();
+      const cancelled = install(first);
+      // Let the first brew start before cancelling it.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(await server.dispatch("tools.cancelInstall", { commandId: first })).toEqual({
+        cancelled: true,
+      });
+      // The retry queues behind the dying run; cancelling it must be honoured while it waits.
+      const again = randomUUID();
+      const queued = install(again);
+      expect(await server.dispatch("tools.cancelInstall", { commandId: again })).toEqual({
+        cancelled: true,
+      });
+      const { result } = await queued;
+      expect((await cancelled).result).toMatchObject({ status: "failed", cancelled: true });
+      expect(result).toMatchObject({ status: "failed", cancelled: true });
+      // Only the first, cancelled brew ever ran.
+      expect(runsOf(bin)).toBe(1);
+    },
+    30_000,
+  );
+
   it("tools.cancelInstall says false when nothing by that id is running", async () => {
     const { server } = await installer("exit 0", "exit 0");
     expect(await server.dispatch("tools.cancelInstall", { commandId: randomUUID() })).toEqual({
