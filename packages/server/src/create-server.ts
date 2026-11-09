@@ -1290,8 +1290,17 @@ export class ClassifiedWorkspaceError extends Error {
  * answer (`session.chooseLargeFileMode`, or the setting) lets the next bind proceed.
  */
 export class LargeFileChoicePendingError extends Error {
-  constructor() {
-    super("This review is waiting for you to choose whether to download or skip large files.");
+  /**
+   * `inSession`: whether a session's preparation owns the review. Only a preparation can put
+   * the question to the reviewer, so a review opened outside one (`review.openPr`, a capture
+   * with no session) is pointed at the setting that answers it instead.
+   */
+  constructor(inSession = true) {
+    super(
+      inSession
+        ? "This review is waiting for you to choose whether to download or skip large files."
+        : "Choose whether to download or skip large files for this project in Settings → Projects.",
+    );
     this.name = "LargeFileChoicePendingError";
   }
 }
@@ -2994,7 +3003,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     // THE LARGE-FILE QUESTION IS NOT THE BIND'S TO ANSWER. While it is open, no path —
     // the preparation included — creates a checkout: the preparation turns this refusal into
     // its `awaiting` state, and every other path reports it in plain words.
-    if (await largeFileAnswerOwed(review, workspaceDeps)) throw new LargeFileChoicePendingError();
+    if (await largeFileAnswerOwed(review, workspaceDeps)) {
+      // Only a session's PREPARATION can ask. A review opened outside one (`review.openPr`,
+      // a capture) has, at most, the bare session its open minted, with no preparation.
+      throw new LargeFileChoicePendingError(
+        sessionStore.load(sessionId)?.preparation !== undefined,
+      );
+    }
     // THE FRONT DOOR AND THE BIND AGREE (2.5). A checkout the front door already tried and
     // could not create fails the same way here, classified, instead of being repeated blind —
     // unless the large-file mode changed since (the reviewer's answer is the reason to try

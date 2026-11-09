@@ -431,6 +431,8 @@ the repository rung and resumes it. With `remember: false` it records the answer
 on that session only, and the project's question stays open. While the question
 is open nothing checks the review out: a chat thread or a handoff reports that
 the review is waiting for the choice, and a transcript read names the repository.
+A review opened outside a session's preparation (`review.openPr`, for one) has
+nothing that can ask, so the same refusal points at Settings → Projects instead.
 Writing `ask` is a reset: the entry is dropped and the next checkout asks again.
 
 A session can also carry its own mode (`session.mint`'s `largeFiles`, which

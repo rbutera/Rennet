@@ -427,6 +427,26 @@ describe("the workspace stage of a Git LFS pull request (review-preparation-reli
     await server.dispatch("session.cancelPreparation", { sessionId });
   }, 60_000);
 
+  it("a pull request opened outside a session points at Settings, since nothing there can ask", async () => {
+    const fixture = lfsRepository();
+    const { server } = await serverFor(fixture);
+    fixture.installGitLfs();
+    const opened = (await server.dispatch("review.openPr", {
+      commandId: randomUUID(),
+      ref: "acme/widget#7",
+      repoPath: fixture.repo,
+    })) as { review: { id: string } };
+    const sent = (await server.dispatch("chat.t3Send", {
+      reviewId: opened.review.id,
+      text: "What changed?",
+    })) as { status: string; reason?: string };
+    expect(sent).toEqual({
+      status: "unavailable",
+      reason:
+        "Choose whether to download or skip large files for this project in Settings → Projects.",
+    });
+  }, 60_000);
+
   it("while the question is open, a transcript read or a chat thread checks nothing out", async () => {
     const fixture = lfsRepository();
     const { server, mint, waitFor } = await serverFor(fixture);
