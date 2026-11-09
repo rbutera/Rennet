@@ -5671,6 +5671,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     preparationIsCurrent(sessionId, controller)
       ? sessionStore.setPreparation(sessionId, preparation)
       : sessionStore.load(sessionId);
+  /**
+   * The stage each running preparation is in, by its controller. The durable record cannot say
+   * it: the workspace stage runs under `capturing` (a fresh run) or `drafting` (a resumed
+   * one), so a cancel that read the stage off the record called a cancelled checkout a
+   * cancelled capture, or a cancelled board.
+   */
+  const preparationStages = new WeakMap<AbortController, "capture" | "workspace" | "boards">();
 
   async function runSessionPreparation(
     sessionId: string,
@@ -5679,6 +5686,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   ): Promise<void> {
     let stage: "capture" | "workspace" | "boards" =
       request.reviewId === undefined ? "capture" : "boards";
+    preparationStages.set(controller, stage);
     let review: Review | null =
       request.reviewId === undefined ? null : service.reviewById(request.reviewId);
     let lanes = initialPreparationLanes();
@@ -5768,19 +5776,23 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // `workspace`, rather than binding the session to the clone: retrying the preparation
       // retries the bind, and every later use binds lazily through `holdingReviewContext`.
       stage = "workspace";
+      preparationStages.set(controller, stage);
       const workspace = await prepareWorkspace(sessionId, review, controller);
       if (workspace === "awaiting") return;
       if (controller.signal.aborted) {
-        sessionStore.setPreparation(sessionId, {
+        // Through the current-run guard like every other write of this run: an abort is a
+        // cancel (which recorded its own `cancelled`) or a newer run taking over (whose state
+        // this must not overwrite). Either way the record is not this run's to write now.
+        setCurrentPreparation(sessionId, controller, {
           status: "cancelled",
           stage: "workspace",
           reviewId: review.id,
-          lanes,
         });
         return;
       }
       const draftingReview = review;
       stage = "boards";
+      preparationStages.set(controller, stage);
       setCurrentPreparation(sessionId, controller, {
         status: "drafting",
         reviewId: draftingReview.id,
@@ -5939,12 +5951,19 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     ) {
       return session;
     }
-    sessionPreparations.get(sessionId)?.abort("Cancelled by reviewer.");
+    const controller = sessionPreparations.get(sessionId);
+    // The stage the RUN is in, which the record cannot say: a checkout being created runs
+    // under `capturing` or `drafting`, and cancelling it is cancelling the workspace stage.
+    const running = controller === undefined ? undefined : preparationStages.get(controller);
+    controller?.abort("Cancelled by reviewer.");
+    const stage = running ?? (preparation.status === "capturing" ? "capture" : "boards");
+    const reviewId = preparation.status === "drafting" ? preparation.reviewId : session.reviewId;
     return sessionStore.setPreparation(sessionId, {
       status: "cancelled",
-      stage: preparation.status === "capturing" ? "capture" : "boards",
-      ...(preparation.status === "drafting"
-        ? { reviewId: preparation.reviewId, lanes: preparation.lanes }
+      stage,
+      ...(reviewId === undefined ? {} : { reviewId }),
+      ...(stage === "boards" && preparation.status === "drafting"
+        ? { lanes: preparation.lanes }
         : {}),
     });
   }
@@ -5980,14 +5999,34 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     }
     await settingsComposition.writeLargeFiles(repoRoot, mode);
     if (reviewId !== undefined) clearFrontDoorFailure(reviewId);
-    if (
-      preparation?.status === "awaiting" ||
-      preparation?.status === "failed" ||
-      preparation?.status === "cancelled"
-    ) {
-      return retrySessionPreparation(sessionId, commandId);
-    }
-    return sessionStore.load(sessionId);
+    return resumeStoppedPreparation(sessionId, commandId);
+  }
+
+  /**
+   * Resume a preparation that STOPPED — `awaiting`, `failed` or `cancelled` — and nothing
+   * else, decided at the moment of acting rather than from a read taken before an await. A
+   * preparation that is running (the answer arrived twice, or after another resume) is left
+   * alone, and so is a session whose preparation finished: an answer never sends a settled
+   * review back to drafting. A cancelled run still winding down is waited for first.
+   */
+  async function resumeStoppedPreparation(
+    sessionId: string,
+    commandId: string,
+  ): Promise<SessionModel | undefined> {
+    const isRunning = (): boolean => {
+      const controller = sessionPreparations.get(sessionId);
+      return controller !== undefined && !controller.signal.aborted;
+    };
+    if (isRunning()) return sessionStore.load(sessionId);
+    await sessionPreparationRuns.get(sessionId)?.catch(() => undefined);
+    // Re-read after the wait, and begin in the same synchronous run as the read: two answers
+    // racing here see each other's run, never each other's stale record.
+    if (isRunning()) return sessionStore.load(sessionId);
+    const session = sessionStore.load(sessionId);
+    if (session === undefined) return undefined;
+    const status = session.preparation?.status;
+    if (status !== "awaiting" && status !== "failed" && status !== "cancelled") return session;
+    return beginSessionPreparation(session, preparationRequestFor(session, commandId));
   }
 
   async function retrySessionPreparation(
@@ -5999,11 +6038,18 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     if (session === undefined) return undefined;
     const preparation = session.preparation;
     if (preparation?.status === "capturing" || preparation?.status === "drafting") return session;
+    return beginSessionPreparation(session, preparationRequestFor(session, commandId));
+  }
+
+  /** The request that runs a session's preparation again: its claim, and the review it
+   *  already captured, when it has one. */
+  function preparationRequestFor(session: SessionModel, commandId: string): PreparationRequest {
+    const preparation = session.preparation;
     const retryReviewId =
       preparation !== undefined && "reviewId" in preparation
         ? preparation.reviewId
         : session.reviewId;
-    return beginSessionPreparation(session, {
+    return {
       projectId: session.projectId,
       commandId,
       ...(session.claim === undefined
@@ -6018,7 +6064,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
             },
           }),
       ...(retryReviewId === undefined ? {} : { reviewId: retryReviewId }),
-    });
+    };
   }
 
   const readLensBoardForReview = async (reviewId: string, generation: string, lens: LensKind) => {

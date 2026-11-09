@@ -696,3 +696,91 @@ describe("Install for me while a skip-mode checkout runs without Git LFS", () =>
     60_000,
   );
 });
+
+/**
+ * Cancelling and answering around the workspace stage (review finding 8): a cancel records
+ * the stage that was actually cancelled, and two answers in quick succession run ONE
+ * preparation, neither waiting on the other's drafting nor overwriting it.
+ */
+describe("cancel and answer around the workspace stage", () => {
+  it("cancelling while the question is open records the workspace stage", async () => {
+    const fixture = lfsRepository();
+    const { server, mint, waitFor } = await serverFor(fixture);
+    const sessionId = await mint();
+    const asked = await waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("awaiting"),
+    );
+    const cancelled = (await server.dispatch("session.cancelPreparation", { sessionId })) as {
+      session: Session | null;
+    };
+    expect(cancelled.session?.preparation).toEqual({
+      status: "cancelled",
+      stage: "workspace",
+      reviewId: asked.reviewId,
+    });
+  }, 60_000);
+
+  it("cancelling while the checkout is being created records the workspace stage", async () => {
+    const fixture = lfsRepository();
+    // A filter that runs, slowly: the checkout the answer starts takes a few seconds.
+    fixture.git("config", "--unset", "filter.lfs.process");
+    fixture.git("config", "filter.lfs.smudge", "sleep 3; cat");
+    const { server, mint, waitFor } = await serverFor(fixture);
+    const sessionId = await mint();
+    const asked = await waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("awaiting"),
+    );
+    // The answer resumes preparation, which binds — creating the checkout under the filter.
+    await server.dispatch("session.chooseLargeFileMode", { sessionId, mode: "download" });
+    const worktreeAdded = () =>
+      fixture
+        .git("worktree", "list", "--porcelain")
+        .split("\n")
+        .filter((line) => line.startsWith("worktree ")).length > 1;
+    await vi.waitFor(() => expect(worktreeAdded()).toBe(true), { timeout: 20_000, interval: 25 });
+    const cancelled = (await server.dispatch("session.cancelPreparation", { sessionId })) as {
+      session: Session | null;
+    };
+    expect(cancelled.session?.preparation).toEqual({
+      status: "cancelled",
+      stage: "workspace",
+      reviewId: asked.reviewId,
+    });
+    // The cancelled run winds down when its checkout finishes, and leaves the record alone.
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
+    const after = await waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("cancelled"),
+    );
+    expect(after.preparation).toEqual(cancelled.session?.preparation);
+  }, 60_000);
+
+  it("two quick answers run one preparation, and neither waits on its drafting", async () => {
+    const fixture = lfsRepository();
+    const { server, mint, waitFor } = await serverFor(fixture);
+    const sessionId = await mint();
+    await waitFor(sessionId, (session) => expect(session?.preparation?.status).toBe("awaiting"));
+    const answer = () =>
+      server.dispatch("session.chooseLargeFileMode", {
+        sessionId,
+        mode: "skip",
+      }) as Promise<{ session: Session | null }>;
+    // Drafting is held for a minute (the fixture's board delay). Both answers must come back
+    // long before that: the second one sees the first one's run and leaves it alone.
+    const both = await Promise.race([
+      Promise.all([answer(), answer()]),
+      new Promise<"stuck">((resolve) => setTimeout(() => resolve("stuck"), 15_000)),
+    ]);
+    expect(both).not.toBe("stuck");
+    // One run, bound once: the checkout the answer created, and drafting held after it.
+    const store = new SessionStore(join(fixture.dataDir, "sessions"));
+    await vi.waitFor(() => expect(store.load(sessionId)?.boundRoot).toBeDefined(), {
+      timeout: 20_000,
+      interval: 25,
+    });
+    const drafting = await waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("drafting"),
+    );
+    expect(drafting.preparation?.status).toBe("drafting");
+    await server.dispatch("session.cancelPreparation", { sessionId });
+  }, 60_000);
+});
