@@ -23,7 +23,7 @@ See proposal.md for the motivation. The facts the approach rests on:
 
 **Non-Goals:**
 - Windows or WSL installers. The install runner reports "manual" there.
-- Changing the user's global git config.
+- Changing the user's global git config implicitly. Checkouts never write it: skip mode uses per-call overrides. The only change is the one the user asks for: **Install for me** for Git LFS runs `git lfs install`, which sets up the LFS filter in the global config.
 - Hydrating LFS files in a checkout that was created in skip mode. Changing the mode applies to the next checkout.
 - Reworking the drafting-stage lens presences. They already animate per seat.
 
