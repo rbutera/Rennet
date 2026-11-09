@@ -171,6 +171,9 @@ export async function readLoginShellPath(
 ): Promise<string | null> {
   if (deps.platform === "win32") return null;
   for (const shell of listLoginShells(deps.platform, deps.env.SHELL, deps.userShell())) {
+    // csh and tcsh reject `-ilc` (`Unknown option: -lc`: `-l` must be their only flag), so
+    // they print no markers. That is not fatal: the loop moves on to the account's shell
+    // and then the platform default (`/bin/zsh` on macOS, `/bin/sh` elsewhere).
     const result = await deps.run(
       shell,
       ["-ilc", LOGIN_SHELL_PATH_COMMAND],
