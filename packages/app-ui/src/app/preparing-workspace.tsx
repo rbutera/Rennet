@@ -3,7 +3,7 @@ import { useSearch } from "wouter";
 import { LensBoardView } from "../board";
 import { WorkspaceHeader } from "../board/workspace-header";
 import { presenceShows, usePreparationPhase } from "../preparation/preparation-phase";
-import { PreparationPresence } from "../preparation/preparation-presence";
+import { PreparationPresence, PresenceScope } from "../preparation/preparation-presence";
 import { readSessionQuery } from "../routes/url";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -30,17 +30,19 @@ export function PreparingWorkspace({ slug }: { readonly slug: string }) {
   const phase = usePreparationPhase(slug);
   const stopped = phase === "failed" || phase === "cancelled";
   return (
-    <div className="rennet-workspace relative flex h-full min-h-0 flex-col">
-      <WorkspaceHeader slug={slug} />
-      <div data-region="board" className="flex min-h-0 flex-1 @container">
-        <div className="chrome-scroll-clearance min-h-0 min-w-0 flex-1 overflow-y-auto">
-          {presenceShows(phase) ? (
-            <PreparationPresence slug={slug} />
-          ) : stopped ? null : (
-            <LensBoardView slug={slug} reviewId="" generation="" lens={lens} />
-          )}
+    <PresenceScope>
+      <div className="rennet-workspace relative flex h-full min-h-0 flex-col">
+        <WorkspaceHeader slug={slug} />
+        <div data-region="board" className="flex min-h-0 flex-1 @container">
+          <div className="chrome-scroll-clearance min-h-0 min-w-0 flex-1 overflow-y-auto">
+            {presenceShows(phase) ? (
+              <PreparationPresence slug={slug} />
+            ) : stopped ? null : (
+              <LensBoardView slug={slug} reviewId="" generation="" lens={lens} />
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </PresenceScope>
   );
 }

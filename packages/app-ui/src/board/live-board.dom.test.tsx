@@ -253,10 +253,12 @@ describe("the review opens on its boards, with no waiting stage in front of them
       // A presence, not a register: no tab claims a working seat.
       expect(tabs[index]?.getAttribute("data-register")).not.toBe("working");
     }
-    // Cancel is INLINE, inside the presence, not a chip floating over an empty column.
+    // Cancel is INLINE, inside the presence, not a chip floating over an empty column — and
+    // it is the only one.
     const cancel = presence.querySelector('[data-testid="preparation-cancel"]');
     if (!cancel) throw new Error("a running capture offers no way to cancel it");
     expect(cancel.textContent).toBe("Cancel");
+    expect(document.querySelectorAll('[data-testid="preparation-cancel"]')).toHaveLength(1);
     // The internal-state copy the reviewer used to meet here, and any step name, are gone.
     const text = document.body.textContent ?? "";
     expect(text).not.toContain("No board for this generation yet.");
@@ -313,6 +315,26 @@ describe("the review opens on its boards, with no waiting stage in front of them
     expect(cancel.className).toContain("right-6");
     expect(cancel.className).toContain("bottom-6");
     expect(cancel.className).not.toContain("top-16");
+  });
+
+  it("floats Cancel when the presence is not on screen, so a waiting run always has one", async () => {
+    // A retried run waits with its lanes queued over boards an earlier attempt drafted: the
+    // board area shows that board, not the presence, so there is no inline Cancel. The
+    // header floats the chip instead — one Cancel, never none and never two.
+    const queued = DRAFTING.map((lane) => ({ id: lane.id, label: lane.label, status: "queued" }));
+    const live = liveBridge({
+      preparation: { status: "drafting", reviewId: REVIEW.id, lanes: queued as LensLane[] },
+      boards: { sequence: at(FIXTURE_BOARDS.gen1?.sequence) },
+    });
+    open(live, "?lens=sequence");
+    await waitFor(() => expect(document.querySelector("article[data-lens=sequence]")).toBeTruthy());
+    expect(document.querySelector('[data-kind="preparation-presence"]')).toBeNull();
+    await waitFor(() =>
+      expect(document.querySelectorAll('[data-testid="preparation-cancel"]')).toHaveLength(1),
+    );
+    expect(
+      document.querySelector('[data-testid="preparation-cancel"]')?.getAttribute("aria-label"),
+    ).toBe("Cancel board generation");
   });
 
   it("lists all five lenses from the first frame, each carrying its seat's state", async () => {

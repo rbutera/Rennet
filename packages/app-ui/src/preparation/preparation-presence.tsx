@@ -1,4 +1,5 @@
 import { Button, cn } from "@rennet/ui";
+import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
 import { useCommand, useMutation } from "../data";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -22,6 +23,28 @@ import { useCommand, useMutation } from "../data";
 // Reduced motion: the sweep removes itself (`motion-reduce:hidden`) and the skeleton
 // stands still. It still reads as a board being laid out, not as an empty page.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Whether the presence is on screen in this workspace, so the header knows if a running
+ * preparation already has its Cancel. The presence renders only where there is no board to
+ * show — on the board view, before any board exists — so a waiting run viewed on the diff,
+ * or over boards an earlier attempt drafted, has no inline Cancel and the header floats one
+ * instead. One Cancel, always: never none, never two.
+ */
+const PresenceShown = createContext<{
+  readonly shown: boolean;
+  readonly setShown: (shown: boolean) => void;
+} | null>(null);
+
+export function PresenceScope({ children }: { readonly children: ReactNode }) {
+  const [shown, setShown] = useState(false);
+  return <PresenceShown.Provider value={{ shown, setShown }}>{children}</PresenceShown.Provider>;
+}
+
+/** True while a `PreparationPresence` — and so its inline Cancel — is mounted in scope. */
+export function usePresenceShown(): boolean {
+  return useContext(PresenceShown)?.shown ?? false;
+}
 
 /** The skeleton's section cards, as widths of their two lines. Fixed rather than random so
  *  the frame is identical on every render and in every screenshot. */
@@ -60,6 +83,11 @@ export function PreparationPresence({
   const { data } = useCommand("session.list", {}, { enabled: slug.length > 0 });
   const session = data?.sessions.find((candidate) => candidate.id === slug);
   const cancel = useMutation("session.cancelPreparation", { invalidates: ["session.list"] });
+  const setShown = useContext(PresenceShown)?.setShown;
+  useEffect(() => {
+    setShown?.(true);
+    return () => setShown?.(false);
+  }, [setShown]);
 
   return (
     <section

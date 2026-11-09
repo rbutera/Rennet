@@ -5,6 +5,7 @@ import { useCommand, useMutation, useRefreshCommand } from "../data";
 import { LargeFileChoice } from "../preparation/large-file-choice";
 import { PreparationFailure } from "../preparation/preparation-failure";
 import { preparationPhase } from "../preparation/preparation-phase";
+import { usePresenceShown } from "../preparation/preparation-presence";
 import { useProjectLocus } from "../preparation/session-locus";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -55,6 +56,7 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
   const refreshSessions = useRefreshCommand("session.list");
   const cancel = useMutation("session.cancelPreparation", { invalidates: ["session.list"] });
   const phase = preparationPhase(preparation);
+  const presenceShown = usePresenceShown();
   // Still going: the poll is what moves the rail, the presence and the seats. `choosing` is
   // polled too, so an answer given from another window resumes this one.
   const active = phase === "waiting" || phase === "choosing" || phase === "drafting";
@@ -69,14 +71,34 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
   // what is happening TO them.
   if (preparation === undefined || session === undefined) return null;
 
-  // WAITING: nothing here. The board area is the preparation presence, and its Cancel sits
-  // inline under the skeleton (review-preparation-reliability D6) — a second, floating Cancel
-  // over a board that is itself a waiting presence would be two ways to say one thing.
-  if (phase === "waiting") return null;
+  // The floating chip, for a run that is still going (see DRAFTING below for its corner).
+  const floatingCancel = (
+    <button
+      type="button"
+      data-testid="preparation-cancel"
+      aria-label="Cancel board generation"
+      disabled={cancel.pending}
+      onClick={() => void cancel.mutate({ sessionId: session.id })}
+      className="app-region-no-drag absolute right-6 bottom-6 z-40 flex h-8 items-center rounded-full border border-line/60 bg-surface/70 px-3 font-medium text-ink-soft text-sm backdrop-blur-md transition-colors hover:text-ink disabled:opacity-60"
+    >
+      Cancel
+    </button>
+  );
+
+  // WAITING: the board area is the preparation presence, and its Cancel sits inline under
+  // the skeleton (review-preparation-reliability D6) — a second, floating Cancel over a board
+  // that is itself a waiting presence would be two ways to say one thing. Where the presence
+  // is NOT on screen (the diff view, or boards an earlier attempt drafted) the chip floats.
+  if (phase === "waiting") return presenceShown ? null : floatingCancel;
 
   // CHOOSING: the large-file question, over the presence that keeps animating behind it.
   if (preparation.status === "awaiting") {
-    return <AwaitingChoice session={session} lfsAvailable={preparation.lfsAvailable} />;
+    return (
+      <>
+        <AwaitingChoice session={session} lfsAvailable={preparation.lfsAvailable} />
+        {presenceShown ? null : floatingCancel}
+      </>
+    );
   }
 
   // STOPPED: one block that says what happened and what to do (task 3.3), in place of the
@@ -96,18 +118,7 @@ export function WorkspaceHeader({ slug }: { readonly slug: string }) {
   // the outlet, and the outlet — not the window — is what the dock sits beside.
   // `app-region-no-drag` is explicit: a control that does not opt out of a drag region
   // never receives its own clicks.
-  return (
-    <button
-      type="button"
-      data-testid="preparation-cancel"
-      aria-label="Cancel board generation"
-      disabled={cancel.pending}
-      onClick={() => void cancel.mutate({ sessionId: session.id })}
-      className="app-region-no-drag absolute right-6 bottom-6 z-40 flex h-8 items-center rounded-full border border-line/60 bg-surface/70 px-3 font-medium text-ink-soft text-sm backdrop-blur-md transition-colors hover:text-ink disabled:opacity-60"
-    >
-      Cancel
-    </button>
-  );
+  return floatingCancel;
 }
 
 /**
