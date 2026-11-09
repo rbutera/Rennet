@@ -646,7 +646,10 @@ export {
   repoUsesLfs,
   type SourceControlDetectionDeps,
   type SourceControlToolStatus,
+  sourceControlDetectionDepsFor,
   type ToolVersionProbe,
+  type WslDiscoveryEffects,
+  wslSourceControlDetectionDeps,
 } from "./source-control-discovery";
 export { SqliteReviewStore } from "./sqlite-review-store";
 export {

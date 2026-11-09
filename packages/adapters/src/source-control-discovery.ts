@@ -5,6 +5,7 @@ import { execa } from "execa";
 import { defaultForgeDetectionDeps, type ForgeDetectionDeps } from "./forge-discovery";
 import type { SourceControlToolId } from "./git-failure";
 import type { GitExec } from "./git-range-diff";
+import { type DiscoveryDeps, wslDiscoveryDeps } from "./harness-discovery";
 
 /**
  * Source-control tool detection: `git` and `git-lfs` (review-preparation-reliability,
@@ -21,6 +22,9 @@ import type { GitExec } from "./git-range-diff";
  * checkout hits it, so detection reports it as unreachable with its path. It does not
  * skip to a later, working `git` that no checkout would ever run. `git-lfs` follows the
  * same rule, because git finds `git lfs` on the PATH the same way.
+ *
+ * Probes run per execution locus: `defaultSourceControlDetectionDeps` for the host,
+ * `wslSourceControlDetectionDeps` for a WSL distro, chosen by `sourceControlDetectionDepsFor`.
  *
  * The states are the detection row's own (`available`, `not-installed`, `unreachable`),
  * so Settings and the first-run tools stage render these rows with no new vocabulary:
@@ -423,6 +427,46 @@ export function defaultSourceControlDetectionDeps(
     },
     ...locusProbes({ kind: "host" }, run),
   };
+}
+
+/** The distro-side filesystem and PATH effects a WSL detection pass reads. */
+export type WslDiscoveryEffects = Pick<
+  DiscoveryDeps,
+  "loginShellPath" | "envPath" | "home" | "listDir" | "isExecutable" | "platform" | "pathExt"
+>;
+
+/**
+ * Source-control detection effects for a WSL DISTRO: the distro's own PATH, filesystem and
+ * binaries (harness discovery's `wslDiscoveryDeps`, as forge detection uses them), with the
+ * version and `git lfs version` probes run INSIDE the distro through `wsl.exe`. A WSL row
+ * never borrows the Windows host's git or git-lfs.
+ */
+export async function wslSourceControlDetectionDeps(
+  distro: string,
+  effects: { readonly discovery?: WslDiscoveryEffects; readonly run?: LocusRun } = {},
+): Promise<SourceControlDetectionDeps> {
+  const discovery = effects.discovery ?? (await wslDiscoveryDeps(distro));
+  let harvested: Promise<string | null> | undefined;
+  return {
+    platform: discovery.platform ?? "linux",
+    ...(discovery.pathExt === undefined ? {} : { pathExt: discovery.pathExt }),
+    envPath: discovery.envPath,
+    home: discovery.home,
+    loginShellPath: () => {
+      harvested ??= discovery.loginShellPath();
+      return harvested;
+    },
+    listDir: (directory) => discovery.listDir(directory),
+    isExecutable: (path) => discovery.isExecutable(path),
+    ...locusProbes({ kind: "wsl", distro }, effects.run ?? execaLocusRun),
+  };
+}
+
+/** The detection effects for one execution locus. */
+export function sourceControlDetectionDepsFor(locus: Locus): Promise<SourceControlDetectionDeps> {
+  return locus.kind === "wsl"
+    ? wslSourceControlDetectionDeps(locus.distro)
+    : Promise.resolve(defaultSourceControlDetectionDeps());
 }
 
 /** Whether `.gitattributes` text routes any path through the LFS filter. Comments are

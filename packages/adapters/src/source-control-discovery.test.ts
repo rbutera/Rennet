@@ -12,9 +12,11 @@ import {
   detectSourceControlTool,
   detectSourceControlTools,
   gitattributesUseLfs,
+  type LocusRun,
   parseGitLfsVersion,
   repoUsesLfs,
   type SourceControlDetectionDeps,
+  wslSourceControlDetectionDeps,
 } from "./source-control-discovery";
 
 interface Fixture {
@@ -344,5 +346,73 @@ describe.skipIf(process.platform === "win32")("detection runs the binary bare gi
     const git = await detectGit(hostDepsOn(shim, "darwin"));
     expect(git).toMatchObject({ status: "not-installed", path: join(shim, "git") });
     expect(git.detail).toContain("`xcode-select --install`");
+  });
+});
+
+describe("wslSourceControlDetectionDeps", () => {
+  it("runs the version and git lfs probes inside the distro, never on the host", async () => {
+    const ran: string[][] = [];
+    const run: LocusRun = async (file, args) => {
+      ran.push([file, ...args]);
+      const command = args.slice(args.indexOf("-e") + 1).join(" ");
+      if (command === "/usr/bin/git --version") {
+        return { exitCode: 0, stdout: "git version 2.43.0", stderr: "" };
+      }
+      if (command === "/usr/bin/git-lfs --version") {
+        return {
+          exitCode: 0,
+          stdout: "git-lfs/3.4.1 (GitHub; linux amd64; go 1.22.2)",
+          stderr: "",
+        };
+      }
+      if (command === "/usr/bin/git lfs version") {
+        return {
+          exitCode: 0,
+          stdout: "git-lfs/3.4.1 (GitHub; linux amd64; go 1.22.2)",
+          stderr: "",
+        };
+      }
+      return { exitCode: 127, stdout: "", stderr: "not found" };
+    };
+    const deps = await wslSourceControlDetectionDeps("Ubuntu", {
+      discovery: {
+        platform: "linux",
+        envPath: "",
+        home: "/home/rai",
+        loginShellPath: () => Promise.resolve("/usr/bin:/bin"),
+        listDir: (directory) => Promise.resolve(directory === "/usr/bin" ? ["git", "git-lfs"] : []),
+        isExecutable: (path) => Promise.resolve(path.startsWith("/usr/bin/")),
+      },
+      run,
+    });
+
+    const [git, lfs] = await detectSourceControlTools(deps);
+
+    expect(git).toMatchObject({ status: "available", version: "2.43.0", path: "/usr/bin/git" });
+    expect(lfs).toMatchObject({ status: "available", version: "3.4.1", path: "/usr/bin/git-lfs" });
+    expect(ran).toContainEqual(["wsl.exe", "-d", "Ubuntu", "-e", "/usr/bin/git", "lfs", "version"]);
+    // Every probe went through the distro.
+    for (const call of ran) expect(call.slice(0, 4)).toEqual(["wsl.exe", "-d", "Ubuntu", "-e"]);
+  });
+
+  it("reports git-lfs as unreachable when the distro's git cannot run it", async () => {
+    const run: LocusRun = async (_file, args) => {
+      const command = args.slice(args.indexOf("-e") + 1).join(" ");
+      if (command.endsWith("--version")) {
+        return { exitCode: 0, stdout: "version 3.4.1", stderr: "" };
+      }
+      return { exitCode: 1, stdout: "", stderr: "git: 'lfs' is not a git command." };
+    };
+    const deps = await wslSourceControlDetectionDeps("Ubuntu", {
+      discovery: {
+        envPath: "",
+        home: "/home/rai",
+        loginShellPath: () => Promise.resolve("/usr/bin"),
+        listDir: () => Promise.resolve(["git", "git-lfs"]),
+        isExecutable: () => Promise.resolve(true),
+      },
+      run,
+    });
+    expect(await detectGitLfs(deps)).toMatchObject({ status: "unreachable" });
   });
 });
