@@ -178,7 +178,8 @@ boards themselves arrive lens by lens and are the progress. Before the first lan
 there is nothing to arrive yet, so the rail and the board area move together as one
 waiting presence (a breathing rail over a sweeping skeleton) with Cancel inline, rather
 than an empty board that reads as idle. A failure or a cancellation gets one explicit
-block with its recovery action, Retry, and the raw output behind Details.
+block with its recovery action, Retry, and the raw output behind Details; a failure Rennet
+cannot name leads with a plain sentence, never with the daemon's text.
 
 ## Keep controls terse
 

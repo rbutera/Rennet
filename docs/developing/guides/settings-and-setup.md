@@ -204,8 +204,12 @@ Source Control reports `git` and Git LFS first, from the probe the daemon runs w
 same environment its own git work uses: each reads **Available** with its proven version,
 **Not Installed**, or **Unreachable**, and a missing one offers **Install for me** (this
 machine or a WSL distribution; a paired remote device shows the fix without the button).
-Install for me streams the installer's output, shows the command it ran with a copy
-button, and re-probes; where no installer exists it shows the command and a link
+Install for me streams the installer's output, shows the command it is running with a
+copy button (from the first moment of the run, not only once it ends), and re-probes. An
+install belongs to whoever started it — a session's failure block or large-file question
+— so it keeps running, and finishes the job it was started for, across a remount, a
+dismissed dialog or a dropped connection to the daemon; until the machine it installs on
+is known, the button waits; where no installer exists it shows the command and a link
 instead. The first-run tools stage reads the same probe. Below them, Source Control
 reports GitHub / `gh` and GitLab.com / `glab` CLI readiness on each host. Detection runs per host exactly as agent detection does: the daemon
 runs the probes on each machine the only way it can, so a WSL distribution shows
@@ -441,8 +445,8 @@ the review is waiting for the choice, and a transcript read names the repository
 A review opened outside a session's preparation (`review.openPr`, for one) has
 nothing that can ask, so the same refusal points at Settings → Projects instead.
 Writing `ask` is a reset: the entry is dropped and the next checkout asks again.
-**Settings → Projects → Worktrees** shows the choice as **Large files in review
-checkouts** (Ask each time, Download, Skip) on each repository that uses Git LFS, or
+**Settings → Projects → Worktrees** shows the choice as **Large Files in Review
+Checkouts** (Ask each time, Download, Skip) on each repository that uses Git LFS, or
 that already has a choice recorded; Ask each time is that reset.
 
 A session can also carry its own mode (`session.mint`'s `largeFiles`, which

@@ -798,9 +798,13 @@ queued) the workspace itself shows one waiting presence: the board area is a ske
 with a slow sweep, the rail's five tabs breathe as one wave, and Cancel sits inline
 under the skeleton. Once a lane moves the seats speak for themselves, and a floating
 Cancel chip in the bottom-right corner is the running generation's only other chrome. A
-stopped preparation renders one failure block: the plain reason, the recovery its kind
+stopped preparation renders one failure block: the daemon's plain reason when the failure
+is classified, or a fixed plain sentence when it is not (an unclassified reason is the
+failing step's own text, so it goes behind Details with the raw output; a failure that
+says no coding agent is installed says so and what to install), the recovery its kind
 calls for (Install for me, Choose large-file mode or Sign in), Retry, and the raw output
-behind Details. Continue does not exist while the boards are being written: the Cancel
+behind Details. A failed lens board does the same: a plain line, its reason behind
+Details. Continue does not exist while the boards are being written: the Cancel
 chip stands in its corner, and Continue appears there once the review is ready. The same session's sidebar row stays animated when the user
 navigates away. Completion becomes a check and then an unread dot until opened;
 failure retains its reason. Initial preparation and post-round regeneration

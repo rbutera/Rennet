@@ -241,17 +241,37 @@ the failure mode is a surface that quietly lies about it.
   prepared the header renders nothing rather than restating a finished step.
 - **A stopped preparation is one block.** A failed or cancelled preparation renders one
   block (`src/preparation/preparation-failure.tsx`) where the header sits, never a thin strip
-  over an empty board: the daemon's plain sentence, the one recovery its kind calls for
-  (Install for me with its streaming output and the command shown, Choose large-file mode,
-  or Sign in), Retry always, and the raw tool output behind a Details disclosure that is
-  rendered only when opened. A cancelled run says "Cancelled" and offers Retry. The block
-  names no stage. The large-file question itself is a modal over the presence
+  over an empty board: the daemon's plain sentence when the failure is classified, the one
+  recovery its kind calls for (Install for me with its streaming output and the command
+  shown while it runs, Choose large-file mode, or Sign in), Retry always, and the raw tool
+  output behind a Details disclosure that is rendered only when opened. An UNCLASSIFIED
+  failure's reason is the failing step's own text, so it never leads: the block says
+  "Rennet couldn't prepare this review." — or, when the text says no coding agent is
+  installed, says that and what to install — and the reason joins the output behind
+  Details (`src/preparation/failure-copy.ts`; a failed lens board follows the same rule).
+  The live region is the sentence alone, never the install log under it. A write that does
+  not go through (Retry, Skip large files, Cancel) says so in one plain line beside it.
+  Skip large files says, in the dialog's own words, that it is remembered for the project.
+  A cancelled run says "Cancelled" and offers Retry. The block names no stage. The
+  large-file question itself is a modal over the presence
   (`src/preparation/large-file-choice.tsx`): two plain choices, Install for me when
-  Download needs a missing Git LFS, and Escape closes it to a calm line with a way back.
+  Download needs a missing Git LFS, and Escape closes it to a calm line with a way back,
+  where focus lands. Its state belongs to the SESSION, not the mount: the route swaps the
+  workspace when the review attaches mid-question, and the dialog keeps its screen, its
+  dismissal and the install running under it. Escape does not stop that install; it
+  finishes and answers Download. Any other answer withdraws that, so an install landing
+  late never sends a second choice. Install for me waits, disabled, until the project's
+  machine is known.
+- **No tip over a review on its way.** First-run coach marks hold back while the session on
+  screen is waiting or choosing (`Coachmark`'s `suppressed`, from `routes/layout.tsx`):
+  there is nothing to teach yet, and a card there covered the way back to the question.
 - **The chat pane never narrates the machinery.** Before the review's thread exists the
-  dock is titled with the session's own branch or pull request and shows the thread's
-  skeleton while preparation runs; once it has stopped it shows nothing extra, because
-  the failure block owns the message. "New review" and "No review is attached…" are gone.
+  dock is titled with the session's own branch or pull request (a Current Checkout session
+  with the branch its review read, else the project's name) and shows the thread's
+  skeleton while preparation runs; once it has stopped — with or without a review
+  attached — and no thread was bound, it shows the title alone and asks nothing more,
+  because the failure block owns the message. "New review", "No review is attached…" and
+  "This review has no thread…" are gone.
 - **The rail carries every lens, from the first frame.** `src/board/lens-switcher.tsx`
   renders one tab per lens whether or not that lens has a result, each carrying the state
   of its seat. A running lens is selectable, never a disabled segment, and no lens is
