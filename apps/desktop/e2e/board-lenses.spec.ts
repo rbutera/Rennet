@@ -411,30 +411,38 @@ test("a persisted board owns lens, generation, and captured-code navigation in t
       board.locator(`[data-kind="related-file-chip"][data-source-path="${BOARD_TEST_PATH}"]`),
     ).toBeVisible();
 
+    // The rail's labels fold to icons when the TOP BAR's own pane (its `@container`) is too
+    // narrow for five labelled tabs, and the fold is dock-aware (`lens-switcher.tsx`, #968):
+    // below 42rem with the chat dock open, below 55rem with it shut. This used to expect the
+    // label to stay shown under a fixed 46rem, a number from before #968; with the real
+    // window resize the bar lands below the fold and the label is (correctly) hidden. So the
+    // expectation is computed from the bar's real width and the dock's real state.
     const sequenceTab = rail.getByRole("tab", { name: /^Sequence(?:,|$)/ });
-    const sequenceLabel = sequenceTab.locator("span").last();
-    const containerThreshold = await page.evaluate(
-      () => 46 * Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+    const sequenceLabel = sequenceTab.getByText("Sequence", { exact: true });
+    const rootFont = await page.evaluate(() =>
+      Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
     );
-    expect(topBarBox.width).toBeGreaterThan(containerThreshold);
-    expect(await sequenceLabel.evaluate((label) => getComputedStyle(label).display)).not.toBe(
-      "none",
-    );
+    const foldBelow = async () =>
+      ((await page.getByTestId("chat-dock-slot").getAttribute("data-open")) === "true" ? 42 : 55) *
+      rootFont;
+    const labelShown = () =>
+      sequenceLabel.evaluate((label) => getComputedStyle(label).display !== "none");
+    expect(topBarBox.width).toBeGreaterThan(await foldBelow());
+    expect(await labelShown()).toBe(true);
 
     await resizeAppWindow(application, page, { width: 720, height: 900 });
     await expect
       .poll(async () => (await topBar.boundingBox())?.width ?? Number.POSITIVE_INFINITY)
-      .toBeLessThan(containerThreshold);
-    await expect
-      .poll(() => sequenceLabel.evaluate((label) => getComputedStyle(label).display))
-      .not.toBe("none");
+      .toBeLessThan(46 * rootFont);
+    const narrowWidth = (await topBar.boundingBox())?.width ?? 0;
+    // Folded exactly when the bar is under the dock-aware threshold — and the tab itself is
+    // still there, named in full for a screen reader.
+    await expect.poll(labelShown).toBe(narrowWidth >= (await foldBelow()));
     await expect(sequenceTab).toBeVisible();
     await expect(sequenceTab).toHaveAccessibleName(/Sequence/);
 
     await resizeAppWindow(application, page, { width: 1440, height: 900 });
-    await expect
-      .poll(() => sequenceLabel.evaluate((label) => getComputedStyle(label).display))
-      .not.toBe("none");
+    await expect.poll(labelShown).toBe(true);
 
     const beforeLens = await page.evaluate(() => history.length);
     await rail.getByRole("tab", { name: "Sequence" }).click();
@@ -699,7 +707,13 @@ test("review activity and code evidence remain usable across navigation", async 
     });
     await sessionRow.click();
     await expect(sessionRow.getByRole("status", { name: "Review ready" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled();
+    // The exit is back. This fixture is the reviewer's own branch with no pull request and
+    // nothing staged, so the exit is the draft pull request ("Open pull request"), not
+    // "Continue" — that label is for a branch with something staged or a PR already open
+    // (#965, `handoff/fab.tsx`). The assertion said "Continue" from before that change.
+    await expect(
+      page.getByRole("button", { name: "Open pull request", exact: true }),
+    ).toBeEnabled();
     // …and the chip has left the corner it was keeping for the exit.
     await expect(
       page.getByRole("button", { name: "Cancel board generation", exact: true }),
