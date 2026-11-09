@@ -1,10 +1,20 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   type DetectedSourceControlTool,
+  LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE,
   LargeFileSkipIndex,
   largeFileSkipIndexPath,
   SessionStore,
@@ -48,7 +58,7 @@ afterEach(() => {
 
 type Session = SidebarSession;
 
-function lfsRepository() {
+function lfsRepository(options: { readonly rootOn?: "main" | "feature" } = {}) {
   const dataDir = realpathSync(mkdtempSync(join(tmpdir(), "rennet-lfs-prep-data-")));
   const repo = realpathSync(mkdtempSync(join(tmpdir(), "rennet-lfs-prep-repo-")));
   dirs.push(dataDir, repo);
@@ -72,8 +82,9 @@ function lfsRepository() {
   git("add", "-A");
   git("commit", "-q", "-m", "add a large widget model");
   const headOid = git("rev-parse", "HEAD");
-  // Back on main, so the reviewer's own checkout holds no LFS file at all.
-  git("checkout", "-q", "main");
+  // Back on main, so the reviewer's own checkout holds no LFS file at all — unless the test
+  // reviews the branch the reviewer has out.
+  git("checkout", "-q", options.rootOn ?? "main");
   git("remote", "add", "origin", "git@github.com:acme/widget.git");
   // NOW the filter is required and Git LFS is "missing". Every checkout that runs it leaves
   // one line in `attempts`.
@@ -154,15 +165,31 @@ const missingLfsRow: DetectedSourceControlTool = {
   detail: "Git LFS isn't installed.",
 };
 
-async function serverFor(fixture: ReturnType<typeof lfsRepository>) {
+async function serverFor(
+  fixture: ReturnType<typeof lfsRepository>,
+  serverOptions: {
+    /** A directory holding stub `brew` and `git` for Install for me; Git LFS then answers
+     *  once the stub brew has left `installed` there. */
+    readonly brewBin?: string;
+  } = {},
+) {
   await createGitHubTokenStore(fixture.dataDir).setGitHubCredential({ token: "gho_acme_widget" });
+  const brewBin = serverOptions.brewBin;
   const server = await createRennetServer({
     dataDir: fixture.dataDir,
     // Hold drafting once the workspace is bound: these tests are about the stage before it.
     env: { RENNET_TEST_BOARD_PREPARATION_DELAY_MS: "60000" },
     httpFetch: gitHub(fixture.baseOid, fixture.headOid),
     // What this machine has installed must not decide the answer.
-    sourceControl: { detect: async () => [gitRow, missingLfsRow] },
+    sourceControl: {
+      detect: async () =>
+        brewBin !== undefined && existsSync(join(brewBin, "installed"))
+          ? [gitRow, { ...missingLfsRow, version: "3.7.1", status: "available" as const }]
+          : [gitRow, missingLfsRow],
+      ...(brewBin === undefined
+        ? {}
+        : { installPlanDeps: { platform: "darwin", envPath: "", brewDirectories: [brewBin] } }),
+    },
   });
   shutdowns.push(server.shutdown);
   const added = (await server.dispatch("projects.add", {
@@ -191,17 +218,34 @@ async function serverFor(fixture: ReturnType<typeof lfsRepository>) {
     );
     return seen as Session;
   };
-  const mint = async () => {
+  const mint = async (mintOptions: { readonly pr?: boolean; readonly commandId?: string } = {}) => {
     const minted = (await server.dispatch("session.mint", {
       projectId: added.project.id,
-      commandId: randomUUID(),
+      commandId: mintOptions.commandId ?? randomUUID(),
       branch: "feature",
-      prNumber: 7,
+      ...(mintOptions.pr === false ? {} : { prNumber: 7 }),
       repository: "acme/widget",
     })) as { session: Session | null };
     return minted.session?.id ?? "";
   };
-  return { server, projectId: added.project.id, mint, waitFor };
+  const setMode = (mode: "download" | "skip") =>
+    server.dispatch("settings.setProjectValue", {
+      projectId: added.project.id,
+      repoPath: fixture.repo,
+      key: "largeFiles",
+      value: mode,
+    });
+  return { server, projectId: added.project.id, mint, waitFor, setMode };
+}
+
+/** The git dir `includeIf "gitdir:"` matches for the checkout at `cwd`. */
+function gitDirOf(cwd: string): string {
+  return execFileSync("git", ["rev-parse", "--absolute-git-dir"], { cwd, encoding: "utf8" }).trim();
+}
+
+/** The git dirs the daemon's skip-mode index names right now. */
+function registered(dataDir: string): string[] {
+  return new LargeFileSkipIndex(largeFileSkipIndexPath(dataDir)).gitDirs();
 }
 
 /** What a daemon child's git reads in `cwd`, under the daemon's skip-mode environment. */
@@ -349,7 +393,223 @@ describe("the workspace stage of a Git LFS pull request (review-preparation-reli
     // checkout already there, and the note still reached the session.
     expect(drafting.workspaceNotes).toEqual([
       "Large files were left as placeholders. This repository's Git LFS hook needs Git LFS, which isn't installed, so the hook was skipped.",
+      LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE,
     ]);
+    // The FRONT DOOR created the checkout, so the front door registered it: the bind found
+    // it already there and kept the mode it was created with.
+    const store = new SessionStore(join(fixture.dataDir, "sessions"));
+    const boundRoot = store.load(sessionId)?.boundRoot ?? "";
+    expect(registered(fixture.dataDir)).toEqual([gitDirOf(boundRoot)]);
     await server.dispatch("session.cancelPreparation", { sessionId });
   }, 60_000);
+});
+
+/**
+ * Skip mode is the mode a checkout was CREATED under, recorded only for a checkout Rennet
+ * placed (review finding 1). The index every daemon child's git reads must never name the
+ * reviewer's own checkout, must follow a re-pin that replaces a checkout, must not be
+ * rewritten for a checkout that is merely reused, and must lose a removed checkout.
+ */
+describe("skip-mode registration follows the checkout Rennet created", () => {
+  /**
+   * Make the next use of the binding REPLACE the snapshot: move the checkout off the reviewed
+   * head, the way a round's agent committing in the detached checkout does, then use the
+   * binding. The re-pin puts Rennet's own snapshot back at the reviewed head by removing it
+   * and checking it out again at the same path, which git registers under the same git dir.
+   */
+  async function moveOffHeadAndRepin(
+    fixture: ReturnType<typeof lfsRepository>,
+    server: Awaited<ReturnType<typeof serverFor>>["server"],
+    reviewId: string,
+    boundRoot: string,
+  ) {
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "filter.lfs.process=",
+        "-c",
+        "filter.lfs.smudge=",
+        "-c",
+        "filter.lfs.required=false",
+        "checkout",
+        "-q",
+        "--detach",
+        fixture.baseOid,
+      ],
+      { cwd: boundRoot },
+    );
+    // Any use of the binding re-pins it; the transcript read is the cheapest.
+    await server.dispatch("session.transcript", { reviewId });
+    expect(
+      execFileSync("git", ["rev-parse", "HEAD"], { cwd: boundRoot, encoding: "utf8" }).trim(),
+    ).toBe(fixture.headOid);
+  }
+
+  it("a share-mode branch review of the reviewer's own checkout never registers it", async () => {
+    const fixture = lfsRepository({ rootOn: "feature" });
+    const { mint, waitFor, setMode, server } = await serverFor(fixture);
+    await setMode("skip");
+    const sessionId = await mint({ pr: false });
+    await waitFor(sessionId, (session) => expect(session?.preparation?.status).toBe("drafting"));
+    const store = new SessionStore(join(fixture.dataDir, "sessions"));
+    // `share` bound the session to the checkout the reviewer has the branch out in…
+    expect(store.load(sessionId)?.boundRoot).toBe(fixture.repo);
+    // …which Rennet did not place, so its git config is exactly the reviewer's.
+    expect(registered(fixture.dataDir)).toEqual([]);
+    expect(lfsRequiredUnderDaemonEnv(fixture.dataDir, fixture.repo)).toBe("true");
+    await server.dispatch("session.cancelPreparation", { sessionId });
+  }, 60_000);
+
+  it("download, then skip, then a re-pin replaces the checkout: the new checkout is skip mode", async () => {
+    const fixture = lfsRepository();
+    fixture.installGitLfs();
+    const { server, mint, waitFor, setMode } = await serverFor(fixture);
+    await setMode("download");
+    const sessionId = await mint();
+    const drafting = await waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("drafting"),
+    );
+    const store = new SessionStore(join(fixture.dataDir, "sessions"));
+    const boundRoot = store.load(sessionId)?.boundRoot ?? "";
+    expect(registered(fixture.dataDir)).toEqual([]);
+
+    await setMode("skip");
+    await moveOffHeadAndRepin(fixture, server, drafting.reviewId ?? "", boundRoot);
+    // The re-pin REPLACED the checkout at the same path, under the mode now set…
+    expect(readFileSync(join(boundRoot, "assets", "model.bin"), "utf8")).toBe(POINTER);
+    expect(registered(fixture.dataDir)).toEqual([gitDirOf(boundRoot)]);
+    // …so a later git command there runs as skip mode, whatever the repository's config says.
+    fixture.git("config", "filter.lfs.required", "true");
+    expect(lfsRequiredUnderDaemonEnv(fixture.dataDir, boundRoot)).toBe("false");
+    await server.dispatch("session.cancelPreparation", { sessionId });
+  }, 60_000);
+
+  it("skip, then download, then a re-pin replaces the checkout: the new checkout loses skip mode", async () => {
+    const fixture = lfsRepository();
+    const { server, mint, waitFor, setMode } = await serverFor(fixture);
+    await setMode("skip");
+    const sessionId = await mint();
+    const drafting = await waitFor(sessionId, (session) =>
+      expect(session?.preparation?.status).toBe("drafting"),
+    );
+    const store = new SessionStore(join(fixture.dataDir, "sessions"));
+    const boundRoot = store.load(sessionId)?.boundRoot ?? "";
+    expect(registered(fixture.dataDir)).toEqual([gitDirOf(boundRoot)]);
+
+    // Download needs a filter that runs.
+    fixture.installGitLfs();
+    await setMode("download");
+    await moveOffHeadAndRepin(fixture, server, drafting.reviewId ?? "", boundRoot);
+    expect(registered(fixture.dataDir)).toEqual([]);
+    fixture.git("config", "filter.lfs.required", "true");
+    expect(lfsRequiredUnderDaemonEnv(fixture.dataDir, boundRoot)).toBe("true");
+    await server.dispatch("session.cancelPreparation", { sessionId });
+  }, 60_000);
+
+  it("a later session that reuses the checkout keeps the mode it was created with", async () => {
+    const fixture = lfsRepository();
+    const { server, mint, waitFor, setMode } = await serverFor(fixture);
+    await setMode("skip");
+    const first = await mint();
+    await waitFor(first, (session) => expect(session?.preparation?.status).toBe("drafting"));
+    const store = new SessionStore(join(fixture.dataDir, "sessions"));
+    const boundRoot = store.load(first)?.boundRoot ?? "";
+    expect(registered(fixture.dataDir)).toEqual([gitDirOf(boundRoot)]);
+
+    // The project's mode changes, and a second session of the same pull request binds to the
+    // SAME checkout, which already holds the reviewed head: nothing is checked out again.
+    fixture.installGitLfs();
+    await setMode("download");
+    await server.dispatch("session.cancelPreparation", { sessionId: first });
+    await server.dispatch("session.archive", { sessionId: first, archived: true });
+    const second = await mint();
+    expect(second).not.toBe(first);
+    await waitFor(second, (session) => expect(session?.preparation?.status).toBe("drafting"));
+    expect(store.load(second)?.boundRoot).toBe(boundRoot);
+    // The checkout's files are still placeholders, so it stays skip mode: the setting
+    // applies to the NEXT checkout.
+    expect(readFileSync(join(boundRoot, "assets", "model.bin"), "utf8")).toBe(POINTER);
+    expect(registered(fixture.dataDir)).toEqual([gitDirOf(boundRoot)]);
+    await server.dispatch("session.cancelPreparation", { sessionId: second });
+  }, 60_000);
+
+  it("removing the checkout drops its entry, so a worktree added there later is not skip mode", async () => {
+    const fixture = lfsRepository();
+    const { server, projectId, mint, waitFor, setMode } = await serverFor(fixture);
+    await setMode("skip");
+    const sessionId = await mint();
+    await waitFor(sessionId, (session) => expect(session?.preparation?.status).toBe("drafting"));
+    const store = new SessionStore(join(fixture.dataDir, "sessions"));
+    const boundRoot = store.load(sessionId)?.boundRoot ?? "";
+    const gitDir = gitDirOf(boundRoot);
+    expect(registered(fixture.dataDir)).toEqual([gitDir]);
+    await server.dispatch("session.cancelPreparation", { sessionId });
+
+    // `git worktree remove` asks git status there, which runs the filter: give it one that
+    // runs (the in-process server's own git does not carry the daemon's index include).
+    fixture.installGitLfs();
+    const removed = (await server.dispatch("project.cleanupWorktree", {
+      commandId: randomUUID(),
+      projectId,
+      worktreeId: boundRoot,
+    })) as { ok: boolean };
+    expect(removed.ok).toBe(true);
+    expect(registered(fixture.dataDir)).toEqual([]);
+    // git hands the same name to the next worktree added at that path, and that one is the
+    // reviewer's: it runs the filter exactly as their config says.
+    fixture.git("worktree", "add", "-q", "--detach", boundRoot, "main");
+    expect(gitDirOf(boundRoot)).toBe(gitDir);
+    fixture.git("config", "filter.lfs.required", "true");
+    expect(lfsRequiredUnderDaemonEnv(fixture.dataDir, boundRoot)).toBe("true");
+  }, 60_000);
+});
+
+describe("Install for me while a skip-mode checkout runs without Git LFS", () => {
+  it.skipIf(process.platform === "win32")(
+    "rewrites the overrides to Git LFS's own skip filter and drops the session's note",
+    async () => {
+      const fixture = lfsRepository();
+      const brewBin = realpathSync(mkdtempSync(join(tmpdir(), "rennet-lfs-prep-brew-")));
+      dirs.push(brewBin);
+      for (const [name, body] of [
+        ["brew", 'touch "$(dirname "$0")/installed"'],
+        ["git", "exit 0"],
+      ] as const) {
+        writeFileSync(join(brewBin, name), `#!/bin/sh\n${body}\n`);
+        chmodSync(join(brewBin, name), 0o755);
+      }
+      const { server, mint, waitFor, setMode } = await serverFor(fixture, { brewBin });
+      await setMode("skip");
+      const sessionId = await mint();
+      const drafting = await waitFor(sessionId, (session) =>
+        expect(session?.preparation?.status).toBe("drafting"),
+      );
+      // Without Git LFS, skip mode blanks the filter, and the session says what that costs.
+      expect(drafting.workspaceNotes).toEqual([LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE]);
+      const overrides = join(
+        dirname(largeFileSkipIndexPath(fixture.dataDir)),
+        "skip-overrides.gitconfig",
+      );
+      expect(readFileSync(overrides, "utf8")).toContain("\tprocess =\n");
+
+      const { result } = (await server.dispatch("tools.install", {
+        tool: "git-lfs",
+        locus: { kind: "host" },
+        commandId: randomUUID(),
+      })) as { result: { status: string } };
+      expect(result.status).toBe("installed");
+      // Every registered checkout now cleans large files on add again…
+      expect(readFileSync(overrides, "utf8")).toContain(
+        "\tprocess = git-lfs filter-process --skip\n",
+      );
+      // …and the note that said otherwise is gone.
+      const after = await waitFor(sessionId, (session) =>
+        expect(session?.workspaceNotes).toBeUndefined(),
+      );
+      expect(after.preparation?.status).toBe("drafting");
+      await server.dispatch("session.cancelPreparation", { sessionId });
+    },
+    60_000,
+  );
 });

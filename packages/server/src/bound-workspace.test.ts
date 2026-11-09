@@ -497,8 +497,14 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
       pullRequest: true,
     });
     // The SAME path — a re-pin, not a re-decision — now holding the new head.
-    expect(await repinBoundWorkspace(advanced, bound, deps)).toBe(bound);
+    // A REPLACED checkout reports the mode it was created under, so the caller can record it.
+    expect(await repinBoundWorkspace(advanced, bound, deps)).toEqual({
+      boundRoot: bound,
+      largeFiles: "download",
+    });
     expect(git(bound, ["rev-parse", "HEAD"]).trim()).toBe(movedHead);
+    // A re-pin that finds the head already there replaced nothing, and says no mode.
+    expect(await repinBoundWorkspace(advanced, bound, deps)).toEqual({ boundRoot: bound });
     expect(existsSync(join(bound, "round.txt"))).toBe(true);
   });
 
@@ -513,7 +519,7 @@ describe("decideBoundWorkspace (session-bound-workspace D1)", () => {
     });
     const bound = await bindRoot(review);
     gitCalls = [];
-    expect(await repinBoundWorkspace(review, bound, deps)).toBe(bound);
+    expect(await repinBoundWorkspace(review, bound, deps)).toEqual({ boundRoot: bound });
     expect(gitCalls).toEqual([]);
   });
 

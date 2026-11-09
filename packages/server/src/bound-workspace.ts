@@ -407,23 +407,29 @@ async function branchFacts(
  *
  * A branch binding needs nothing: its worktree has the branch checked out, so it follows the
  * ref. A failure throws for the same reason a first bind does — a stale tree is the wrong tree.
+ *
+ * Answers the binding, which never moves, plus — only when the checkout was REPLACED — the
+ * large-file mode the new checkout was created under and any note its creation returned.
  */
 export async function repinBoundWorkspace(
   review: Review,
   recorded: string,
   deps: Pick<BoundWorkspaceDeps, "gitFor" | "snapshotRecordedAt"> &
     Partial<Pick<BoundWorkspaceDeps, "placementFor">>,
-): Promise<string> {
-  if (review.postTarget === undefined && review.retrospective !== true) return recorded;
+): Promise<BoundWorkspace> {
+  if (review.postTarget === undefined && review.retrospective !== true) {
+    return { boundRoot: recorded };
+  }
   const patchset = review.patchsets.find((entry) => entry.id === review.activePatchsetId);
-  if (patchset === undefined) return recorded;
+  if (patchset === undefined) return { boundRoot: recorded };
   // The repository is where the worktree hangs off; `recorded` is the worktree itself.
-  if (recorded === review.repositoryRoot) return recorded;
+  if (recorded === review.repositoryRoot) return { boundRoot: recorded };
   // A re-pin that REPLACES the checkout creates a new one, so it runs under the project's
   // large-file mode exactly as the first bind did. Read only here, past every early return:
   // a branch binding or an unpinned review never asks.
   const placement = await deps.placementFor?.(review.repositoryRoot).catch(() => undefined);
-  await ensurePrWorktree(
+  const largeFiles = placement === undefined ? "download" : checkoutLargeFileMode(placement);
+  const { created, warning } = await ensurePrWorktree(
     deps.gitFor(review.repositoryRoot),
     review.repositoryRoot,
     recorded,
@@ -434,12 +440,15 @@ export async function repinBoundWorkspace(
     // definition: a session bound to a path the pull-request index no longer names is a
     // session whose snapshot Rennet has already let go of, and re-pinning it forcibly is
     // the deletion `ensurePrWorktree` refuses everywhere else.
-    {
-      recordedSnapshot: deps.snapshotRecordedAt(recorded),
-      ...(placement === undefined ? {} : { largeFiles: checkoutLargeFileMode(placement) }),
-    },
+    { recordedSnapshot: deps.snapshotRecordedAt(recorded), largeFiles },
   );
-  return recorded;
+  // `largeFiles` only when the checkout was REPLACED: the caller records the new checkout's
+  // mode then, and a re-pin that found the head already there changes nothing.
+  return {
+    boundRoot: recorded,
+    ...(created ? { largeFiles } : {}),
+    ...(warning === undefined ? {} : { warning }),
+  };
 }
 
 /**

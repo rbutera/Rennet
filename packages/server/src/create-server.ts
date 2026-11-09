@@ -85,6 +85,8 @@ import {
   type InstallPlanDeps,
   instrumentCodexExecutor,
   isGitHubNetworkError,
+  LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE,
+  LARGE_FILES_NOT_REGISTERED_NOTE,
   LargeFileSkipIndex,
   type ListWorkspacesOptions,
   largeFileSkipIndexPath,
@@ -264,6 +266,7 @@ import {
   decideBoundWorkspace,
   inRepoSpelling,
   repinBoundWorkspace,
+  sameDirectory,
 } from "./bound-workspace";
 import { attachCiSignal } from "./ci-signal";
 import {
@@ -2183,6 +2186,14 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       });
       if (result.status === "installed") {
         for (const reviewId of [...frontDoorWorktrees.keys()]) clearFrontDoorFailure(reviewId);
+        // Git LFS on the host: skip-mode checkouts clean large files on add again.
+        if (
+          input.tool === "git-lfs" &&
+          input.locus.kind === "host" &&
+          result.probe.status === "available"
+        ) {
+          largeFilesNowCleanOnAdd();
+        }
       }
       if (result.status === "manual") {
         if (result.plan.plan !== "manual") throw new Error("a manual result carries a manual plan");
@@ -2632,9 +2643,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    *     REUSES it once, instead of repeating the same checkout: unless the mode has changed
    *     since (or an install cleared it), the session fails with this classified failure at
    *     stage `workspace`. Consumed on that first use, so the reviewer's Retry tries for real.
-   *   • `warning` — the note a skip-mode checkout returns only on the call that CREATED it
-   *     (git-lfs's hook refused). The bind finds the checkout already there, so without this
-   *     the note would be lost; the bind records it on the session.
+   *   • `notes` — what a checkout returns only on the call that CREATED it (git-lfs's hook
+   *     refused, or the skip-mode checkout runs without Git LFS). The bind finds the checkout
+   *     already there, so without this the notes would be lost; the bind records them on
+   *     the session.
    *
    * In memory, on purpose: a front door and the bind that follows it run in one daemon life.
    * After a restart the bind simply attempts the checkout itself, which is the old behaviour.
@@ -2645,16 +2657,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       readonly classified: ClassifiedGitFailure;
       readonly largeFiles: LargeFileMode;
     };
-    readonly warning?: string;
+    readonly notes?: readonly string[];
   }
   const frontDoorWorktrees = new Map<string, FrontDoorWorktree>();
-  /** Drop a review's recorded front-door failure, keeping its path and note. */
+  /** Drop a review's recorded front-door failure, keeping its path and notes. */
   function clearFrontDoorFailure(reviewId: string): void {
     const entry = frontDoorWorktrees.get(reviewId);
     if (entry?.failure === undefined) return;
     frontDoorWorktrees.set(reviewId, {
       ...(entry.path === undefined ? {} : { path: entry.path }),
-      ...(entry.warning === undefined ? {} : { warning: entry.warning }),
+      ...(entry.notes === undefined ? {} : { notes: entry.notes }),
     });
   }
 
@@ -2667,6 +2679,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
    * of the user's git config changing.
    */
   const largeFileSkipIndex = new LargeFileSkipIndex(largeFileSkipIndexPath(dataDir));
+  // A checkout removed while this daemon was not running (by hand, or by an older build)
+  // leaves its entry behind; git would hand the next worktree added there the same git dir.
+  largeFileSkipIndex.prune();
   /**
    * The ONE workspace a session is bound to (session-bound-workspace D1), decided once from
    * the review target and then only re-pinned:
@@ -2738,10 +2753,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       prWorktreeFor: (reviewId: string) => readPrWorktreeIndex()[reviewId]?.path,
       snapshotRecordedAt,
       recordPrWorktree,
-      // Fire and forget, exactly as the pull-request front door runs it: a slow install
-      // must never delay the capture, and a failed one is honest status rather than a wall.
-      onWorktreeCreated: (worktree: string) =>
-        void runPrWorktreeSetup(worktree).catch(() => undefined),
+      // No `onWorktreeCreated` here: the bind supplies it, and runs a created checkout's
+      // setup only once that checkout's large-file mode is registered.
       // No `siblingPush` is passed, and none is accepted any more. It was meant to narrow
       // the re-fork's reachability question to the remote a session had pushed to, and it
       // could never arrive: `workBranchPush` is written by a submission, a submission needs
@@ -2757,11 +2770,35 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   }
 
   async function resolveBoundWorkspace(review: Review, sessionId: string): Promise<string> {
-    const workspaceDeps = workspaceDepsFor(review);
+    // Setup for a checkout this bind CREATED runs only after the checkout's large-file mode is
+    // registered, so the setup's own git commands already run there as that mode says.
+    const createdCheckouts: string[] = [];
+    const workspaceDeps = {
+      ...workspaceDepsFor(review),
+      onWorktreeCreated: (worktree: string) => {
+        createdCheckouts.push(worktree);
+      },
+    };
     const recorded = sessionStore.load(sessionId)?.boundRoot;
     // A recorded binding is RE-PINNED, never re-decided: a landed round advances the reviewed
     // head, and a pull-request snapshot's workspace is a detached checkout at the old one.
-    if (recorded !== undefined) return repinBoundWorkspace(review, recorded, workspaceDeps);
+    if (recorded !== undefined) {
+      const repinned = await repinBoundWorkspace(review, recorded, workspaceDeps);
+      // A re-pin that REPLACED the checkout created a new one under the project's current
+      // mode: register that, and say what the new checkout's notes are.
+      if (repinned.largeFiles !== undefined) {
+        const notes = await registerCreatedCheckout(
+          review.repositoryRoot,
+          repinned.boundRoot,
+          repinned.largeFiles,
+        );
+        sessionStore.setWorkspaceNotes(sessionId, [
+          ...(repinned.warning === undefined ? [] : [repinned.warning]),
+          ...notes,
+        ]);
+      }
+      return repinned.boundRoot;
+    }
     // THE FRONT DOOR AND THE BIND AGREE (2.5). A checkout the front door already tried and
     // could not create fails the same way here, classified, instead of being repeated blind —
     // unless the large-file mode changed since (the reviewer's answer is the reason to try
@@ -2777,14 +2814,28 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       if (mode === failure.largeFiles) throw new ClassifiedWorkspaceError(failure.classified);
     }
     const bound = await decideBoundWorkspace(review, workspaceDeps);
-    // The skip-mode index BEFORE the record: no turn can run in the checkout until the
-    // binding is recorded, so by then every daemon child already runs git there as the
-    // project's mode says. (Recording last also keeps the record the final act of the bind,
-    // which concurrent readers joining this in-flight bind rely on.)
-    await registerLargeFileMode(review, bound.boundRoot);
-    // The note a skip-mode checkout returns only when it is CREATED: from this bind, or from
-    // the front door that created the checkout this bind found.
-    const warning = bound.warning ?? frontDoor?.warning;
+    // The large-file mode BEFORE the record, and only for a checkout THIS bind created (or put
+    // back on its branch): `bound.largeFiles` says so. A checkout found already there keeps
+    // the mode it was created with, and the reviewer's own checkout is never Rennet's to mark.
+    // No turn can run in the checkout until the binding is recorded, so by then every daemon
+    // child already runs git there as its mode says. (Recording last also keeps the record
+    // the final act of the bind, which concurrent readers joining this bind rely on.)
+    const notes =
+      bound.largeFiles === undefined
+        ? []
+        : await registerCreatedCheckout(review.repositoryRoot, bound.boundRoot, bound.largeFiles);
+    for (const worktree of createdCheckouts) {
+      // Fire and forget, exactly as the pull-request front door runs it: a slow install
+      // must never delay the capture, and a failed one is honest status rather than a wall.
+      void runPrWorktreeSetup(worktree).catch(() => undefined);
+    }
+    // The notes a checkout carries come only from the call that CREATED it: this bind, or the
+    // front door that created the checkout this bind found.
+    const allNotes = [
+      ...(bound.warning === undefined ? [] : [bound.warning]),
+      ...notes,
+      ...(bound.largeFiles === undefined ? (frontDoor?.notes ?? []) : []),
+    ];
     frontDoorWorktrees.delete(review.id);
     // Both halves of the one decision, recorded together (D4). `workBranch` is absent
     // whenever the work commits on the reviewed branch itself, which the readers treat as
@@ -2793,30 +2844,68 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       sessionId,
       bound.boundRoot,
       bound.workBranch,
-      warning === undefined ? undefined : [warning],
+      allNotes.length === 0 ? undefined : allNotes,
     );
     return bound.boundRoot;
   }
 
   /**
-   * Keep the skip-mode index in step with the project's mode for the checkout a session just
-   * bound: registered under `skip`, so every later git command a daemon child runs there
-   * leaves large files alone; unregistered otherwise. Host loci only — a WSL distro's git
-   * does not see the daemon's environment. Never fails a bind: a checkout that could not be
-   * registered still exists, and the reason reaches the log.
+   * Record the large-file mode of a checkout Rennet just CREATED or REPLACED — the only time a
+   * checkout's mode is decided — in the skip-mode index every daemon child's git reads:
+   * registered under `skip`, so every later git command there leaves large files alone;
+   * unregistered under `download`, because git reuses a removed worktree's git dir and an
+   * entry left from an earlier checkout at the same name must not apply to this one.
+   *
+   * Never the repository root: that is the reviewer's own checkout, which Rennet never
+   * places. Host loci only — a WSL distro's git does not see the daemon's environment. Never
+   * fails a bind: a checkout that could not be registered still exists, and the reason
+   * reaches the log. Answers the notes the session shows about it: that a changed large file
+   * is committed without Git LFS (skip mode on a host without it), or that the checkout
+   * could not be marked at all.
    */
-  async function registerLargeFileMode(review: Review, boundRoot: string): Promise<void> {
-    if (locusForRepo(review.repositoryRoot).kind !== "host") return;
+  async function registerCreatedCheckout(
+    repoRoot: string,
+    checkout: string,
+    mode: LargeFileMode,
+  ): Promise<string[]> {
+    if (locusForRepo(repoRoot).kind !== "host") return [];
+    if (sameDirectory(checkout, repoRoot)) return [];
     try {
-      const placement = await settingsComposition.resolveWorktreePlacement(review.repositoryRoot);
-      const skip = checkoutLargeFileMode(placement) === "skip";
-      if (!skip && largeFileSkipIndex.gitDirs().length === 0) return;
-      const gitDir = await absoluteGitDir(gitForRepo(review.repositoryRoot), boundRoot);
-      if (skip) largeFileSkipIndex.add(gitDir);
-      else largeFileSkipIndex.remove((entry) => entry === gitDir);
+      const gitDir = await absoluteGitDir(gitForRepo(repoRoot), checkout);
+      largeFileSkipIndex.prune();
+      if (mode !== "skip") {
+        largeFileSkipIndex.remove((entry) => entry === gitDir);
+        return [];
+      }
+      const lfsAvailable = await gitLfsAvailableOn(HOST_LOCUS);
+      if (!largeFileSkipIndex.add(gitDir, { lfsAvailable })) {
+        siblingLog(
+          `rennet: could not mark ${JSON.stringify(checkout)} as skipping large files — its git directory's path has a control character`,
+        );
+        return [LARGE_FILES_NOT_REGISTERED_NOTE];
+      }
+      return lfsAvailable ? [] : [LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE];
     } catch (error) {
       siblingLog(
-        `rennet: could not record the large-file mode for ${boundRoot} — ${error instanceof Error ? error.message : String(error)}`,
+        `rennet: could not record the large-file mode for ${checkout} — ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Git LFS was installed on this host: every registered skip-mode checkout gets LFS's own
+   * skip filter, which cleans a large file on add again, and the sessions stop saying their
+   * large files are committed without it.
+   */
+  function largeFilesNowCleanOnAdd(): void {
+    if (largeFileSkipIndex.gitDirs().length > 0) largeFileSkipIndex.setLfsAvailable(true);
+    for (const session of sessionStore.list()) {
+      const notes = session.workspaceNotes ?? [];
+      if (!notes.includes(LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE)) continue;
+      sessionStore.setWorkspaceNotes(
+        session.id,
+        notes.filter((note) => note !== LARGE_FILES_COMMITTED_WITHOUT_LFS_NOTE),
       );
     }
   }
@@ -2955,9 +3044,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           { recordedSnapshot: snapshotRecordedAt(worktree), largeFiles: attemptedMode },
         );
         recordPrWorktree(review.id, worktree);
+        // A checkout this call CREATED (or replaced) gets its large-file mode recorded before
+        // anything runs in it — the setup below included.
+        const notes = created ? await registerCreatedCheckout(root, worktree, attemptedMode) : [];
         // Returned only by this, the creating call: kept for the bind to record (see
-        // `frontDoorWorktrees`), or it is gone by the time a session binds.
-        if (warning !== undefined) frontDoorWorktrees.set(review.id, { warning });
+        // `frontDoorWorktrees`), or they are gone by the time a session binds.
+        const kept = [...(warning === undefined ? [] : [warning]), ...notes];
+        if (kept.length > 0) frontDoorWorktrees.set(review.id, { notes: kept });
         if (created) {
           // Fire-and-forget; the runner itself records a failed verdict, and an
           // unexpected crash must not become an unhandled rejection.
@@ -3715,7 +3808,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       // repository is a UNC path the git inside the distro does not own.
     });
     siblingLog(`rennet: ${collection.reason}`);
-    if (collection.worktreeRemoved) sessionStore.clearBoundWorkspace(sessionId);
+    if (collection.worktreeRemoved) {
+      sessionStore.clearBoundWorkspace(sessionId);
+      // Its git dir went with it; git reuses the name for the next worktree added there.
+      largeFileSkipIndex.prune();
+    }
   };
   // Deferred while a round is in flight: `session.archive` awaits the session's
   // preparation, but nothing tracks a round, so an immediate purge deletes the directory
@@ -3876,7 +3973,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     dataDir,
     liveBoundRoots,
     gitFor: gitForRepo,
-  }).catch(() => undefined);
+  })
+    .then(() => largeFileSkipIndex.prune())
+    .catch(() => undefined);
   /**
    * Drop ONE repository's unreachable worktree registrations — **only the ones RENNET
    * PLACED, and only when the repository holds no other unreachable registration at all.**
@@ -5971,7 +6070,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // the sweep now also logs its counts, so a repeat could not hide the same way twice.
   void sweepOrphanedSiblings(
     async (repoRoot) => (await settingsComposition.resolveWorktreePlacement(repoRoot)).root,
-  ).catch(() => undefined);
+  )
+    // A collected sibling's skip-mode entry goes with it: git reuses its git dir's name.
+    .then(() => largeFileSkipIndex.prune())
+    .catch(() => undefined);
 
   dispatch = createDispatch({
     t3Sidecar,
@@ -6716,13 +6818,16 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       const project = projectStore.list().find((entry) => entry.id === projectId);
       const projectRoot = project ? project.openPath || project.path : null;
       if (!projectRoot) return { ok: false };
-      return cleanupWorktree(
+      const cleaned = await cleanupWorktree(
         {
           git: gitForRepo(projectRoot),
           resolveProjectRoot: async () => projectRoot,
         },
         { projectId, worktreeId },
       );
+      // A removed worktree's skip-mode entry goes with it: git reuses its git dir's name.
+      largeFileSkipIndex.prune();
+      return cleaned;
     },
     // The workspace inventory (workspace-settings D6): every workspace Rennet knows for
     // ONE repository, and the removal of one idle Rennet-made row.
@@ -6747,7 +6852,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
           ...(await inventoryOptions(repoPath)),
           measureSizes: false,
         });
-        return removeWorkspace(gitForRepo(repoPath), repoPath, { id, rows });
+        const removed = await removeWorkspace(gitForRepo(repoPath), repoPath, { id, rows });
+        // A removed worktree's skip-mode entry goes with it: git reuses its git dir's name.
+        largeFileSkipIndex.prune();
+        return removed;
       },
     },
     // The Flagged lens (issue #138): the automated review layer's findings. This is

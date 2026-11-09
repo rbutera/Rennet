@@ -251,6 +251,32 @@ export class SessionStore {
   }
 
   /**
+   * Replace the quiet notes about this session's bound checkout. For a binding that is
+   * already recorded and whose checkout changed under it — a re-pin that replaced the
+   * checkout, or Git LFS installed since — where `setBoundRoot` (which never touches a
+   * recorded binding) cannot. An empty list clears them. `undefined` if the session is absent.
+   */
+  setWorkspaceNotes(
+    sessionId: string,
+    workspaceNotes: readonly string[],
+  ): SessionModel | undefined {
+    const session = this.load(sessionId);
+    if (!session) return undefined;
+    const current = session.workspaceNotes ?? [];
+    if (
+      current.length === workspaceNotes.length &&
+      current.every((note, index) => note === workspaceNotes[index])
+    ) {
+      return session;
+    }
+    const next = { ...session };
+    if (workspaceNotes.length === 0) delete next.workspaceNotes;
+    else next.workspaceNotes = [...workspaceNotes];
+    this.save(next);
+    return next;
+  }
+
+  /**
    * Record WHERE this session's work branch was pushed (workspace-settings D4): the remote
    * it went to and the branch name it landed under. Written by the pull-request submission,
    * and only when the two names differ — under `share` the push moves the branch the
