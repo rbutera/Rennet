@@ -192,7 +192,7 @@ jobs:
         include:
           - os: ubuntu-latest
             native: linux-x64
-          - os: macos-14
+          - os: macos-15
             native: darwin-arm64
           - os: windows-2022
             native: win32-x64

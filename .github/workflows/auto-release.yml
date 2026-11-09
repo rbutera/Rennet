@@ -255,7 +255,7 @@ jobs:
   build-macos:
     needs: version
     if: ${{ always() && needs.version.result == 'success' }}
-    runs-on: macos-14 # arm64 — matches Rennet-darwin-arm64
+    runs-on: macos-15 # arm64 — matches Rennet-darwin-arm64
     timeout-minutes: 45
     environment: release
     steps:
