@@ -1,6 +1,8 @@
+import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   INSTALL_OUTPUT_CAP,
@@ -222,6 +224,85 @@ describe("runInstallPlan", () => {
     expect(existsSync(join(empty, "calls.log"))).toBe(false);
   });
 
+  it("cancels the whole process tree, runs no later step, and still re-probes", async () => {
+    const bin = dir("rennet-stub-brew-cancel-");
+    const calls = join(bin, "calls.log");
+    const late = join(bin, "late-write");
+    // Homebrew's children (curl, tar, post-install scripts) outlive a signal to brew alone.
+    // This brew starts one that writes a file after a delay, then waits.
+    script(
+      bin,
+      "brew",
+      [
+        `echo "brew $*" >> "${calls}"`,
+        `( sleep 1; echo "too late" > "${late}" ) &`,
+        'echo "==> Downloading git-lfs"',
+        "sleep 30",
+      ].join("\n"),
+    );
+    script(bin, "git", `echo "git $*" >> "${calls}"`);
+    const plan = await resolveInstallPlan("git-lfs", {
+      platform: "darwin",
+      envPath: bin,
+      brewDirectories: [],
+    });
+
+    const controller = new AbortController();
+    let probes = 0;
+    const started = Date.now();
+    const result = await runInstallPlan(plan, {
+      // Cancel once brew is visibly running, so its child exists.
+      onOutput: (chunk) => {
+        if (chunk.includes("==> Downloading")) controller.abort();
+      },
+      reprobe: async () => {
+        probes += 1;
+        return { status: "not-installed" as const };
+      },
+      signal: controller.signal,
+      env: { PATH: "/bin:/usr/bin" },
+    });
+
+    // Not held open by the child's inherited pipes, nor by brew's own `sleep 30`.
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(result).toMatchObject({
+      status: "failed",
+      failedCommand: "brew install git-lfs",
+      exitCode: null,
+      cancelled: true,
+    });
+    if (result.status === "failed") expect(result.output).toContain("Install cancelled.");
+    expect(probes).toBe(1);
+    expect(readFileSync(calls, "utf8")).toBe("brew install git-lfs\n");
+    // Past the child's delay: had it survived the cancel, the file would be there.
+    await sleep(1_800);
+    expect(existsSync(late)).toBe(false);
+  }, 20_000);
+
+  it.skipIf(!hasPerl())(
+    "does not wait on a descendant that left the process group and kept the pipes",
+    async () => {
+      const bin = dir("rennet-stub-brew-daemon-");
+      // A post-install that daemonises (new session) and keeps brew's stdout open.
+      script(
+        bin,
+        "brew",
+        ["perl -e 'use POSIX; setsid(); sleep 15;' &", 'echo "==> Done"', "exit 0"].join("\n"),
+      );
+      const plan = await resolveInstallPlan("git", {
+        platform: "darwin",
+        envPath: bin,
+        brewDirectories: [],
+      });
+      const started = Date.now();
+      const { result } = await run(plan, "/bin:/usr/bin");
+      expect(Date.now() - started).toBeLessThan(8_000);
+      expect(result.status).toBe("installed");
+      if (result.status === "installed") expect(result.output).toContain("==> Done");
+    },
+    20_000,
+  );
+
   it("counts every discarded character in the omitted marker and never splits a character", async () => {
     const bin = dir("rennet-stub-brew-loud-");
     // 3 bytes per line ("é\n"), 2 characters: well over twice the cap, in chunks whose
@@ -246,3 +327,12 @@ describe("runInstallPlan", () => {
     );
   });
 });
+
+function hasPerl(): boolean {
+  try {
+    execFileSync("perl", ["-e", "use POSIX; exit 0"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}

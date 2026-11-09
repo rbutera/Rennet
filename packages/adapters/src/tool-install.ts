@@ -146,7 +146,8 @@ export interface RunInstallOptions<P> {
   readonly onOutput?: (chunk: string, stream: InstallOutputStream) => void;
   /** Asked once the plan has run (or not run), whatever happened. */
   readonly reprobe: () => Promise<P>;
-  /** Cancels the running step. A cancelled install is reported as failed. */
+  /** Cancels the running step and everything it started, and runs no later step. A
+   *  cancelled install is reported as failed. */
   readonly signal?: AbortSignal;
   /** Extra environment layered over the inherited one. Its PATH, when given, replaces the
    *  inherited PATH after the plan's prefix. */
@@ -168,6 +169,8 @@ export type InstallRunResult<P> =
       /** The step that failed, as a person would type it. */
       readonly failedCommand: string;
       readonly exitCode: number | null;
+      /** Present when the install stopped because `signal` was aborted. */
+      readonly cancelled?: true;
       readonly output: string;
       readonly probe: P;
     }
@@ -179,6 +182,14 @@ export type InstallRunResult<P> =
 
 /** How much installer output the result keeps. The tail, because the verdict is last. */
 export const INSTALL_OUTPUT_CAP = 64_000;
+
+/** How long a cancelled step's process group gets after SIGTERM before SIGKILL. */
+const KILL_GRACE_MS = 2_000;
+
+/** How long the output pipes stay open after a step exits. A descendant that left the
+ *  step's process group (a daemon that called `setsid`) can hold them open forever, and
+ *  execa would wait for it; by now the step's own output has long been read. */
+const PIPE_DRAIN_MS = 500;
 
 /**
  * The installer's output, kept to its tail, counting honestly what it let go of. The
@@ -242,29 +253,57 @@ export async function runInstallPlan<P>(
     record("stdout")(line);
     let exitCode: number | null = null;
     let failed = false;
-    try {
-      const child = execa(step.file, [...step.args], {
-        env,
-        reject: false,
-        shell: false,
-        stdin: "ignore",
-        buffer: false,
-        ...(options.signal === undefined ? {} : { cancelSignal: options.signal }),
-      });
-      // Decode as text in the stream, so a multi-byte character split across two chunks
-      // arrives whole instead of as two replacement characters.
-      child.stdout?.setEncoding("utf8");
-      child.stderr?.setEncoding("utf8");
-      child.stdout?.on("data", record("stdout"));
-      child.stderr?.on("data", record("stderr"));
-      const result = await child;
-      exitCode = result.exitCode ?? null;
-      failed = result.failed || exitCode !== 0;
-      // No exit code means the step never ran (not found, cancelled): say why.
-      if (result.failed && exitCode === null) record("stderr")(`${result.shortMessage}\n`);
-    } catch (error) {
+    let cancelled = options.signal?.aborted === true;
+    if (cancelled) {
       failed = true;
-      record("stderr")(`${error instanceof Error ? error.message : String(error)}\n`);
+      record("stderr")("Install cancelled before this step started.\n");
+    } else {
+      try {
+        // `killDescendants` runs the step in its own process group and, when execa
+        // terminates it (cancellation), signals the whole group: Homebrew's own children
+        // (curl, tar, the post-install scripts) go with it. `forceKillAfterDelay` follows up
+        // with SIGKILL for anything that ignores SIGTERM.
+        const child = execa(step.file, [...step.args], {
+          env,
+          reject: false,
+          shell: false,
+          stdin: "ignore",
+          buffer: false,
+          killDescendants: true,
+          forceKillAfterDelay: KILL_GRACE_MS,
+          ...(options.signal === undefined ? {} : { cancelSignal: options.signal }),
+        });
+        // Decode as text in the stream, so a multi-byte character split across two chunks
+        // arrives whole instead of as two replacement characters.
+        child.stdout?.setEncoding("utf8");
+        child.stderr?.setEncoding("utf8");
+        child.stdout?.on("data", record("stdout"));
+        child.stderr?.on("data", record("stderr"));
+        // `nodeChildProcess` is typed as the ChildProcess but execa hands back a promise of
+        // it; `Promise.resolve` reads either.
+        const releasePipes = () =>
+          setTimeout(() => {
+            child.stdout?.destroy();
+            child.stderr?.destroy();
+          }, PIPE_DRAIN_MS).unref();
+        void Promise.resolve(child.nodeChildProcess).then(
+          (spawned) => {
+            if (spawned.exitCode !== null || spawned.signalCode !== null) releasePipes();
+            else spawned.once("exit", releasePipes);
+          },
+          () => undefined,
+        );
+        const result = await child;
+        exitCode = result.exitCode ?? null;
+        failed = result.failed || exitCode !== 0;
+        cancelled = result.isCanceled;
+        if (cancelled) record("stderr")("Install cancelled.\n");
+        // No exit code means the step never ran or was stopped (not found, cancelled): say why.
+        if (result.failed && exitCode === null) record("stderr")(`${result.shortMessage}\n`);
+      } catch (error) {
+        failed = true;
+        record("stderr")(`${error instanceof Error ? error.message : String(error)}\n`);
+      }
     }
     if (failed) {
       return {
@@ -273,6 +312,7 @@ export async function runInstallPlan<P>(
         message: `${TOOL_LABEL[plan.tool]} couldn't be installed.`,
         failedCommand: displayStep(step),
         exitCode,
+        ...(cancelled ? { cancelled: true as const } : {}),
         output: output.value(),
         probe: await options.reprobe(),
       };
