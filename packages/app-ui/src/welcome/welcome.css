@@ -297,6 +297,17 @@
     padding-top: 12px;
   }
 }
+/* The shortest desktop window (640px): with Git and Git LFS probed as their own rows the tools
+   stage is a third grid row taller, so its rows tighten a step further to keep the panel on
+   screen. */
+@media (min-width: 761px) and (max-height: 700px) {
+  .welcome-tools {
+    gap: 6px;
+  }
+  .welcome-tools article {
+    padding-block: 4px;
+  }
+}
 @media (max-width: 1000px) {
   .welcome-layout {
     grid-template-columns: minmax(250px, 0.8fr) minmax(420px, 1fr);
