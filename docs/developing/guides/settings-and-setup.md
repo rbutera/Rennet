@@ -210,7 +210,16 @@ install belongs to whoever started it — a session's failure block or large-fil
 — so it keeps running, and finishes the job it was started for, across a remount, a
 dismissed dialog or a dropped connection to the daemon; until the machine it installs on
 is known, the button waits; where no installer exists it shows the command and a link
-instead. The first-run tools stage reads the same probe. Below them, Source Control
+instead. After a dropped connection the button asks the daemon again under the same command id,
+and the daemon treats it as the same request: a run still going is re-joined, with its
+output so far sent as one snapshot that replaces the drawer's, and a run that finished
+meanwhile answers with the verdict the daemon keeps for it (about ten minutes, for the
+last few dozen commands), so the installer never runs twice for one press. Only that
+verdict settles the button; a probe that sees the binary is not read as installed, since
+`git lfs install` may still be running or have failed. A Cancel pressed while the
+connection is down is sent once it is back, and the install is not asked for again; a
+cancel that reaches a command that already finished stops nothing and reports what
+happened. The first-run tools stage reads the same probe. Below them, Source Control
 reports GitHub / `gh` and GitLab.com / `glab` CLI readiness on each host. Detection runs per host exactly as agent detection does: the daemon
 runs the probes on each machine the only way it can, so a WSL distribution shows
 its own CLI versions and authentication state, while a host the daemon cannot

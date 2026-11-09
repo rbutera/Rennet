@@ -300,7 +300,7 @@ describe("Install for me", () => {
   });
 
   describe("across a dropped connection", () => {
-    it("keeps the install running, keeps its output, and settles from a re-probe on reconnect", async () => {
+    it("keeps the install running, keeps its output, and settles from the daemon's verdict on reconnect", async () => {
       const flaky = new FlakyBridge();
       flaky.probe = probe("available");
       const installed: unknown[] = [];
@@ -330,12 +330,139 @@ describe("Install for me", () => {
       expect(log?.textContent).toContain("Summary");
 
       act(() => flaky.reconnect());
+      // The SAME request goes back to the daemon: it answers with that run's verdict (a run
+      // that finished meanwhile answers from the verdict it kept).
+      await waitFor(() => expect(flaky.installs).toHaveLength(2), { timeout: 4_000 });
+      expect(flaky.installs[1]?.commandId).toBe(commandId);
+      await waitFor(() =>
+        expect(screen.getByRole("status").textContent).not.toContain("reconnecting"),
+      );
+      act(() =>
+        flaky.settle({
+          status: "installed",
+          command: "brew install git-lfs && git lfs install",
+          output: "==> Pouring git-lfs\n==> Summary\n",
+          probe: probe("available"),
+        }),
+      );
+      await waitFor(() => expect(view()?.getAttribute("data-phase")).toBe("installed"));
+      expect(installed).toHaveLength(1);
+    });
+
+    it("never reads a probe that finds the binary as installed: an init that failed is a failure", async () => {
+      // `git lfs version` answers as soon as Homebrew has poured the bottle, while `git lfs
+      // install` may still be running — or fail. Seeing the binary is not the verdict.
+      const flaky = new FlakyBridge();
+      flaky.probe = probe("available");
+      const installed: unknown[] = [];
+      const { user } = mount(
+        <BridgeProvider bridge={flaky}>
+          <InstallForMe
+            tool="git-lfs"
+            locus={{ kind: "host" }}
+            onInstalled={(result) => installed.push(result)}
+          />
+        </BridgeProvider>,
+      );
+      await user.click(screen.getByRole("button", { name: "Install for me" }));
+      await waitFor(() => expect(flaky.installs).toHaveLength(1));
+      act(() => flaky.drop());
+      act(() => flaky.reconnect());
+      await waitFor(() => expect(flaky.installs).toHaveLength(2), { timeout: 4_000 });
+      // Still running, Cancel and all: nothing was concluded from the probe.
+      expect(view()?.getAttribute("data-phase")).toBe("running");
+      expect(installed).toEqual([]);
+
+      act(() =>
+        flaky.settle({
+          status: "failed",
+          command: "brew install git-lfs && git lfs install",
+          message: "Git LFS couldn't be set up.",
+          failedCommand: "git lfs install",
+          exitCode: 2,
+          output: "error: could not write config",
+          probe: probe("available"),
+        }),
+      );
+      await waitFor(() => expect(view()?.getAttribute("data-phase")).toBe("failed"));
+      expect(view()?.textContent).toContain("Git LFS couldn't be set up.");
+      expect(installed).toEqual([]);
+    });
+
+    it("sends a Cancel pressed while disconnected once the connection is back, and never asks to install again", async () => {
+      const flaky = new FlakyBridge();
+      flaky.probe = probe("not-installed");
+      const { user } = mount(
+        <BridgeProvider bridge={flaky}>
+          <InstallForMe tool="git-lfs" locus={{ kind: "host" }} />
+        </BridgeProvider>,
+      );
+      await user.click(screen.getByRole("button", { name: "Install for me" }));
+      await waitFor(() => expect(flaky.installs).toHaveLength(1));
+      const commandId = flaky.installs[0]?.commandId ?? "";
+
+      act(() => flaky.drop());
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Stopping"));
+      expect(flaky.cancels).toEqual([]);
+
+      // The installer is still running on the daemon when the connection comes back.
+      act(() => flaky.reconnect());
+      await waitFor(() => expect(flaky.cancels).toEqual([commandId]), { timeout: 4_000 });
+      await waitFor(() => expect(view()?.getAttribute("data-phase")).toBe("failed"));
+      expect(view()?.textContent).toContain("The Git LFS install was stopped.");
+      // The cancel went through instead of a second request to install.
+      expect(flaky.installs).toHaveLength(1);
+    });
+
+    it("settles a late Cancel from the verdict of an install that had already finished", async () => {
+      const flaky = new FlakyBridge();
+      flaky.cancelAnswer = {
+        cancelled: false,
+        result: {
+          status: "installed",
+          command: "brew install git-lfs && git lfs install",
+          output: "",
+          probe: probe("available"),
+        },
+      };
+      const { user } = mount(
+        <BridgeProvider bridge={flaky}>
+          <InstallForMe tool="git-lfs" locus={{ kind: "host" }} />
+        </BridgeProvider>,
+      );
+      await user.click(screen.getByRole("button", { name: "Install for me" }));
+      await waitFor(() => expect(flaky.installs).toHaveLength(1));
+      act(() => flaky.drop());
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+      act(() => flaky.reconnect());
+      // What happened is what it says: the install had finished before the cancel arrived.
       await waitFor(() => expect(view()?.getAttribute("data-phase")).toBe("installed"), {
         timeout: 4_000,
       });
-      expect(installed).toHaveLength(1);
-      // Settled from the re-probe: no second install was started.
       expect(flaky.installs).toHaveLength(1);
+    });
+
+    it("replaces the drawer with the daemon's snapshot when the run is re-joined", async () => {
+      const flaky = new FlakyBridge();
+      const { user } = mount(
+        <BridgeProvider bridge={flaky}>
+          <InstallForMe tool="git-lfs" locus={{ kind: "host" }} />
+        </BridgeProvider>,
+      );
+      await user.click(screen.getByRole("button", { name: "Install for me" }));
+      await waitFor(() => expect(flaky.installs).toHaveLength(1));
+      const commandId = flaky.installs[0]?.commandId ?? "";
+      act(() => flaky.emit(commandId, "==> Downloading\n"));
+      act(() => flaky.drop());
+      act(() => flaky.reconnect());
+      await waitFor(() => expect(flaky.installs).toHaveLength(2), { timeout: 4_000 });
+      // The re-join's snapshot carries everything so far — including what streamed while the
+      // connection was down — and replaces the drawer rather than following it.
+      act(() => flaky.emit(commandId, "==> Downloading\n==> Pouring git-lfs\n", true));
+      act(() => flaky.emit(commandId, "==> Summary\n"));
+      const log = document.querySelector('[data-slot="install-output"]');
+      expect(log?.textContent).toBe("==> Downloading\n==> Pouring git-lfs\n==> Summary\n");
     });
 
     it("re-joins the daemon's run by its commandId when the tool is not there yet", async () => {
@@ -379,7 +506,10 @@ describe("Install for me", () => {
  */
 class FlakyBridge implements Pick<RennetBridge, "invoke" | "onToolInstallProgress"> {
   readonly installs: InstallInput[] = [];
+  readonly cancels: string[] = [];
   probe: DetectedSourceControlTool = probe("not-installed");
+  /** What `tools.cancelInstall` answers: by default, the daemon stopped a running install. */
+  cancelAnswer: CommandOutput<"tools.cancelInstall"> = { cancelled: true };
   #online = true;
   readonly #pending = new Set<(reason: unknown) => void>();
   #release: ((result: InstallResult) => void) | undefined;
@@ -401,7 +531,8 @@ class FlakyBridge implements Pick<RennetBridge, "invoke" | "onToolInstallProgres
           hosts: [{ source: "local", asked: true, detected: [], sourceControl: [this.probe] }],
         });
       } else if (name === "tools.cancelInstall") {
-        done({ cancelled: true });
+        this.cancels.push((input as CommandInput<"tools.cancelInstall">).commandId);
+        done(this.cancelAnswer);
       } else {
         reject(new Error(`FlakyBridge: no handler for ${name}`));
       }
@@ -418,9 +549,15 @@ class FlakyBridge implements Pick<RennetBridge, "invoke" | "onToolInstallProgres
     return () => set.delete(listener);
   }
 
-  emit(commandId: string, chunk: string): void {
+  emit(commandId: string, chunk: string, replace?: true): void {
     for (const listener of this.#listeners.get(commandId) ?? []) {
-      listener({ kind: "tool-install-output", tool: "git-lfs", stream: "stdout", chunk });
+      listener({
+        kind: "tool-install-output",
+        tool: "git-lfs",
+        stream: "stdout",
+        chunk,
+        ...(replace === undefined ? {} : { replace }),
+      });
     }
   }
 

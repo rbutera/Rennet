@@ -135,9 +135,8 @@ function InstallVerdict({
               <code className="font-mono text-2xs text-ink-faint">{result.probe.version}</code>
             ) : null}
           </p>
-          {/* Empty only when the verdict came from a re-probe after a dropped connection
-              that never heard which command ran. */}
-          {result.command.length > 0 ? <CommandLine command={result.command} /> : null}
+          {/* "Installed" is only ever the daemon's own verdict, which always names what ran. */}
+          <CommandLine command={result.command} />
           <OutputDrawer output={result.output} />
         </>
       );
@@ -147,16 +146,20 @@ function InstallVerdict({
           <p role="alert" className="text-danger text-sm">
             {result.cancelled ? `The ${name} install was stopped.` : result.message}
           </p>
-          <CommandLine
-            command={result.failedCommand}
-            note={
-              result.cancelled
-                ? "stopped while running"
-                : result.exitCode === null
-                  ? undefined
-                  : `exited with code ${result.exitCode}`
-            }
-          />
+          {/* Empty only for a stop settled after a dropped connection before the daemon had
+              said which command it was running. */}
+          {result.failedCommand.length > 0 ? (
+            <CommandLine
+              command={result.failedCommand}
+              note={
+                result.cancelled
+                  ? "stopped while running"
+                  : result.exitCode === null
+                    ? undefined
+                    : `exited with code ${result.exitCode}`
+              }
+            />
+          ) : null}
           <OutputDrawer output={result.output} />
           <div>
             <Button variant="outline" size="sm" onClick={onRetry}>

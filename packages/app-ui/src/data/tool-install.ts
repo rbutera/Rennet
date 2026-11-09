@@ -35,8 +35,13 @@ import { type ScopedHandle, scopedHandle } from "./scoped-state";
 //   • A dropped connection. The socket going rejects the dispatch, but the installer is
 //     still running on the daemon. The subscription stays (the supervisor re-attaches it on
 //     reconnect), the run stays `running` with its Cancel, and once the connection is back
-//     the hook reconciles: a re-probe that finds the tool settles as installed; otherwise
-//     the same commandId re-joins the daemon's run and its verdict settles the button.
+//     the hook asks the daemon again under the SAME commandId. The daemon treats that as the
+//     same request: a run still going is re-joined (its output so far arrives as one
+//     snapshot that replaces the drawer's), and a run that finished meanwhile answers with
+//     its retained verdict. Only the daemon's verdict settles the button — a probe that sees
+//     the binary says nothing about whether `git lfs install` ran, so it is never read as
+//     "installed". A Cancel pressed while the connection was down is not lost: it is sent
+//     once the connection is back, and the install is never asked for again.
 //
 // It lives in the data seam because it dispatches. Surfaces render its state through
 // `components/install-for-me.tsx` and never touch the bridge.
@@ -87,6 +92,10 @@ interface RunRecord {
   /** What to do when THIS run installs the tool. Bound at start; cleared once it has run. */
   continuation: ((result: InstalledResult) => void) | undefined;
   unsubscribe: (() => void) | undefined;
+  /** The run in flight, so Cancel can settle it from what the daemon answers. */
+  run: Run | undefined;
+  /** A reconnect loop is already working for the run in flight. */
+  reconciling: boolean;
 }
 
 const runs = new WeakMap<CommandCache, Map<string, RunRecord>>();
@@ -99,7 +108,13 @@ function runRecord(cache: CommandCache, key: string): RunRecord {
   }
   let record = byKey.get(key);
   if (record === undefined) {
-    record = { commandId: null, continuation: undefined, unsubscribe: undefined };
+    record = {
+      commandId: null,
+      continuation: undefined,
+      unsubscribe: undefined,
+      run: undefined,
+      reconciling: false,
+    };
     byKey.set(key, record);
   }
   return record;
@@ -143,6 +158,7 @@ function settle(run: Run, result: InstallResult): void {
   run.record.unsubscribe?.();
   run.record.unsubscribe = undefined;
   run.record.commandId = null;
+  run.record.run = undefined;
   const continuation = run.record.continuation;
   run.record.continuation = undefined;
   run.slot.set({ phase: "done", result });
@@ -154,6 +170,7 @@ function giveUp(run: Run, message: string): void {
   run.record.unsubscribe?.();
   run.record.unsubscribe = undefined;
   run.record.commandId = null;
+  run.record.run = undefined;
   run.record.continuation = undefined;
   run.slot.set({ phase: "unavailable", message });
 }
@@ -178,50 +195,117 @@ function dispatch(run: Run): void {
     );
 }
 
+function markReconnecting(run: Run, reconnecting: boolean): void {
+  run.slot.set((previous) =>
+    previous.phase === "running" && (previous.reconnecting === true) !== reconnecting
+      ? { ...previous, reconnecting }
+      : previous,
+  );
+}
+
+function isCancelling(run: Run): boolean {
+  const state = run.slot.get();
+  return state.phase === "running" && state.cancelling;
+}
+
 /**
  * The connection dropped mid-install. The installer is still running on the daemon, so the
  * run stays `running` (output, Cancel and all) and the subscription stays registered — the
- * connection supervisor re-attaches it to the fresh socket. Once a command gets through
- * again: a re-probe that finds the tool means the result was missed and the install worked,
- * so it settles as installed; otherwise the SAME commandId re-joins the daemon's run (the
- * daemon keys runs by tool and machine, so it answers with that run's verdict) and the
- * verdict settles it.
+ * connection supervisor re-attaches it to the fresh socket. Until a command gets through
+ * again this keeps trying; then:
+ *
+ *   • Cancel was pressed meanwhile: the cancel is sent now, and the run settles from what
+ *     the daemon answers. The install is NOT asked for again — after a daemon restart the
+ *     daemon would not know the commandId and would start a fresh install nobody wants.
+ *   • Otherwise the SAME commandId goes back to the daemon, which re-joins the run still
+ *     going or answers with the verdict of the one that finished. That verdict settles it.
  */
 async function reconcile(run: Run): Promise<void> {
-  run.slot.set((previous) =>
-    previous.phase === "running" ? { ...previous, reconnecting: true } : previous,
-  );
-  while (stillCurrent(run)) {
-    try {
-      const { hosts } = await run.bridge.invoke("forge.hosts", {});
-      if (!stillCurrent(run)) return;
-      const host = hosts.find((entry) => entry.source === sourceOfLocus(run.locus));
-      const probe =
-        host?.asked === true ? host.sourceControl?.find((tool) => tool.id === run.tool) : undefined;
-      run.slot.set((previous) =>
-        previous.phase === "running" ? { ...previous, reconnecting: false } : previous,
-      );
-      if (probe?.status === "available") {
-        for (const name of STALED_BY_INSTALL) run.cache.invalidate(name);
-        const current = run.slot.get();
-        settle(run, {
-          status: "installed",
-          command: current.phase === "running" ? (current.command ?? "") : "",
-          output: current.phase === "running" ? current.output : "",
-          probe,
-        });
+  if (run.record.reconciling) return;
+  run.record.reconciling = true;
+  markReconnecting(run, true);
+  try {
+    while (stillCurrent(run)) {
+      try {
+        if (isCancelling(run)) {
+          const answer = await run.bridge.invoke("tools.cancelInstall", {
+            commandId: run.commandId,
+          });
+          markReconnecting(run, false);
+          await settleCancelled(run, answer);
+          return;
+        }
+        // A cheap read that answers only once the connection is back, so "reconnecting"
+        // clears even while the re-joined install keeps running for minutes. Its probe is
+        // never the verdict.
+        await run.bridge.invoke("forge.hosts", {});
+        if (!stillCurrent(run)) return;
+        markReconnecting(run, false);
+        // Cancel pressed while that read was out: send the cancel, not the install.
+        if (isCancelling(run)) continue;
+        run.record.reconciling = false;
+        dispatch(run);
         return;
+      } catch (reason) {
+        if (!isConnectionLoss(reason)) {
+          giveUp(run, messageOf(reason, "Rennet lost track of the install. Try again."));
+          return;
+        }
+        markReconnecting(run, true);
+        await wait(RECONNECT_RETRY_MS);
       }
-      dispatch(run);
-      return;
-    } catch (reason) {
-      if (!isConnectionLoss(reason)) {
-        giveUp(run, messageOf(reason, "Rennet lost track of the install. Try again."));
-        return;
-      }
-      await wait(RECONNECT_RETRY_MS);
     }
+  } finally {
+    run.record.reconciling = false;
   }
+}
+
+/**
+ * Settle a run the reviewer cancelled, from what `tools.cancelInstall` answered.
+ *
+ *   • A verdict came back: the command had already finished, and that is what happened —
+ *     installed, failed or stopped — whatever the button was asked to do.
+ *   • The daemon stopped it (`cancelled: true`): its own verdict will say "stopped". If a
+ *     `tools.install` is still waiting it delivers that verdict; if not (the connection
+ *     dropped), this settles as stopped here.
+ *   • The daemon knows nothing of it (`cancelled: false`, no verdict — it restarted): nothing
+ *     is running, so the install is over, stopped.
+ *
+ * A locally settled stop re-reads the tool's state only to show it; it never decides.
+ */
+async function settleCancelled(
+  run: Run,
+  answer: CommandOutput<"tools.cancelInstall">,
+): Promise<void> {
+  if (!stillCurrent(run)) return;
+  if (answer.result !== undefined) {
+    for (const name of STALED_BY_INSTALL) run.cache.invalidate(name);
+    settle(run, answer.result);
+    return;
+  }
+  const probe = await run.bridge
+    .invoke("forge.hosts", {})
+    .then(({ hosts }) => {
+      const host = hosts.find((entry) => entry.source === sourceOfLocus(run.locus));
+      return host?.asked === true
+        ? host.sourceControl?.find((tool) => tool.id === run.tool)
+        : undefined;
+    })
+    .catch(() => undefined);
+  if (!stillCurrent(run)) return;
+  for (const name of STALED_BY_INSTALL) run.cache.invalidate(name);
+  const current = run.slot.get();
+  const command = current.phase === "running" ? (current.command ?? "") : "";
+  settle(run, {
+    status: "failed",
+    cancelled: true,
+    command,
+    message: "The install was stopped.",
+    failedCommand: command,
+    exitCode: null,
+    output: current.phase === "running" ? current.output : "",
+    probe: probe ?? { id: run.tool, version: null, status: "unreachable", detail: "" },
+  });
 }
 
 /** The `forge.hosts` source key a locus answers under. */
@@ -262,6 +346,8 @@ export function useToolInstall(options: {
     record.commandId = commandId;
     record.continuation = onInstalled;
     const run: Run = { bridge, cache, slot, record, tool, locus, commandId };
+    record.run = run;
+    record.reconciling = false;
     slot.set({ phase: "running", output: "", cancelling: false });
     record.unsubscribe = bridge.onToolInstallProgress?.(commandId, (event) => {
       if (!stillCurrent(run)) return;
@@ -269,7 +355,12 @@ export function useToolInstall(options: {
         previous.phase === "running"
           ? {
               ...previous,
-              output: `${previous.output}${event.chunk}`.slice(-LIVE_OUTPUT_CAP),
+              // A snapshot (`replace`) is the whole output so far: it replaces the drawer,
+              // so a gap a dropped connection left is filled, not appended twice.
+              output: (event.replace === true
+                ? event.chunk
+                : `${previous.output}${event.chunk}`
+              ).slice(-LIVE_OUTPUT_CAP),
               ...(event.command === undefined ? {} : { command: event.command }),
             }
           : previous,
@@ -279,12 +370,32 @@ export function useToolInstall(options: {
   }, [bridge, cache, key, locus, onInstalled, slot, tool]);
 
   const cancel = useCallback(() => {
-    const commandId = runRecord(cache, key).commandId;
-    if (commandId === null) return;
+    const record = runRecord(cache, key);
+    const run = record.run;
+    if (record.commandId === null || run === undefined) return;
     slot.set((previous) =>
       previous.phase === "running" ? { ...previous, cancelling: true } : previous,
     );
-    void bridge.invoke("tools.cancelInstall", { commandId }).catch(() => undefined);
+    void bridge.invoke("tools.cancelInstall", { commandId: run.commandId }).then(
+      (answer) => {
+        // Stopped by the daemon: the waiting `tools.install`, or the reconnect loop, hears
+        // its verdict. Anything else — a finished command's verdict, or a daemon that knows
+        // nothing of it — settles here.
+        if (answer.cancelled && answer.result === undefined) return;
+        void settleCancelled(run, answer);
+      },
+      (reason: unknown) => {
+        // The connection is down: the reconnect loop sends this cancel once it is back.
+        if (isConnectionLoss(reason)) {
+          void reconcile(run);
+          return;
+        }
+        // The daemon refused it: the install is still running, so offer Cancel again.
+        slot.set((previous) =>
+          previous.phase === "running" ? { ...previous, cancelling: false } : previous,
+        );
+      },
+    );
   }, [bridge, cache, key, slot]);
 
   return { state, start, cancel };
