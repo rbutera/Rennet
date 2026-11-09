@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import type { AskLogStore, PublishReceiptStore } from "@rennet/adapters";
+import type { Locus } from "@rennet/core";
 import {
   canonicalReviewPayload,
   emptyAskProjection,
@@ -30,6 +31,7 @@ import type {
   DispositionType,
   FlaggedReview,
   HandoffBundle,
+  LargeFileMode,
   LensAbsenceReason,
   LensBoard,
   LensDraftSnapshot,
@@ -47,6 +49,7 @@ import type {
   RoundReportBoard,
   SessionTranscriptRow,
   SidebarSession,
+  SourceControlToolId,
   SuccessorAccount,
   SymbolInspection,
   WorktreeInventory,
@@ -591,6 +594,19 @@ export interface DispatchDeps {
    */
   readonly settings?: SettingsComposition;
   /**
+   * Install for me (source-control-tooling spec): run the platform installer for `git` or
+   * `git-lfs` on one locus, streaming output under the command id, and stop a running one.
+   * Absent ⇒ this composition cannot install anything, and the command says so.
+   */
+  readonly tools?: {
+    install(input: {
+      tool: SourceControlToolId;
+      locus: Locus;
+      commandId: string;
+    }): Promise<CommandOutput<"tools.install">["result"]>;
+    cancelInstall(commandId: string): boolean;
+  };
+  /**
    * The durable benchmark archive's read side (#731, D8) — the newest `limit` recorded
    * runs, each with its own stage records, plus what the read COST: `total` before the
    * limit and the interior lines that could not be read. Optional: absent ⇒ the panel
@@ -723,6 +739,15 @@ export interface DispatchDeps {
     }): Promise<{ session: SidebarSession; reattached: boolean }>;
     cancelPreparation(sessionId: string): SidebarSession | undefined;
     retryPreparation(sessionId: string, commandId: string): Promise<SidebarSession | undefined>;
+    /**
+     * Record the answer to the large-file question as the project's `checkout.largeFiles` and
+     * resume the session's preparation when it stopped for it (large-file-checkout spec).
+     */
+    chooseLargeFileMode(
+      sessionId: string,
+      mode: LargeFileMode,
+      commandId: string,
+    ): Promise<SidebarSession | undefined>;
     rename(sessionId: string, title: string): SidebarSession | undefined;
     setPinned(sessionId: string, pinned: boolean): SidebarSession | undefined;
     /** Async because archiving first ABORTS AND AWAITS the session's preparation: the

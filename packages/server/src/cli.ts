@@ -797,8 +797,23 @@ function terminalResult(
       settledAtMs: Date.now(),
     };
   }
+  // The large-file question (large-file-checkout spec) is the reviewer's to answer, and a
+  // headless run has nobody to ask. It stops here with the way to answer it, rather than
+  // waiting out the timeout for an answer that cannot come.
+  if (preparation.status === "awaiting") {
+    return {
+      outcome: "failed",
+      reviewId: preparation.reviewId,
+      reason: AWAITING_LARGE_FILES_REASON,
+      settledAtMs: Date.now(),
+    };
+  }
   return null;
 }
+
+/** Why a headless review stopped at the large-file question, and how to answer it. */
+const AWAITING_LARGE_FILES_REASON =
+  "this repository uses Git LFS and its project has not chosen whether review checkouts download or skip large files; choose in Rennet (the review asks), then run again";
 
 /**
  * Watch a session's preparation to a settled/failed/cancelled state (or the timeout), printing
@@ -1224,6 +1239,9 @@ async function resolveReattach(
       io.out(`already reviewed at ${requestedHead}; reusing the settled boards`);
       return { kind: "fast", reviewId: row.reviewId };
     }
+    // Still waiting on the large-file answer: report it rather than archive the session that
+    // is asking (the poll stops at once with the reason).
+    if (headMatches && preparation?.status === "awaiting") return { kind: "poll", row };
     if (headMatches && preparation?.status === "failed" && preparation.reviewId !== undefined) {
       const retried = (await socket.invoke("session.retryPreparation", {
         sessionId: row.id,

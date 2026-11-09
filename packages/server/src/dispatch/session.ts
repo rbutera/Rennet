@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import { parseUnifiedDiffFiles } from "@rennet/adapters";
 import {
@@ -140,6 +141,9 @@ export function sidebarSessionOf(
     // field. WHERE those commits have got to is not on the row: "pushed" and "behind" are
     // ref questions, and `session.workBranchState` asks git when the surface asks.
     ...(session.workBranch === undefined ? {} : { workBranch: session.workBranch }),
+    // Quiet facts about the bound checkout (review-preparation-reliability): plain sentences
+    // with no host path in them, shown beside the review.
+    ...(session.workspaceNotes === undefined ? {} : { workspaceNotes: session.workspaceNotes }),
     ...(reviewActivity === undefined ? {} : { reviewActivity }),
     ...(completedRoundNumber === undefined
       ? {}
@@ -271,6 +275,19 @@ export function sessionHandlers(rt: DispatchRuntime) {
       const input = parseCommandInput(name, rawInput);
       const session =
         (await rt.deps.sessions?.retryPreparation(input.sessionId, input.commandId)) ?? null;
+      return parseCommandOutput(name, { session });
+    },
+    "session.chooseLargeFileMode": async (rawInput) => {
+      const name = "session.chooseLargeFileMode" as const;
+      // The reviewer's answer to the large-file question. A plain settings write plus a
+      // resume — the answer IS the request, there is nothing to confirm (Rule Zero).
+      const input = parseCommandInput(name, rawInput);
+      const session =
+        (await rt.deps.sessions?.chooseLargeFileMode(
+          input.sessionId,
+          input.mode,
+          input.commandId ?? randomUUID(),
+        )) ?? null;
       return parseCommandOutput(name, { session });
     },
     "session.rename": async (rawInput) => {

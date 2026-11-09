@@ -258,6 +258,11 @@ export function foldPreparationLines(
     return lines;
   }
 
+  if (next.status === "awaiting") {
+    if (previous?.status !== "awaiting") lines.push(`${prefix}waiting  for the large-file choice`);
+    return lines;
+  }
+
   const previousLanes = new Map(lanesOf(previous).map((lane) => [lane.id, lane]));
   for (const lane of lanesOf(next)) {
     const before = previousLanes.get(lane.id);

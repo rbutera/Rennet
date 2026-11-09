@@ -168,7 +168,8 @@ describe("LargeFileSkipIndex", () => {
 
   it("makes git in a registered checkout skip Git LFS, and leaves every other checkout alone", async () => {
     const { skip, download, index, childEnv, restore } = fixture();
-    const git = (cwd: string, args: string[]) => execaGit(cwd, args, { env: childEnv as Record<string, string> });
+    const git = (cwd: string, args: string[]) =>
+      execaGit(cwd, args, { env: childEnv as Record<string, string> });
     index.add(await absoluteGitDir(git, skip));
 
     // The registered checkout: a later checkout of the large file succeeds as a pointer.
@@ -187,7 +188,8 @@ describe("LargeFileSkipIndex", () => {
 
   it("registers idempotently, survives a fresh reader, and unregisters", async () => {
     const { skip, index, childEnv } = fixture();
-    const git = (cwd: string, args: string[]) => execaGit(cwd, args, { env: childEnv as Record<string, string> });
+    const git = (cwd: string, args: string[]) =>
+      execaGit(cwd, args, { env: childEnv as Record<string, string> });
     const gitDir = await absoluteGitDir(git, skip);
     index.add(gitDir);
     index.add(gitDir);

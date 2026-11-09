@@ -110,6 +110,19 @@ describe("foldPreparationLines (tasks.md 3.1)", () => {
     ]);
   });
 
+  it("prints the large-file question once, when preparation starts waiting on it", () => {
+    const awaiting: SessionPreparation = {
+      status: "awaiting",
+      kind: "large-file-choice",
+      lfsAvailable: false,
+      reviewId: "r1",
+    };
+    expect(foldPreparationLines(undefined, awaiting, 3000)).toEqual([
+      "[+3s] waiting  for the large-file choice",
+    ]);
+    expect(foldPreparationLines(awaiting, awaiting, 4000)).toEqual([]);
+  });
+
   it("prints a changed capture step and nothing when it is unchanged", () => {
     const first: SessionPreparation = { status: "capturing", step: "resolving-repository" };
     const second: SessionPreparation = { status: "capturing", step: "capturing-change" };
