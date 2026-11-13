@@ -46,7 +46,8 @@ reviews, and **Developing Rennet** for people who build Rennet.
   and [marketing screenshots](./developing/guides/marketing-screenshots.md)
 - Plans: [board rebuild plan](./developing/plans/board-rebuild-plan.md),
   [performance audit (2026-08-31)](./developing/plans/perf-audit-2026-08-31.md),
-  and [token efficiency plan (#737)](./developing/plans/token-efficiency-737.md)
+  [token efficiency plan (#737)](./developing/plans/token-efficiency-737.md),
+  and [live drive plan, v0.13.0 to v0.15.0](./developing/plans/live-drive-0-15-0.md)
 - [Decisions](./developing/decisions/contracts-and-rulings.md): the cross-cutting
   decision register
 - [ADRs](./adr/0001-tray-quit-owns-the-daemon.md): narrow architectural
